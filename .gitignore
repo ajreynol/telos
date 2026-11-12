@@ -1,0 +1,13 @@
+# Lake build outputs and fetched dependencies (both projects)
+.lake/
+/verification/.lake/
+
+# Lean/editor artifacts
+*.olean
+*.ilean
+*.trace
+.vscode/
+.idea/
+*~
+*.swp
+.DS_Store

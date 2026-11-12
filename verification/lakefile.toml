@@ -1,0 +1,31 @@
+name = "SolverVerification"
+version = "0.1.0"
+defaultTargets = ["SolverProofs"]
+# Mathlib's style linters do not apply to this project (see Logos's
+# verification/lakefile.toml, which this mirrors).
+weakLeanArgs = [
+  "-Dweak.linter.mathlibStandardSet=false",
+]
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "v4.34.0"
+
+# Logos's verification package: model semantics and checker soundness proofs.
+# Same commit as the `Cpc` requirement in ../lakefile.toml.
+[[require]]
+name = "LogosVerification"
+git = "https://github.com/ajreynol/logos"
+rev = "8c3fe85d5cd3c362d87b8b8fe273d0534323ba84"
+subDir = "verification"
+
+[[require]]
+name = "Solver"
+path = ".."
+
+[[lean_lib]]
+name = "SolverProofs"
+roots = []
+globs = ["Solver.Proofs.+"]
+moreLeanArgs = ["-DmaxHeartbeats=10000000", "-DwarningAsError=true"]

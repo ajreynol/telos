@@ -1,0 +1,19 @@
+name = "Solver"
+version = "0.1.0"
+defaultTargets = ["Solver", "telos"]
+
+# Logos, the CPC checker. Only its root package `Cpc` is required here, so the
+# solver binary builds without Mathlib. Keep `rev` in sync with the
+# `LogosVerification` requirement in verification/lakefile.toml.
+[[require]]
+name = "Cpc"
+git = "https://github.com/ajreynol/logos"
+rev = "8c3fe85d5cd3c362d87b8b8fe273d0534323ba84"
+
+[[lean_lib]]
+name = "Solver"
+moreLeanArgs = ["-DwarningAsError=true"]
+
+[[lean_exe]]
+name = "telos"
+root = "Main"
