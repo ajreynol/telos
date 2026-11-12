@@ -3,7 +3,7 @@
  "packages":
  [{"type": "path",
    "scope": "",
-   "name": "Solver",
+   "name": "Telos",
    "manifestFile": "lake-manifest.json",
    "inherited": false,
    "dir": "..",
@@ -118,6 +118,6 @@
    "inputRev": "v4.34.0",
    "inherited": true,
    "configFile": "lakefile.toml"}],
- "name": "SolverVerification",
+ "name": "TelosVerification",
  "lakeDir": ".lake",
  "fixedToolchain": false}

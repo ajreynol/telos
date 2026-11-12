@@ -1,29 +1,32 @@
 # Trusted base
 
-Everything the solver's soundness guarantee relies on without a proof. Keep this
+Everything the rewriter's correctness theorem relies on without a proof. Keep this
 list current: `scripts/check-hygiene.sh` fails on any `unsafe`, `@[extern]` or
 `implemented_by` in a file not named below.
 
-## Always trusted
+## The specification
+
+These define what the theorem *means*. A mistake here makes the theorem true of
+the wrong thing, so review them as specifications, not as code.
+
+- The Logos/CPC definitions: `Cpc.eo` compiled to `Cpc/Logos.lean` by
+  `ethos-eoc`, the translation `__eo_to_smt` (`Cpc/SmtTranslate.lean`), the SMT
+  type checker `__smtx_typeof` (`Cpc/SmtTyping.lean`) and the model semantics
+  (`Cpc/SmtModel.lean`, `Cpc/Spec.lean`). Logos commit pinned in `lakefile.toml`.
+- `Telos/Node/ToEo.lean`: the translation of `Node` to Logos terms. It assigns
+  every node its meaning, so it must match how cvc5 prints that node in CPC.
+- `verification/TelosProofs/Spec.lean`: the definition of `Node.Equiv`.
+
+## Tools
 
 - The Lean 4 kernel, compiler and runtime (`leanprover/lean4:v4.34.0`).
-- The Logos/CPC definitions as the **specification**: `Cpc.eo` compiled to
-  `Cpc/Logos.lean` by `ethos-eoc`, and the SMT-LIB model semantics in
-  `Cpc/SmtModel.lean` (Logos commit pinned in `lakefile.toml`).
-- The Logos s-expression reader and SMT-LIB parser (unverified in Logos). The
-  solver and the proof it emits must go through the same parser.
 
-## Temporary (until proven)
-
-- The proof printer (`Solver/Print/`), until `parse (print log) = log` is proven
-  (milestone M2). Not written yet.
-
-## `unsafe` / `@[extern]` / `implemented_by` in the solver
+## `unsafe` / `@[extern]` / `implemented_by` in this repository
 
 None.
 
 ## Axioms
 
-No `sorry` and no new `axiom`. `#print axioms` on the end-to-end theorems must
-show only `propext`, `Classical.choice` and `Quot.sound` (checked in CI once
-those theorems exist).
+No `sorry` and no new `axiom`. `verification/TelosProofs/Axioms.lean` fails the
+build if `Telos.rewrite_correct` uses any axiom other than `propext`,
+`Classical.choice` and `Quot.sound`.

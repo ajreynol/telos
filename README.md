@@ -1,25 +1,34 @@
 # telos
 
-A statically verified, proof-producing SMT solver written in Lean 4, built on
-[Logos](https://github.com/ajreynol/logos), the CPC proof checker. See
-[`docs/verified-solver-plan.md`](docs/verified-solver-plan.md) for the design and
-milestones, and [`TRUSTED.md`](TRUSTED.md) for the trusted base.
+A **verified rewriter for SMT**, written in Lean 4. It is a faithful port of
+[cvc5](https://github.com/cvc5/cvc5)'s rewriter, with a machine-checked proof that
+every rewrite preserves equivalence. The semantics come from
+[Logos](https://github.com/ajreynol/logos), the CPC proof checker, so "equivalent"
+means the same thing that a CPC proof of `(= t (rewrite t))` would establish.
+
+```lean
+theorem Telos.rewrite_correct (t : Node) (h : t.WellTyped) : t.Equiv (rewrite t)
+```
+
+See [`docs/design.md`](docs/design.md) for the architecture and roadmap, and
+[`TRUSTED.md`](TRUSTED.md) for what the theorem relies on.
 
 ## Layout
 
-Two Lake projects, so the solver binary builds without Mathlib:
+Two Lake projects, so the rewriter builds without Mathlib:
 
-- `.` (package `Solver`): the solver and the `telos` executable. Requires Logos's
-  root package `Cpc` (checker and parser).
-- `verification/` (package `SolverVerification`): correctness proofs. Requires
-  `Solver`, Logos's `LogosVerification` (model semantics, rule proofs) and Mathlib.
+- `.` (package `Telos`): `Node`, its translation to Logos terms, the rewriter and
+  the `telos` executable. Requires Logos's root package `Cpc`.
+- `verification/` (package `TelosVerification`): the specification `Node.Equiv`
+  and the correctness proofs. Requires `Telos`, Logos's `LogosVerification` and
+  Mathlib.
 
 ## Building
 
 ```sh
-lake build                              # solver
+lake build                              # rewriter
 lake -d verification exe cache get      # Mathlib binaries (once)
-lake -d verification build              # proofs
+lake -d verification build              # proofs (also builds part of Logos's proofs)
 bash scripts/check-hygiene.sh           # no sorry/axiom; trusted code is listed
 ```
 

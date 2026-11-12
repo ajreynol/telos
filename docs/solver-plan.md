@@ -1,3 +1,8 @@
+> **Note (2026-11-12):** this is the original, broader plan for a verified SMT
+> *solver*. The project is now scoped to a verified *rewriter*; see
+> [`design.md`](design.md). This plan is kept for the longer-term direction (proof
+> production, the CDCL core) and for its notes on Logos.
+
 # Setting up a statically verified, proof-producing SMT solver
 
 This document briefs an agent on setting up a new SMT solver in a **new, separate

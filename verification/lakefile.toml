@@ -1,6 +1,6 @@
-name = "SolverVerification"
+name = "TelosVerification"
 version = "0.1.0"
-defaultTargets = ["SolverProofs"]
+defaultTargets = ["TelosProofs"]
 # Mathlib's style linters do not apply to this project (see Logos's
 # verification/lakefile.toml, which this mirrors).
 weakLeanArgs = [
@@ -21,11 +21,11 @@ rev = "8c3fe85d5cd3c362d87b8b8fe273d0534323ba84"
 subDir = "verification"
 
 [[require]]
-name = "Solver"
+name = "Telos"
 path = ".."
 
 [[lean_lib]]
-name = "SolverProofs"
+name = "TelosProofs"
 roots = []
-globs = ["Solver.Proofs.+"]
+globs = ["TelosProofs.+"]
 moreLeanArgs = ["-DmaxHeartbeats=10000000", "-DwarningAsError=true"]
