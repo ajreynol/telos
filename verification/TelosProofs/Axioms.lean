@@ -3,13 +3,29 @@ import TelosProofs.Rewriter
 /-!
 # Axiom audit
 
-Fails the build if a main theorem depends on anything beyond Lean's standard
-axioms (in particular `sorryAx`, or any newly declared one). If a theorem comes to use fewer
-axioms, update the expected message.
+Fails the build if a main theorem depends on anything other than
+
+* Lean's standard axioms `propext`, `Classical.choice` and `Quot.sound`, and
+* the auxiliary axioms that `native_decide` creates (names containing
+  `native_decide`). Each asserts that a decision procedure, run by Lean's compiled
+  code, returned `true`, so they trust the Lean compiler. They enter through
+  Logos's proofs, which use `native_decide` (see `TRUSTED.md`).
+
+In particular, `sorryAx` and any other postulated constant fail the build.
 -/
 
-/--
-info: 'Telos.rewrite_correct' depends on axioms: [propext, Classical.choice, Quot.sound]
--/
-#guard_msgs in
-#print axioms Telos.rewrite_correct
+open Lean Elab Command in
+/-- `#assert_axioms c` fails unless `c` uses only the axioms allowed above. -/
+elab "#assert_axioms " id:ident : command => do
+  let name ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo id
+  let axioms ← liftCoreM <| collectAxioms name
+  let standard := [``propext, ``Classical.choice, ``Quot.sound]
+  let allowed (a : Name) : Bool :=
+    standard.contains a || a.components.any (· == `native_decide)
+  let bad := axioms.filter (!allowed ·)
+  unless bad.isEmpty do
+    throwError "'{name}' depends on disallowed axioms: {bad.toList}"
+  let native := (axioms.filter (!standard.contains ·)).size
+  logInfo m!"'{name}': standard axioms, plus {native} native_decide axioms from Logos"
+
+#assert_axioms Telos.rewrite_correct

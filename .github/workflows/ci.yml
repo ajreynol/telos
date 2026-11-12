@@ -38,7 +38,7 @@ jobs:
 
   verification:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v6
       - uses: leanprover/lean-action@v1

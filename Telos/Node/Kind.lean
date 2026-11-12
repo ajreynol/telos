@@ -18,8 +18,11 @@ inductive Kind where
   | CONST_INTEGER
   | CONST_RATIONAL
   | CONST_BITVECTOR
-  -- Free constants (cvc5 `VARIABLE`; user-declared constants and functions).
+  | CONST_STRING
+  -- Variables (cvc5 `VARIABLE`, for user-declared constants and functions, and
+  -- `BOUND_VARIABLE`).
   | VARIABLE
+  | BOUND_VARIABLE
   -- theory/builtin
   | EQUAL
   -- theory/booleans
@@ -31,6 +34,14 @@ inductive Kind where
   | ITE
   -- theory/bv (parameterized kinds take their indices from `Op.indexed`)
   | BITVECTOR_EXTRACT
+  -- theory/uf (the function is the operator: `Op.node APPLY_UF f`)
+  | APPLY_UF
+  -- theory/quantifiers
+  | FORALL
+  | EXISTS
+  | BOUND_VAR_LIST
+  /-- Instantiation patterns. They carry no semantics, and `toEo` drops them. -/
+  | INST_PATTERN_LIST
   deriving DecidableEq, Repr, Inhabited, Hashable
 
 /-- cvc5's `TheoryId` (`src/theory/theory_id.h`), for the theories `Kind` covers. -/
@@ -39,6 +50,11 @@ inductive TheoryId where
   | THEORY_BOOL
   | THEORY_ARITH
   | THEORY_BV
+  | THEORY_UF
+  | THEORY_ARRAYS
+  | THEORY_SETS
+  | THEORY_STRINGS
+  | THEORY_QUANTIFIERS
   deriving DecidableEq, Repr, Inhabited
 
 /-- cvc5's `kindToTheoryId`: the theory that owns a kind, and whose rewriter
@@ -47,8 +63,16 @@ def Kind.theoryId : Kind → TheoryId
   | .CONST_BOOLEAN => .THEORY_BOOL
   | .CONST_INTEGER | .CONST_RATIONAL => .THEORY_ARITH
   | .CONST_BITVECTOR => .THEORY_BV
-  | .VARIABLE | .EQUAL => .THEORY_BUILTIN
+  | .CONST_STRING => .THEORY_STRINGS
+  | .VARIABLE | .BOUND_VARIABLE | .EQUAL => .THEORY_BUILTIN
   | .NOT | .AND | .IMPLIES | .OR | .XOR | .ITE => .THEORY_BOOL
   | .BITVECTOR_EXTRACT => .THEORY_BV
+  | .APPLY_UF => .THEORY_UF
+  | .FORALL | .EXISTS | .BOUND_VAR_LIST | .INST_PATTERN_LIST => .THEORY_QUANTIFIERS
+
+/-- The quantifier kinds, whose congruence is in their body only. -/
+def Kind.isQuantifier : Kind → Bool
+  | .FORALL | .EXISTS => true
+  | _ => false
 
 end Telos

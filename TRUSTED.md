@@ -14,7 +14,9 @@ the wrong thing, so review them as specifications, not as code.
   type checker `__smtx_typeof` (`Cpc/SmtTyping.lean`) and the model semantics
   (`Cpc/SmtModel.lean`, `Cpc/Spec.lean`). Logos commit pinned in `lakefile.toml`.
 - `Telos/Node/ToEo.lean`: the translation of `Node` to Logos terms. It assigns
-  every node its meaning, so it must match how cvc5 prints that node in CPC.
+  every node its meaning, so it must match how cvc5 prints that node in CPC. The
+  per-operator part is a table (`Kind.eoShape`, `indexedEoShape`, `nodeEoShape`)
+  giving each operator's CPC head symbol and arity.
 - `verification/TelosProofs/Spec.lean`: the definition of `Node.Equiv`.
 
 ## Tools
@@ -27,6 +29,14 @@ None.
 
 ## Axioms
 
-No `sorry` and no new `axiom`. `verification/TelosProofs/Axioms.lean` fails the
-build if `Telos.rewrite_correct` uses any axiom other than `propext`,
-`Classical.choice` and `Quot.sound`.
+No `sorry` and no declared `axiom`. `verification/TelosProofs/Axioms.lean` fails
+the build if `Telos.rewrite_correct` uses any axiom other than:
+
+- `propext`, `Classical.choice` and `Quot.sound`; and
+- the auxiliary axioms created by `native_decide` (43 at present). Each asserts
+  that a decision procedure, run as compiled code, returned `true`, so they trust
+  the **Lean compiler** in addition to the kernel. They come from Logos's proofs,
+  which use `native_decide` throughout (577 uses, including its checker core),
+  and enter through the congruence lemmas reused from
+  `Cpc/Proofs/RuleSupport/Cong/`. (Open question: accept this, or ask Logos to
+  replace `native_decide` in the lemmas we use.)
