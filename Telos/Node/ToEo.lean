@@ -16,8 +16,10 @@ N-ary operators follow the CPC signature (`Cpc.eo`) as Ethos elaborates it:
 * `and`/`or` are `:right-assoc-nil` with nil `true`/`false`, so
   `(and a b c)` is `(and a (and b (and c true)))`.
 * `=`, `=>`, `xor`, `not` and `ite` have the fixed arities of cvc5's kinds.
+* Indexed operators become Logos's `UOp1`/`UOp2` with numeral indices:
+  `((_ extract i j) x)` is `Term.Apply (Term.UOp2 UserOp2.extract i j) x`.
 
-A node with the wrong number of children translates to `Term.Stuck`, which has no
+A node with the wrong number of children or indices translates to `Term.Stuck`, which has no
 SMT type, so it is not `WellTyped`.
 -/
 
@@ -61,22 +63,28 @@ def eoRightAssocNil (op : UserOp) (nil : Term) : List Term → Term
   | x :: xs => eoApp2 op x (eoRightAssocNil op nil xs)
 
 /-- Translate an operator application, given its translated children. -/
-def appToEo : Kind → List Term → Term
-  | .EQUAL, [x, y] => eoApp2 UserOp.eq x y
-  | .NOT, [x] => eoApp1 UserOp.not x
-  | .AND, xs@(_ :: _ :: _) => eoRightAssocNil UserOp.and (Term.Boolean true) xs
-  | .OR, xs@(_ :: _ :: _) => eoRightAssocNil UserOp.or (Term.Boolean false) xs
-  | .IMPLIES, [x, y] => eoApp2 UserOp.imp x y
-  | .XOR, [x, y] => eoApp2 UserOp.xor x y
-  | .ITE, [c, x, y] => Term.Apply (eoApp2 UserOp.ite c x) y
-  | _, _ => Term.Stuck
+def appToEo : Op → List Term → Term
+  | .indexed .BITVECTOR_EXTRACT #[i, j], [x] =>
+      Term.Apply (Term.UOp2 UserOp2.extract (Term.Numeral i) (Term.Numeral j)) x
+  | .indexed _ _, _ => Term.Stuck
+  | .kind k, xs => kindAppToEo k xs
+where
+  kindAppToEo : Kind → List Term → Term
+    | .EQUAL, [x, y] => eoApp2 UserOp.eq x y
+    | .NOT, [x] => eoApp1 UserOp.not x
+    | .AND, xs@(_ :: _ :: _) => eoRightAssocNil UserOp.and (Term.Boolean true) xs
+    | .OR, xs@(_ :: _ :: _) => eoRightAssocNil UserOp.or (Term.Boolean false) xs
+    | .IMPLIES, [x, y] => eoApp2 UserOp.imp x y
+    | .XOR, [x, y] => eoApp2 UserOp.xor x y
+    | .ITE, [c, x, y] => Term.Apply (eoApp2 UserOp.ite c x) y
+    | _, _ => Term.Stuck
 
 namespace Node
 
 def toEo : Node → Term
   | .const c => c.toEo
   | .var name T => Term.Var (Term.String (native_string_lit name)) T.toEo
-  | .app k cs => appToEo k (cs.attach.toList.map fun ⟨c, _⟩ => c.toEo)
+  | .app op cs => appToEo op (cs.attach.toList.map fun ⟨c, _⟩ => c.toEo)
 
 /-- The Logos SMT type of a node; `SmtType.None` when it is ill typed. -/
 def smtType (t : Node) : SmtType :=

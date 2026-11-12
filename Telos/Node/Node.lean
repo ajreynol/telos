@@ -15,9 +15,15 @@ Differences from cvc5, on purpose:
   and a rewrite cache.
 * Free constants carry their name and type in the node instead of in the
   `NodeManager`'s attribute table.
-* Parameterized kinds (`BITVECTOR_EXTRACT` and so on) are not supported yet. In
-  cvc5 their indices live in an operator node (`getOperator()`); here they will be
-  an extra payload on `app`.
+* The operator of an application is an `Op`: a kind, or a kind with integer
+  indices for parameterized kinds such as `BITVECTOR_EXTRACT`. This is the form of
+  cvc5's API `Op`; internally cvc5 stores the indices in an operator node
+  (`getOperator()`).
+
+Numeric payloads (bit-vector widths and values, indices) use the types Logos uses,
+which is `Int` throughout, so `toEo` copies them unchanged. Values that are out of
+range (a negative width, a value `≥ 2 ^ width`, `hi < lo` for extract) are not
+excluded by the datatype; they are rejected by `Node.WellTyped`.
 -/
 
 namespace Telos
@@ -27,9 +33,9 @@ inductive Const where
   | boolean (b : Bool)
   | integer (n : Int)
   | rational (q : Rat)
-  /-- A bit-vector of width `width` with value `value`. Well typed only when
-  `value < 2 ^ width`. -/
-  | bitVector (width : Nat) (value : Nat)
+  /-- A bit-vector of width `width` with value `value`, as Logos's
+  `Term.Binary`. Well typed only when `0 ≤ width` and `0 ≤ value < 2 ^ width`. -/
+  | bitVector (width : Int) (value : Int)
   deriving DecidableEq, Repr, Inhabited
 
 namespace Const
@@ -42,13 +48,35 @@ def kind : Const → Kind
 
 end Const
 
+/-- The operator of an application (cvc5's API `Op`). -/
+inductive Op where
+  /-- An operator kind with no indices, such as `AND`. -/
+  | kind (k : Kind)
+  /-- A parameterized kind with its indices, such as `((_ extract 7 4) x)`, which
+  is `indexed BITVECTOR_EXTRACT #[7, 4]`. -/
+  | indexed (k : Kind) (indices : Array Int)
+  deriving DecidableEq, Repr, Inhabited
+
+namespace Op
+
+def getKind : Op → Kind
+  | .kind k => k
+  | .indexed k _ => k
+
+/-- The indices of a parameterized operator; empty for other operators. -/
+def getIndices : Op → Array Int
+  | .kind _ => #[]
+  | .indexed _ is => is
+
+end Op
+
 inductive Node where
   /-- A constant (cvc5 `CONST_*` kinds). -/
   | const (c : Const)
   /-- A free constant (cvc5 `VARIABLE`), with its name and type. -/
   | var (name : String) (type : TypeNode)
   /-- An operator application with n-ary children, as in cvc5. -/
-  | app (k : Kind) (children : Array Node)
+  | app (op : Op) (children : Array Node)
   deriving Inhabited, Repr
 
 namespace Node
@@ -56,7 +84,12 @@ namespace Node
 def getKind : Node → Kind
   | .const c => c.kind
   | .var _ _ => .VARIABLE
-  | .app k _ => k
+  | .app op _ => op.getKind
+
+/-- The operator of an application (cvc5's `getOperator()`), if any. -/
+def getOperator? : Node → Option Op
+  | .app op _ => some op
+  | _ => none
 
 /-- The children of a node. Constants and variables have none. -/
 def getChildren : Node → Array Node
@@ -82,7 +115,9 @@ def getConstBoolean? : Node → Option Bool
 
 def mkConst (c : Const) : Node := .const c
 def mkVar (name : String) (type : TypeNode) : Node := .var name type
-def mkNode (k : Kind) (children : Array Node) : Node := .app k children
+def mkNode (k : Kind) (children : Array Node) : Node := .app (.kind k) children
+def mkIndexedNode (k : Kind) (indices : Array Int) (children : Array Node) : Node :=
+  .app (.indexed k indices) children
 
 def mkTrue : Node := .const (.boolean true)
 def mkFalse : Node := .const (.boolean false)
@@ -93,6 +128,8 @@ def eqNode (a b : Node) : Node := mkNode .EQUAL #[a, b]
 def andNode (a b : Node) : Node := mkNode .AND #[a, b]
 def orNode (a b : Node) : Node := mkNode .OR #[a, b]
 def iteNode (c t e : Node) : Node := mkNode .ITE #[c, t, e]
+def extractNode (hi lo : Int) (x : Node) : Node :=
+  mkIndexedNode .BITVECTOR_EXTRACT #[hi, lo] #[x]
 
 end Node
 

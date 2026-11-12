@@ -31,8 +31,15 @@ Node ──toEo──▶ Eo.Term ──__eo_to_smt──▶ SmtTerm ──__smtx
   `Kind.theoryId` (cvc5's `kindToTheoryId`).
 - `TypeNode`: `boolean`, `integer`, `real`, `bitVector w` so far.
 - `Const`: constant payloads (cvc5's `getConst<T>()`).
-- `Node`: `const c`, `var name type` (cvc5 `VARIABLE`), and `app k children`
+- `Op`: the operator of an application, `kind k` or `indexed k indices` for
+  parameterized kinds such as `BITVECTOR_EXTRACT` (the form of cvc5's API `Op`).
+- `Node`: `const c`, `var name type` (cvc5 `VARIABLE`), and `app op children`
   with n-ary children, as in cvc5's `NodeValue`.
+
+Numeric payloads (bit-vector widths and values, operator indices) are `Int`, the
+type Logos uses, so `toEo` copies them unchanged. Out-of-range values are not
+excluded by the datatype but rejected by `Node.WellTyped`. (cvc5 itself uses an
+unsigned width and an arbitrary-precision value.)
 
 `Node` is a plain tree with structural equality, not hash-consed through a
 `NodeManager`. Hash-consing would tie every theorem to invariants of a global
@@ -40,8 +47,8 @@ table. Speed will come from a cached hash, physical sharing (`ShareCommon`) and 
 rewrite cache keyed on the node. A table-backed `NodeManager` can be added
 underneath later without changing the specification.
 
-Parameterized kinds (`BITVECTOR_EXTRACT` and so on) will carry their indices as
-an extra payload on `app`, where cvc5 has an operator node (`getOperator()`).
+`APPLY_UF`, whose operator is a function symbol rather than indices, will need
+an `Op` constructor holding a `Node` (making `Op` and `Node` mutual).
 
 ### Semantics (`Telos/Node/ToEo.lean`, `verification/TelosProofs/Spec.lean`)
 

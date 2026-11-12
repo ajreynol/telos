@@ -13,7 +13,9 @@ inductive TypeNode where
   | boolean
   | integer
   | real
-  | bitVector (width : Nat)
+  /-- Bit-vectors of width `width`. The width is an `Int`, as in Logos's
+  `(BitVec w)`; a negative width is rejected by `Node.WellTyped`. -/
+  | bitVector (width : Int)
   deriving DecidableEq, Repr, Inhabited, Hashable
 
 namespace TypeNode

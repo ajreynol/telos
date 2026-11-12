@@ -29,6 +29,8 @@ inductive Kind where
   | OR
   | XOR
   | ITE
+  -- theory/bv (parameterized kinds take their indices from `Op.indexed`)
+  | BITVECTOR_EXTRACT
   deriving DecidableEq, Repr, Inhabited, Hashable
 
 /-- cvc5's `TheoryId` (`src/theory/theory_id.h`), for the theories `Kind` covers. -/
@@ -47,5 +49,6 @@ def Kind.theoryId : Kind → TheoryId
   | .CONST_BITVECTOR => .THEORY_BV
   | .VARIABLE | .EQUAL => .THEORY_BUILTIN
   | .NOT | .AND | .IMPLIES | .OR | .XOR | .ITE => .THEORY_BOOL
+  | .BITVECTOR_EXTRACT => .THEORY_BV
 
 end Telos
