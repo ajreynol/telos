@@ -41,9 +41,11 @@ use kinds that `Node.ofEo` cannot read back yet. -/
 def expectedToFail : List String :=
   ["arith-eq-elim-real", "arith-eq-elim-int",
    "bool-not-true", "bool-not-false", "ite-neg-branch", "eq-cond-deq",
-   -- premises that need constants; right-hand sides with `div_total`/`mod_total`,
-   -- which have no kind yet
+   -- premises that need constants (tested on concrete instances in
+   -- test/examples/arith.smt2)
    "arith-int-div-total", "arith-int-mod-total", "arith-int-eq-conflict",
+   "arith-int-div-total-neg", "arith-int-mod-total-neg", "arith-mod-over-mod-1",
+   "arith-mod-over-mod", "arith-mod-over-mod-mult",
    -- a Boolean condition with arithmetic branches: variables of two types
    "arith-geq-ite-lift", "arith-leq-ite-lift"]
 

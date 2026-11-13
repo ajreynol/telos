@@ -420,23 +420,37 @@ tested:
    disagreements. To do: `define-fun`, and fuzzing in CI.
 6. **Arithmetic, then bit-vectors.** Arithmetic is started.
    - Kinds `ADD`, `SUB`, `NEG`, `MULT`, `DIVISION`, `INTS_DIVISION`,
-     `INTS_MODULUS`, `ABS`, `LT`, `LEQ`, `GT`, `GEQ`, `TO_REAL`, `TO_INTEGER`
-     and `IS_INTEGER`, with their congruence proof, and 22 more generated rules.
+     `INTS_MODULUS`, their total versions, `ABS`, `LT`, `LEQ`, `GT`, `GEQ`,
+     `TO_REAL`, `TO_INTEGER` and `IS_INTEGER`, with their congruence proof, and
+     33 more generated rules.
    - `Telos/Theory/Arith.lean` ports the core of cvc5's `ArithRewriter`:
      polynomial normal forms of terms (certified by `arith_poly_norm`), the
      normalization of `>=`, `<=`, `>` and `<` to `(>= sum c)` or
      `(not (>= sum c))` with integer tightening (`arith_poly_norm_rel`,
      `arith-elim-*`, `arith-leq-norm`, `arith-int-geq-tighten`), and equalities
-     (integer conflicts by `arith-int-eq-conflict`, orientation by `eq-symm`).
-   - Fuzzing (`scripts/fuzz.py --arith`, 3000 terms of depth 4): 91% identical
-     to cvc5, 99.5% up to the orientation of equalities, no semantic
-     disagreements. Ethos accepts all proofs (`scripts/check-proofs.py --arith`).
+     (integer conflicts by `arith-int-eq-conflict`, orientation by `eq-symm`),
+     `div`/`mod` by constants to their total versions and the total versions'
+     cases (by zero, one, a negative constant, constants, `mod` over `mod`),
+     and constant `abs`, `to_int` and `is_int`.
+   - Fuzzing (`scripts/fuzz.py --arith`, 3000 terms of depth 4, including
+     `div`, `mod`, `abs`, `to_int` and `is_int`): 83.5% identical to cvc5,
+     92.7% up to the orientation of equalities, no semantic disagreements.
+     Ethos accepts all proofs (`scripts/check-proofs.py --arith`).
+   - Arithmetic literals are printed as single tokens (`-3`, `1/2`, `3/1`), as
+     Eunoia writes them and as cvc5 prints them with `--print-arith-lit-token`,
+     which `scripts/fuzz.py` passes.
    - Deviations: an integer leaf of a real sum keeps its `to_real`, since Logos
      has no mixed arithmetic (cvc5 prints its mixed sums the same way);
-     nonlinear monomials are ordered by telos's term order, where cvc5 uses node
-     ids.
-   - To do: `div`, `mod`, `abs`, `to_int`, `is_int`, the total and extended
-     operators, then bit-vectors. Bit-vectors are where `bv_poly_norm` comes in.
+     non-variable leaves (products, `abs`, `div`, …) are ordered by telos's term
+     order, where cvc5 uses node ids, which also decides the leading term of a
+     normalized inequality.
+   - Rewrites cvc5 performs that CPC has no rule for, so telos cannot certify
+     them: `(is_int (to_real x))` to `true` (the reduction rule for `is_int`
+     introduces a skolem `Node` cannot represent), `to_real` removed from both
+     sides of `/`, and `(div_total (mod_total x c) c)` to `0`.
+   - To do: the extended operators (`int.pow2`, `int.log2`, `iand`,
+     transcendentals), then bit-vectors. Bit-vectors are where `bv_poly_norm`
+     comes in.
 7. **Performance.** Rewrite cache, sharing, cached hashes; a proof that children
    of well-typed nodes are well typed (removing the runtime check); generated
    program-equals-template lemmas for hot rules.

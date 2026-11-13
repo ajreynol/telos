@@ -16,8 +16,10 @@ namespace Telos
 /-- What a pattern variable is bound to. -/
 inductive Binding where
   | node (n : Node)
-  /-- A run of children of an n-ary application of kind `k`. -/
-  | list (k : Kind) (elems : List Node)
+  /-- A run of children of an n-ary application of kind `k`. `seed` is the first
+  child of that application, from which a typed nil (`+`, `*`) is computed when
+  the run is empty. -/
+  | list (k : Kind) (elems : List Node) (seed : Option Node := none)
   deriving BEq, Inhabited
 
 /-- A partial assignment of pattern variables. -/
@@ -37,17 +39,18 @@ partial def matchPat (σ : Subst) : Pat → Node → List Subst
   | .var i, n => σ.bind i (.node n)
   | .listVar _, _ => []
   | .const c, n => if n == .const c then [σ] else []
-  | .app k ps, .app (.kind k') cs => if k == k' then matchList k σ ps cs.toList else []
+  | .app k ps, .app (.kind k') cs => if k == k' then matchList k cs[0]? σ ps cs.toList else []
   | .app _ _, _ => []
 
 /-- All extensions of `σ` under which the patterns `ps` match the children `cs`
 of an application of kind `k`. A list variable takes any run of children. -/
-partial def matchList (k : Kind) (σ : Subst) : List Pat → List Node → List Subst
+partial def matchList (k : Kind) (seed : Option Node) (σ : Subst) :
+    List Pat → List Node → List Subst
   | [], [] => [σ]
   | .listVar i :: ps, cs =>
       (List.range (cs.length + 1)).flatMap fun j =>
-        (σ.bind i (.list k (cs.take j))).flatMap fun σ' => matchList k σ' ps (cs.drop j)
-  | p :: ps, c :: cs => (matchPat σ p c).flatMap fun σ' => matchList k σ' ps cs
+        (σ.bind i (.list k (cs.take j) seed)).flatMap fun σ' => matchList k seed σ' ps (cs.drop j)
+  | p :: ps, c :: cs => (matchPat σ p c).flatMap fun σ' => matchList k seed σ' ps cs
   | _ :: _, [] | [], _ :: _ => []
 
 end
@@ -56,13 +59,12 @@ end
 is the `:list` term Eunoia binds: the right-nested tail ending in the nil. -/
 def Binding.toEo : Binding → Option Term
   | .node n => some n.toEo
-  | .list k elems =>
+  | .list k elems seed =>
     match k.eoShape with
-    -- An empty run's nil would need the type of the elements, which a typed nil
-    -- (`+`, `*`) is computed from; it is left stuck, and the step fails.
     | .rightAssocNil op nil =>
       let xs := elems.map Node.toEo
-      some (eoRightAssocNil op (nil.eval op (xs.headD Term.Stuck)) xs)
+      let first := xs.head? <|> (seed.map Node.toEo)
+      some (eoRightAssocNil op (nil.eval op (first.getD Term.Stuck)) xs)
     | _ => none
 
 mutual

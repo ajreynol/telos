@@ -25,9 +25,10 @@ lake build telos
 
 The input is an SMT-LIB script of `declare-const`, `declare-fun`, `declare-sort`
 and `(simplify t)` commands, read by Logos's parser. For each `t`, telos prints
-its rewrite, as cvc5 does. Only some theories are ported so far: Booleans, linear
-and nonlinear arithmetic over `+`, `-`, `*`, `/` by constants, `to_real` and the
-comparisons, and equality, UF and quantifiers as far as they are Boolean. Terms
+its rewrite, as cvc5 does. Only some theories are ported so far: Booleans,
+arithmetic (`+`, `-`, `*`, `/`, `div`, `mod`, `abs`, `to_real`, `to_int`,
+`is_int` and the comparisons), and equality, UF and quantifiers as far as they
+are Boolean. Terms
 with other operators are reported as unsupported, and rewriting of the supported
 ones is incomplete.
 
@@ -61,6 +62,7 @@ bash scripts/check-hygiene.sh           # no sorry/axiom; trusted code is listed
 python3 scripts/gen-rules.py            # regenerate Telos/Rules/Generated.lean
 lake build telos-fuzz && python3 scripts/fuzz.py --cvc5 PATH   # compare with cvc5
 python3 scripts/check-proofs.py --fuzz 500                      # proofs, with Ethos
+python3 scripts/loc-summary.py                                  # lines: spec, rewriter, proofs
 ```
 
 The rule table `Telos/Rules/Generated.lean` is generated from the CPC signature in

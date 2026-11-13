@@ -188,6 +188,58 @@ def rewriteToReal (n : Node) : Option (Rw n) :=
   | #[.const _] => byEvaluate n
   | _ => none
 
+/-! ## Other operators -/
+
+def intConst? : Node → Option Int
+  | .const (.integer i) => some i
+  | _ => none
+
+/-- cvc5's `rewriteIntsDivMod`: `div` and `mod` by a nonzero constant are total. -/
+def rewriteIntsDivMod (n : Node) : Option (Rw n) :=
+  match n.getKind, n.getChildren with
+  | .INTS_DIVISION, #[_, .const (.integer d)] =>
+    if d == 0 then none else byRule "arith-int-div-total" n
+  | .INTS_MODULUS, #[_, .const (.integer d)] =>
+    if d == 0 then none else byRule "arith-int-mod-total" n
+  | _, _ => none
+
+/-- cvc5's `rewriteIntsDivModTotal`. -/
+def rewriteIntsDivModTotal (n : Node) : Option (Rw n) :=
+  let isDiv := n.getKind == .INTS_DIVISION_TOTAL
+  let name (s : String) := (if isDiv then "arith-int-div-total-" else "arith-int-mod-total-") ++ s
+  match n.getChildren with
+  | #[t, d] =>
+    match intConst? d with
+    | some 0 => byRule (name "zero") n
+    | some 1 => byRule (name "one") n
+    | some k =>
+      if k < 0 then
+        -- `(div_total t (- k))` and `(mod_total t (- k))`, with `(- k)` evaluated.
+        (byRule (name "neg") n).bind fun r => r.next? fun m =>
+          if isDiv then Rw.congrArg m 0 fun g => Rw.congrArg g 1 byEvaluate
+          else Rw.congrArg m 1 byEvaluate
+      else if t.isConst then byEvaluate n
+      else if !isDiv then
+        match t.getKind with
+        | .INTS_MODULUS_TOTAL =>
+          if t.getChildren[1]? == some d then byRule "arith-mod-over-mod-1" n else none
+        | .ADD => byRule "arith-mod-over-mod" n
+        | .MULT => byRule "arith-mod-over-mod-mult" n
+        | _ => none
+      else none
+    | none => none
+  | _ => none
+
+/-- cvc5's `rewriteAbs`, `rewriteExtIntegerOp` and constant division: evaluate
+constants; `(to_int (to_real x))` is `x`. -/
+def rewriteOther (n : Node) : Option (Rw n) :=
+  match n.getKind, n.getChildren with
+  | .ABS, #[.const _] | .TO_INTEGER, #[.const _] | .IS_INTEGER, #[.const _] => byEvaluate n
+  | .TO_INTEGER, #[.app (.kind .TO_REAL) _] => byRule "arith-to-int-elim-to-real" n
+  | .DIVISION_TOTAL, #[_, .const (.rational 0)] => byRule "arith-div-total-zero-real" n
+  | .DIVISION_TOTAL, #[_, .const (.integer 0)] => byRule "arith-div-total-zero-int" n
+  | _, _ => none
+
 /-! ## Inequalities -/
 
 /-- `(= (* cx (- a b)) (* cy (- s c)))`, the premise of `arith_poly_norm_rel`. -/
@@ -383,15 +435,20 @@ def preRewrite (n : Node) : RewriteResponse n :=
   | none => .done n
 
 def postRewrite (n : Node) : RewriteResponse n :=
-  let r : Option (Rw n) :=
-    if isArithTerm n then normalizeTerm n
+  -- Rewrites to other operators are rewritten again from the start, as cvc5's
+  -- `returnRewrite` does (`REWRITE_AGAIN_FULL`).
+  let r : Option (RewriteStatus × Rw n) :=
+    if isArithTerm n then (.REWRITE_DONE, ·) <$> normalizeTerm n
     else match n.getKind with
-      | .TO_REAL => rewriteToReal n
-      | .GEQ | .LEQ => rewriteIneq n
-      | .EQUAL => rewriteEq n
-      | _ => none
+      | .TO_REAL => (.REWRITE_DONE, ·) <$> rewriteToReal n
+      | .GEQ | .LEQ => (.REWRITE_DONE, ·) <$> rewriteIneq n
+      | .EQUAL => (.REWRITE_DONE, ·) <$> rewriteEq n
+      | .INTS_DIVISION | .INTS_MODULUS => (.REWRITE_AGAIN_FULL, ·) <$> rewriteIntsDivMod n
+      | .INTS_DIVISION_TOTAL | .INTS_MODULUS_TOTAL =>
+        (.REWRITE_AGAIN_FULL, ·) <$> rewriteIntsDivModTotal n
+      | _ => (.REWRITE_AGAIN_FULL, ·) <$> rewriteOther n
   match r with
-  | some ⟨m, h⟩ => if m == n then .done n else ⟨.REWRITE_DONE, m, h⟩
+  | some (st, ⟨m, h⟩) => if m == n then .done n else ⟨st, m, h⟩
   | none => .done n
 
 end Telos.Arith

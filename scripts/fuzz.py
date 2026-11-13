@@ -69,7 +69,8 @@ def orient_free(e):
 
 
 def run_cvc5(cvc5, script):
-    out = subprocess.run([cvc5, "--lang", "smt2", "--incremental", "--dag-thresh=0"], input=script,
+    out = subprocess.run([cvc5, "--lang", "smt2", "--incremental", "--dag-thresh=0",
+                          "--print-arith-lit-token"], input=script,
                          capture_output=True, text=True, check=False)
     if out.returncode != 0:
         sys.exit(f"error: cvc5 failed:\n{out.stderr or out.stdout}")

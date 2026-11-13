@@ -23,12 +23,10 @@ def TypeNode.toSmtLib : TypeNode → String
 
 def Const.toSmtLib : Const → String
   | .boolean b => if b then "true" else "false"
-  | .integer n => if n < 0 then s!"(- {-n})" else toString n
-  | .rational q =>
-    -- As cvc5 prints real constants: `2.0`, `(- 1.0)`, `(/ 1 2)`, `(/ (- 1) 2)`.
-    let num := if q.num < 0 then s!"(- {q.num.natAbs})" else s!"{q.num}"
-    if q.den == 1 then (if q.num < 0 then s!"(- {q.num.natAbs}.0)" else s!"{q.num}.0")
-    else s!"(/ {num} {q.den})"
+  -- Arithmetic literals as single tokens, as Eunoia writes them and as cvc5 prints
+  -- them with `--print-arith-lit-token`: `-3`, `1/2`, `-5/2`, `3/1`.
+  | .integer n => toString n
+  | .rational q => s!"{q.num}/{q.den}"
   | .bitVector w v => s!"(_ bv{v} {w})"
   | .string s => "\"" ++ String.ofList (s.map Char.ofNat) ++ "\""
 
@@ -38,6 +36,8 @@ def Kind.smtLibName : Kind → String
   | .BITVECTOR_EXTRACT => "extract"
   | .ADD => "+" | .SUB => "-" | .NEG => "-" | .MULT => "*" | .DIVISION => "/"
   | .INTS_DIVISION => "div" | .INTS_MODULUS => "mod" | .ABS => "abs"
+  | .DIVISION_TOTAL => "/_total" | .INTS_DIVISION_TOTAL => "div_total"
+  | .INTS_MODULUS_TOTAL => "mod_total"
   | .LT => "<" | .LEQ => "<=" | .GT => ">" | .GEQ => ">="
   | .TO_REAL => "to_real" | .TO_INTEGER => "to_int" | .IS_INTEGER => "is_int"
   | k => toString (repr k)

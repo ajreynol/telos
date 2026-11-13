@@ -41,23 +41,33 @@ def realAtoms : Array Node :=
     .const (.rational 3)]
 
 /-- A random arithmetic term, of type `Real` when `real`. -/
-def genArith (real : Bool) : Nat → GenM Node
+partial def genArith (real : Bool) : Nat → GenM Node
   | 0 => do
     if real && (← pick 3) == 0 then return mkNode .TO_REAL #[intAtoms[← pick intAtoms.size]!]
     let as := if real then realAtoms else intAtoms
     return as[← pick as.size]!
   | d + 1 => do
-    match ← pick 8 with
+    match ← pick 11 with
     | 0 | 1 => genArith real 0
     | 2 => return mkNode .ADD (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genArith real d)
     | 3 => return mkNode .SUB #[← genArith real d, ← genArith real d]
     | 4 => return mkNode .NEG #[← genArith real d]
     | 5 => return mkNode .MULT #[← genArith real 0, ← genArith real d]
     | 6 => if real then return mkNode .TO_REAL #[← genArith false d] else genArith real d
-    | _ => return mkNode .MULT #[← genArith real d, ← genArith real d]
+    | 7 => return mkNode .MULT #[← genArith real d, ← genArith real d]
+    | 8 => return mkNode .ABS #[← genArith real d]
+    | 9 =>
+      if real then return mkNode .DIVISION #[← genArith real d, (← genArith real 0)]
+      else return mkNode .TO_INTEGER #[← genArith true d]
+    | _ =>
+      if real then genArith real d
+      else
+        let k := if (← pick 2) == 0 then Kind.INTS_DIVISION else .INTS_MODULUS
+        return mkNode k #[← genArith false d, ← genArith false 0]
 
 /-- A random comparison of arithmetic terms. -/
 def genCmp (d : Nat) : GenM Node := do
+  if (← pick 10) == 0 then return mkNode .IS_INTEGER #[← genArith true d]
   let real := (← pick 2) == 0
   let k := #[Kind.GEQ, .LEQ, .GT, .LT, .EQUAL][← pick 5]!
   return mkNode k #[← genArith real d, ← genArith real d]
