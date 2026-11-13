@@ -15,6 +15,12 @@ theory rewriters and is tested against cvc5 by differential fuzzing.
 theorem Telos.rewrite_correct (t : Node) (h : t.WellTyped) : t.Equiv (rewrite t)
 ```
 
+## The name
+
+*Telos* is Greek for "end" or "goal". A verified SMT solver is the end goal of
+the verification and Eunoia efforts this project builds on; the verified rewriter
+is a step toward it.
+
 ## Usage
 
 ```sh
@@ -38,8 +44,9 @@ prints only proofs that Logos's checker accepts. Check them with
 `ethos --include=.lake/packages/Cpc/install/defs/Cpc.cached.eo FILE`, or run
 `python3 scripts/check-proofs.py --fuzz 500`.
 
-See [`docs/design.md`](docs/design.md) for the architecture and roadmap, and
-[`TRUSTED.md`](TRUSTED.md) for what the theorem relies on.
+See [`docs/design.md`](docs/design.md) for the architecture and roadmap,
+[`docs/solver-plan.md`](docs/solver-plan.md) for the original, broader plan for a
+verified solver, and [`TRUSTED.md`](TRUSTED.md) for what the theorem relies on.
 
 ## Layout
 
@@ -78,3 +85,16 @@ then run `lake update Cpc` and `lake -d verification update`.
 To develop against a local Logos checkout, temporarily replace the `git`/`rev`
 lines with `path = "../logos"` (and `path = "../../logos/verification"`), and do
 not commit that change.
+
+## How this repository is maintained
+
+This repository is part of the **Eunoia ecosystem** and follows its
+[shared repository policy](https://github.com/ajreynol/kanon/blob/main/docs/policy.md).
+CI checks it against policy contract `1`.
+
+The work is written by a human maintainer together with AI coding agents working
+under the maintainer's direction; the maintainer reviews changes before they are
+committed. That review does not re-check proofs by hand: correctness rests on
+Lean's kernel and the trusted base listed in [`TRUSTED.md`](TRUSTED.md), and
+agreement with cvc5's choice of rewrites is tested by differential fuzzing, not
+proved.
