@@ -21,6 +21,7 @@ def script : String := "
 (declare-fun f (Int) Bool)
 (declare-sort U 0)
 (declare-const u U)
+(declare-const s String)
 (simplify (not (not a)))
 (simplify (and a true b))
 (simplify (ite (not a) b false))
@@ -29,7 +30,7 @@ def script : String := "
 (simplify (forall ((y Int)) (and (= y x) true)))
 (simplify (= u u))
 (simplify a)
-(simplify (+ x 1))
+(simplify (str.len s))
 "
 
 /-- The output of each query, and whether its proof was printed. -/
@@ -45,7 +46,7 @@ def results : Option (List (Except String String × Bool)) := do
   some "(and (not a) b)",
   some "(= x 0)",
   some "(f x)",
-  some "(forall ((y Int)) (= y x))",
+  some "(forall ((y Int)) (= x y))",  -- cvc5: false (quantifier rewriting is not ported)
   some "(= u u)",  -- not yet `true`: builtin equality rewriting is not ported
   some "a",
   none]
@@ -65,6 +66,7 @@ def proofText : Option String := do
 (declare-const f (-> Int Bool))
 (declare-sort U 0)
 (declare-const u U)
+(declare-const s String)
 (assume @goal (not (= (ite (not a) b false) (and (not a) b))))
 (step @p0 (= (ite (not a) b false) (ite a false b)) :rule ite-not-cond :args (a b false))
 (step @p1 (= (ite a false b) (and (not a) b)) :rule ite-then-false :args (a b))

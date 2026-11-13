@@ -38,10 +38,25 @@ KINDS = {
     "xor": "XOR",
     "=": "EQUAL",
     "ite": "ITE",
+    "+": "ADD",
+    "*": "MULT",
+    "/": "DIVISION",
+    "div": "INTS_DIVISION",
+    "mod": "INTS_MODULUS",
+    "abs": "ABS",
+    "<": "LT",
+    "<=": "LEQ",
+    ">": "GT",
+    ">=": "GEQ",
+    "to_real": "TO_REAL",
+    "to_int": "TO_INTEGER",
+    "is_int": "IS_INTEGER",
 }
+# Operators whose kind depends on the number of arguments.
+KINDS_BY_ARITY = {("-", 1): "NEG", ("-", 2): "SUB"}
 # Kinds whose applications are `:right-assoc-nil`, where `:list` variables match
 # a run of children.
-NARY = {"AND", "OR"}
+NARY = {"AND", "OR", "ADD", "MULT"}
 CONSTS = {"true": ".const (.boolean true)", "false": ".const (.boolean false)"}
 
 
@@ -127,10 +142,16 @@ def spec_of_rule(form, crules):
                 return f".var {variables[t]}"
             if t in CONSTS:
                 return CONSTS[t]
+            if re.fullmatch(r"-?[0-9]+", t):
+                return f".const (.integer ({t}))"
+            m = re.fullmatch(r"(-?[0-9]+)/([0-9]+)", t)
+            if m:
+                return f".const (.rational (mkRat ({m.group(1)}) {m.group(2)}))"
             raise Skip(f"symbol {t}")
-        if not t or not isinstance(t[0], str) or t[0] not in KINDS:
+        head = t[0] if t and isinstance(t[0], str) else None
+        kind = KINDS.get(head) or KINDS_BY_ARITY.get((head, len(t) - 1))
+        if kind is None:
             raise Skip(f"operator {show(t[0]) if t else '()'}")
-        kind = KINDS[t[0]]
         args = [pat(a, kind) for a in t[1:]]
         return f".app .{kind} [{', '.join(args)}]"
 

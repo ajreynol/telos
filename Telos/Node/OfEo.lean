@@ -105,8 +105,23 @@ partial def ofEo (env : List Node) (t : Term) : Option Node := do
   if let .Var .. := t then return ← varOfEo env t false
   let (h, xs) := eoSpine t
   match h, xs with
-  | .UOp UserOp.and, [_, _] => nary .AND UserOp.and (Term.Boolean true)
-  | .UOp UserOp.or, [_, _] => nary .OR UserOp.or (Term.Boolean false)
+  | .UOp UserOp.and, [x, _] => nary .AND x
+  | .UOp UserOp.or, [x, _] => nary .OR x
+  | .UOp UserOp.plus, [x, _] => nary .ADD x
+  | .UOp UserOp.mult, [x, _] => nary .MULT x
+  | .UOp UserOp.neg, [_, _] => app .SUB xs
+  | .UOp UserOp.__eoo_neg_2, [_] => app .NEG xs
+  | .UOp UserOp.qdiv, [_, _] => app .DIVISION xs
+  | .UOp UserOp.div, [_, _] => app .INTS_DIVISION xs
+  | .UOp UserOp.mod, [_, _] => app .INTS_MODULUS xs
+  | .UOp UserOp.abs, [_] => app .ABS xs
+  | .UOp UserOp.lt, [_, _] => app .LT xs
+  | .UOp UserOp.leq, [_, _] => app .LEQ xs
+  | .UOp UserOp.gt, [_, _] => app .GT xs
+  | .UOp UserOp.geq, [_, _] => app .GEQ xs
+  | .UOp UserOp.to_real, [_] => app .TO_REAL xs
+  | .UOp UserOp.to_int, [_] => app .TO_INTEGER xs
+  | .UOp UserOp.is_int, [_] => app .IS_INTEGER xs
   | .UOp UserOp.eq, [_, _] => app .EQUAL xs
   | .UOp UserOp.not, [_] => app .NOT xs
   | .UOp UserOp.imp, [_, _] => app .IMPLIES xs
@@ -122,8 +137,9 @@ partial def ofEo (env : List Node) (t : Term) : Option Node := do
 where
   app (k : Kind) (xs : List Term) : Option Node := do
     return .app (.kind k) (← xs.mapM (ofEo env)).toArray
-  nary (k : Kind) (op : UserOp) (nil : Term) : Option Node := do
-    let elems ← eoRightAssocNilElems op nil t
+  nary (k : Kind) (first : Term) : Option Node := do
+    let .rightAssocNil op nil := k.eoShape | none
+    let elems ← eoRightAssocNilElems op (nil.eval op first) t
     if elems.length < 2 then none
     app k elems
   binder (k : Kind) (vs body : Term) : Option Node := do

@@ -32,6 +32,22 @@ inductive Kind where
   | OR
   | XOR
   | ITE
+  -- theory/arith
+  | ADD
+  | SUB
+  | NEG
+  | MULT
+  | DIVISION
+  | INTS_DIVISION
+  | INTS_MODULUS
+  | ABS
+  | LT
+  | LEQ
+  | GT
+  | GEQ
+  | TO_REAL
+  | TO_INTEGER
+  | IS_INTEGER
   -- theory/bv (parameterized kinds take their indices from `Op.indexed`)
   | BITVECTOR_EXTRACT
   -- theory/uf (the function is the operator: `Op.node APPLY_UF f`)
@@ -66,6 +82,8 @@ def Kind.theoryId : Kind → TheoryId
   | .CONST_STRING => .THEORY_STRINGS
   | .VARIABLE | .BOUND_VARIABLE | .EQUAL => .THEORY_BUILTIN
   | .NOT | .AND | .IMPLIES | .OR | .XOR | .ITE => .THEORY_BOOL
+  | .ADD | .SUB | .NEG | .MULT | .DIVISION | .INTS_DIVISION | .INTS_MODULUS | .ABS
+  | .LT | .LEQ | .GT | .GEQ | .TO_REAL | .TO_INTEGER | .IS_INTEGER => .THEORY_ARITH
   | .BITVECTOR_EXTRACT => .THEORY_BV
   | .APPLY_UF => .THEORY_UF
   | .FORALL | .EXISTS | .BOUND_VAR_LIST | .INST_PATTERN_LIST => .THEORY_QUANTIFIERS

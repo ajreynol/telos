@@ -96,7 +96,12 @@ incomplete.
   (`Kind.eoShape`, `indexedEoShape`, `nodeEoShape`):
   - `spine head arity`: `(head x₁ … xₙ)`, curried (most operators, UF
     application, indexed operators);
-  - `rightAssocNil op nil`: `and`/`or`, right-nested with nil `true`/`false`;
+  - `rightAssocNil op nil`: `and`/`or`/`+`/`*`, right-nested and ending in a
+    nil. The nil is constant for `and`/`or` (`true`/`false`) and typed for `+`
+    and `*`: `(eo::nil op (eo::typeof x₁))`, which is `0`/`1` or `0/1`/`1/1`,
+    computed from the first element as Logos's parser and Eunoia do. The
+    congruence proof shows that equivalent first elements give the same nil
+    (`typedNil_congr`);
   - `binderList` and `binder op` for quantifiers; `none` for no CPC counterpart.
 
   Wrong arities become `Term.Stuck`. This file is part of the specification
@@ -413,9 +418,25 @@ tested:
    terms of depth 4: about 94% identical to cvc5, every other result identical up
    to (or caused by) the orientation of equalities, and no semantic
    disagreements. To do: `define-fun`, and fuzzing in CI.
-6. **Arithmetic, then bit-vectors.** Add kinds to the `toEo` tables and the
-   extractor's symbol table, then port strategies. This is where unverified
-   right-hand-side computations (`arith_poly_norm`, `bv_poly_norm`) come in.
+6. **Arithmetic, then bit-vectors.** Arithmetic is started.
+   - Kinds `ADD`, `SUB`, `NEG`, `MULT`, `DIVISION`, `INTS_DIVISION`,
+     `INTS_MODULUS`, `ABS`, `LT`, `LEQ`, `GT`, `GEQ`, `TO_REAL`, `TO_INTEGER`
+     and `IS_INTEGER`, with their congruence proof, and 22 more generated rules.
+   - `Telos/Theory/Arith.lean` ports the core of cvc5's `ArithRewriter`:
+     polynomial normal forms of terms (certified by `arith_poly_norm`), the
+     normalization of `>=`, `<=`, `>` and `<` to `(>= sum c)` or
+     `(not (>= sum c))` with integer tightening (`arith_poly_norm_rel`,
+     `arith-elim-*`, `arith-leq-norm`, `arith-int-geq-tighten`), and equalities
+     (integer conflicts by `arith-int-eq-conflict`, orientation by `eq-symm`).
+   - Fuzzing (`scripts/fuzz.py --arith`, 3000 terms of depth 4): 91% identical
+     to cvc5, 99.5% up to the orientation of equalities, no semantic
+     disagreements. Ethos accepts all proofs (`scripts/check-proofs.py --arith`).
+   - Deviations: an integer leaf of a real sum keeps its `to_real`, since Logos
+     has no mixed arithmetic (cvc5 prints its mixed sums the same way);
+     nonlinear monomials are ordered by telos's term order, where cvc5 uses node
+     ids.
+   - To do: `div`, `mod`, `abs`, `to_int`, `is_int`, the total and extended
+     operators, then bit-vectors. Bit-vectors are where `bv_poly_norm` comes in.
 7. **Performance.** Rewrite cache, sharing, cached hashes; a proof that children
    of well-typed nodes are well typed (removing the runtime check); generated
    program-equals-template lemmas for hot rules.

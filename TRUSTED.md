@@ -16,7 +16,9 @@ the wrong thing, so review them as specifications, not as code.
 - `Telos/Node/ToEo.lean`: the translation of `Node` to Logos terms. It assigns
   every node its meaning, so it must match how cvc5 prints that node in CPC. The
   per-operator part is a table (`Kind.eoShape`, `indexedEoShape`, `nodeEoShape`)
-  giving each operator's CPC head symbol and arity.
+  giving each operator's CPC head symbol and arity. For `+` and `*` it uses the
+  signature's own `__eo_nil` and `__eo_typeof` (`Cpc/Logos.lean`) to compute the
+  nil terminator from the type, as Eunoia does.
 - `verification/TelosProofs/Spec.lean`: the definition of `Node.Equiv`.
 
 ## Not trusted

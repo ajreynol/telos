@@ -1,6 +1,8 @@
 import TelosProofs.Equiv
 import Cpc.Proofs.RuleSupport.Cong.Spine
 import Cpc.Proofs.RuleSupport.SpineArgsSupport
+import Cpc.Proofs.Translation.Inversions
+import Cpc.Proofs.Translation.EoTypeof
 
 /-!
 # Congruence
@@ -74,6 +76,64 @@ theorem translation_rest {op : UserOp} (hop : op = UserOp.and ∨ op = UserOp.or
     exacts [.and, .or]
   exact SpineArgsSupport.spine_args_have_smt_translation _ [x, r] hHead h r (by simp)
 
+/-- The tail of a well-typed `(+ x r)` or `(* x r)` is well typed. -/
+theorem translation_rest_arith {op : UserOp} (hop : op = UserOp.plus ∨ op = UserOp.mult)
+    {x r : Term} (h : eo_has_smt_translation (eoApp2 op x r)) : eo_has_smt_translation r := by
+  have key : ∀ {T U : SmtType}, __smtx_typeof_arith_overload_op_2 T U ≠ SmtType.None →
+      U ≠ SmtType.None := by
+    intro T U h hU
+    subst hU
+    cases T <;> exact h rfl
+  unfold eo_has_smt_translation at h ⊢
+  rcases hop with rfl | rfl
+  · change __smtx_typeof (SmtTerm.plus _ _) ≠ _ at h
+    rw [typeof_plus_eq] at h
+    exact key h
+  · change __smtx_typeof (SmtTerm.mult _ _) ≠ _ at h
+    rw [typeof_mult_eq] at h
+    exact key h
+
+/-- The typed nil of `+` and `*` is `0` or `1` of an arithmetic type, and stuck
+on any other type. -/
+theorem typedNil_eq {op : UserOp} (hop : op = UserOp.plus ∨ op = UserOp.mult) (A : Term) :
+    __eo_nil (Term.UOp op) A =
+      if op = UserOp.plus then __arith_mk_zero A else __arith_mk_one A := by
+  rcases hop with rfl | rfl <;> cases A <;> rfl
+
+theorem arith_mk_stuck {A : Term} (hI : A ≠ Term.UOp UserOp.Int) (hR : A ≠ Term.UOp UserOp.Real) :
+    __arith_mk_zero A = Term.Stuck ∧ __arith_mk_one A = Term.Stuck := by
+  constructor
+  · unfold __arith_mk_zero; split <;> simp_all
+  · unfold __arith_mk_one; split <;> simp_all
+
+/-- Equivalent first elements give `+` and `*` the same nil: the nil depends only
+on the type, which equivalent terms share. -/
+theorem typedNil_congr {op : UserOp} (hop : op = UserOp.plus ∨ op = UserOp.mult) {x y : Term}
+    (h : TermEquiv x y) : typedNil op x = typedNil op y := by
+  obtain ⟨⟨hne, heq⟩, _⟩ := (termEquiv_iff x y).1 h
+  have hx := TranslationProofs.eo_to_smt_type_typeof_of_smt_type x rfl hne
+  have hy := TranslationProofs.eo_to_smt_type_typeof_of_smt_type y heq.symm hne
+  unfold typedNil
+  rw [typedNil_eq hop, typedNil_eq hop]
+  generalize __smtx_typeof (__eo_to_smt x) = T at hx hy hne
+  generalize __eo_typeof x = A at hx
+  generalize __eo_typeof y = B at hy
+  by_cases hI : T = SmtType.Int
+  · subst hI
+    rw [TranslationProofs.eo_to_smt_type_eq_int hx, TranslationProofs.eo_to_smt_type_eq_int hy]
+  by_cases hR : T = SmtType.Real
+  · subst hR
+    rw [TranslationProofs.eo_to_smt_type_eq_real hx, TranslationProofs.eo_to_smt_type_eq_real hy]
+  have notArith : ∀ {C : Term}, __eo_to_smt_type C = T →
+      __arith_mk_zero C = Term.Stuck ∧ __arith_mk_one C = Term.Stuck := by
+    intro C hC
+    refine arith_mk_stuck (fun hc => hI ?_) (fun hc => hR ?_)
+    · rw [← hC, hc]; rfl
+    · rw [← hC, hc]; rfl
+  obtain ⟨hA0, hA1⟩ := notArith hx
+  obtain ⟨hB0, hB1⟩ := notArith hy
+  split <;> simp [hA0, hA1, hB0, hB1]
+
 theorem termEquiv_rightAssocNil (op : UserOp) (nil : Term)
     (hrest : ∀ {x r : Term}, eo_has_smt_translation (eoApp2 op x r) → eo_has_smt_translation r)
     {xs ys : List Term} (h : List.Forall₂ TermEquiv xs ys)
@@ -105,12 +165,29 @@ theorem shape_congr (sh : AppShape) (hsh : sh.isChildCongruent = true) {xs ys : 
     · rw [AppShape.toEo, ite_eq_right hacc] at ht
       exact absurd ht not_translation_stuck
   | rightAssocNil op nil =>
-    simp only [AppShape.isChildCongruent, Bool.or_eq_true, beq_iff_eq] at hsh
     by_cases hle : 2 ≤ xs.length
     · have hle' : 2 ≤ ys.length := hlen ▸ hle
       rw [AppShape.toEo, ite_eq_left hle] at ht
       rw [AppShape.toEo, AppShape.toEo, ite_eq_left hle, ite_eq_left hle']
-      exact termEquiv_rightAssocNil _ _ (translation_rest hsh) h ht
+      have hnil : nil.eval op (ys.headD Term.Stuck) = nil.eval op (xs.headD Term.Stuck) := by
+        cases nil with
+        | const _ => rfl
+        | typed =>
+          simp only [AppShape.isChildCongruent, Bool.or_eq_true, beq_iff_eq] at hsh
+          cases h with
+          | nil => simp at hle
+          | cons hxy _ => exact (typedNil_congr hsh hxy).symm
+      rw [hnil]
+      have hrest : ∀ {x r : Term}, eo_has_smt_translation (eoApp2 op x r) →
+          eo_has_smt_translation r := by
+        cases nil with
+        | const _ =>
+          simp only [AppShape.isChildCongruent, Bool.or_eq_true, beq_iff_eq] at hsh
+          exact translation_rest hsh
+        | typed =>
+          simp only [AppShape.isChildCongruent, Bool.or_eq_true, beq_iff_eq] at hsh
+          exact translation_rest_arith hsh
+      exact termEquiv_rightAssocNil _ _ hrest h ht
     · rw [AppShape.toEo, ite_eq_right hle] at ht
       exact absurd ht not_translation_stuck
   | binderList => simp [AppShape.isChildCongruent] at hsh

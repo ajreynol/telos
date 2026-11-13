@@ -41,13 +41,14 @@ def rw (n : Node) : String := (rewrite n).toSmtLib
 #guard rw (eqNode (notNode a) a) == "false"
 #guard rw (eqNode (eqNode x (.const (.integer 1))) (eqNode x (.const (.integer 2)))) ==
   "(and (not (= x 1)) (not (= x 2)))"
--- rewriteViaEqConstEq, in every orientation; the equalities keep theirs
+-- rewriteViaEqConstEq, in every orientation; the arithmetic rewriter orients the
+-- equalities, as cvc5 does
 #guard rw (eqNode (eqNode (.const (.integer 1)) x) (eqNode x (.const (.integer 2)))) ==
-  "(and (not (= 1 x)) (not (= x 2)))"
+  "(and (not (= x 1)) (not (= x 2)))"
 #guard rw (eqNode (eqNode x (.const (.integer 1))) (eqNode (.const (.integer 2)) x)) ==
-  "(and (not (= x 1)) (not (= 2 x)))"
+  "(and (not (= x 1)) (not (= x 2)))"
 #guard rw (eqNode (eqNode (.const (.integer 1)) x) (eqNode (.const (.integer 2)) x)) ==
-  "(and (not (= 1 x)) (not (= 2 x)))"
+  "(and (not (= x 1)) (not (= x 2)))"
 #guard rw (eqNode (eqNode x (.const (.integer 1))) (eqNode (.const (.integer 1)) x)) == "true"
 -- XOR
 #guard rw (mkNode .XOR #[mkTrue, notNode a]) == "a"

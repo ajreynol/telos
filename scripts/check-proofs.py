@@ -10,7 +10,7 @@ With `--fuzz N`, the queries are N random terms from `telos-fuzz` instead.
 
 Usage:
   scripts/check-proofs.py [--ethos PATH] FILE.smt2 ...
-  scripts/check-proofs.py [--ethos PATH] --fuzz N [--seed S] [--depth D]
+  scripts/check-proofs.py [--ethos PATH] --fuzz N [--seed S] [--depth D] [--arith]
 
 Build first: `lake build telos telos-fuzz`.
 """
@@ -29,11 +29,14 @@ FUZZ_PRELUDE = """(declare-const a Bool)
 (declare-const b Bool)
 (declare-const c Bool)
 (declare-const x Int)
+(declare-const y Int)
+(declare-const r Real)
+(declare-const s Real)
 """
 
 
-def fuzz_script(n, seed, depth):
-    out = subprocess.run([str(BIN / "telos-fuzz"), str(seed), str(n), str(depth)],
+def fuzz_script(n, seed, depth, arith):
+    out = subprocess.run([str(BIN / "telos-fuzz"), str(seed), str(n), str(depth)] + (["arith"] if arith else []),
                          capture_output=True, text=True, check=True).stdout
     terms = [line.split("\t")[0] for line in out.splitlines()]
     return FUZZ_PRELUDE + "".join(f"(simplify {t})\n" for t in terms)
@@ -61,6 +64,7 @@ def main():
     ap.add_argument("--fuzz", type=int, default=0)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--depth", type=int, default=3)
+    ap.add_argument("--arith", action="store_true", help="include arithmetic comparisons")
     a = ap.parse_args()
     if not (BIN / "telos").exists():
         sys.exit("error: build telos first: lake build telos telos-fuzz")
@@ -69,7 +73,7 @@ def main():
         files = list(a.files)
         if a.fuzz:
             f = Path(tmp) / "fuzz.smt2"
-            f.write_text(fuzz_script(a.fuzz, a.seed, a.depth))
+            f.write_text(fuzz_script(a.fuzz, a.seed, a.depth, a.arith))
             files.append(f)
         for f in files:
             n, failed = check(a.ethos, f, tmp)

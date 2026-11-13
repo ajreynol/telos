@@ -25,10 +25,11 @@ lake build telos
 
 The input is an SMT-LIB script of `declare-const`, `declare-fun`, `declare-sort`
 and `(simplify t)` commands, read by Logos's parser. For each `t`, telos prints
-its rewrite, as cvc5 does. Only some theories are ported so far (Booleans, and
-equality, UF and quantifiers as far as they are Boolean); terms with other
-operators are reported as unsupported, and rewriting of the supported ones is
-incomplete.
+its rewrite, as cvc5 does. Only some theories are ported so far: Booleans, linear
+and nonlinear arithmetic over `+`, `-`, `*`, `/` by constants, `to_real` and the
+comparisons, and equality, UF and quantifiers as far as they are Boolean. Terms
+with other operators are reported as unsupported, and rewriting of the supported
+ones is incomplete.
 
 With `--proof` (or `--proof-dir DIR`, one file per query), each result comes with
 a CPC proof of `(= t result)`, as a refutation of `(not (= t result))`. telos

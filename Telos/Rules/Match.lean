@@ -58,7 +58,11 @@ def Binding.toEo : Binding → Option Term
   | .node n => some n.toEo
   | .list k elems =>
     match k.eoShape with
-    | .rightAssocNil op nil => some (eoRightAssocNil op nil (elems.map Node.toEo))
+    -- An empty run's nil would need the type of the elements, which a typed nil
+    -- (`+`, `*`) is computed from; it is left stuck, and the step fails.
+    | .rightAssocNil op nil =>
+      let xs := elems.map Node.toEo
+      some (eoRightAssocNil op (nil.eval op (xs.headD Term.Stuck)) xs)
     | _ => none
 
 mutual

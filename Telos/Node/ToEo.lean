@@ -1,6 +1,7 @@
 import Telos.Node.Node
 import Cpc.SmtTranslate
 import Cpc.SmtTyping
+import Cpc.Logos
 
 /-!
 # Translation to Logos terms
@@ -88,13 +89,33 @@ def Arity.accepts : Arity → Nat → Bool
   | .exactly n, m => m == n
   | .atLeast n, m => n ≤ m
 
+/-- The nil terminator of a `:right-assoc-nil` operator. -/
+inductive Nil where
+  /-- The same nil for every type, like `true` for `and`. -/
+  | const (t : Term)
+  /-- `(eo::nil op (eo::typeof x₁))`, computed from the first element, like `0`
+  or `0/1` for `+`. -/
+  | typed
+
+/-- The nil of a `:right-assoc-nil` operator whose nil depends on the type of
+its elements: `(eo::nil op (eo::typeof x₁))`. -/
+def typedNil (op : UserOp) (x : Term) : Term :=
+  __eo_nil (Term.UOp op) (__eo_typeof x)
+
+/-- The nil of `op` for a list whose first element is `x`. -/
+def Nil.eval (op : UserOp) : Nil → Term → Term
+  | .const t, _ => t
+  | .typed, x => typedNil op x
+
 /-- How an application is written in CPC. Every operator is described by one of
 these shapes, so the translation (and its congruence proof) is uniform. -/
 inductive AppShape where
   /-- `(head x₁ … xₙ)`, curried: `Apply (… (Apply head x₁) …) xₙ`. -/
   | spine (head : Term) (arity : Arity)
-  /-- A `:right-assoc-nil` operator: `(op x₁ (op x₂ … (op xₙ nil)))`, n ≥ 2. -/
-  | rightAssocNil (op : UserOp) (nil : Term)
+  /-- A `:right-assoc-nil` operator: `(op x₁ (op x₂ … (op xₙ nil)))`, n ≥ 2. The
+  nil terminator is computed from the first element `x₁`, as Logos's parser and
+  Eunoia do (`Nil.eval`). -/
+  | rightAssocNil (op : UserOp) (nil : Nil)
   /-- A binder variable list `(@list x₁ … xₙ)`. -/
   | binderList
   /-- A binder `(op vars body)`, with optional instantiation patterns (dropped). -/
@@ -107,11 +128,26 @@ specification for operator kinds; keep it in line with `Cpc.eo`. -/
 def Kind.eoShape : Kind → AppShape
   | .EQUAL => .spine (Term.UOp UserOp.eq) (.exactly 2)
   | .NOT => .spine (Term.UOp UserOp.not) (.exactly 1)
-  | .AND => .rightAssocNil UserOp.and (Term.Boolean true)
-  | .OR => .rightAssocNil UserOp.or (Term.Boolean false)
+  | .AND => .rightAssocNil UserOp.and (.const (Term.Boolean true))
+  | .OR => .rightAssocNil UserOp.or (.const (Term.Boolean false))
   | .IMPLIES => .spine (Term.UOp UserOp.imp) (.exactly 2)
   | .XOR => .spine (Term.UOp UserOp.xor) (.exactly 2)
   | .ITE => .spine (Term.UOp UserOp.ite) (.exactly 3)
+  | .ADD => .rightAssocNil UserOp.plus .typed
+  | .MULT => .rightAssocNil UserOp.mult .typed
+  | .SUB => .spine (Term.UOp UserOp.neg) (.exactly 2)
+  | .NEG => .spine (Term.UOp UserOp.__eoo_neg_2) (.exactly 1)
+  | .DIVISION => .spine (Term.UOp UserOp.qdiv) (.exactly 2)
+  | .INTS_DIVISION => .spine (Term.UOp UserOp.div) (.exactly 2)
+  | .INTS_MODULUS => .spine (Term.UOp UserOp.mod) (.exactly 2)
+  | .ABS => .spine (Term.UOp UserOp.abs) (.exactly 1)
+  | .LT => .spine (Term.UOp UserOp.lt) (.exactly 2)
+  | .LEQ => .spine (Term.UOp UserOp.leq) (.exactly 2)
+  | .GT => .spine (Term.UOp UserOp.gt) (.exactly 2)
+  | .GEQ => .spine (Term.UOp UserOp.geq) (.exactly 2)
+  | .TO_REAL => .spine (Term.UOp UserOp.to_real) (.exactly 1)
+  | .TO_INTEGER => .spine (Term.UOp UserOp.to_int) (.exactly 1)
+  | .IS_INTEGER => .spine (Term.UOp UserOp.is_int) (.exactly 1)
   | .BOUND_VAR_LIST => .binderList
   | .FORALL => .binder UserOp.forall
   | .EXISTS => .binder UserOp.exists
@@ -133,14 +169,17 @@ equivalent node gives an equivalent application. Binders are handled separately,
 since their variable list is not a term. -/
 def AppShape.isChildCongruent : AppShape → Bool
   | .spine _ _ => true
-  | .rightAssocNil op _ => op == UserOp.and || op == UserOp.or
+  | .rightAssocNil op (.const _) => op == UserOp.and || op == UserOp.or
+  | .rightAssocNil op .typed => op == UserOp.plus || op == UserOp.mult
   | .none => true
   | .binderList | .binder _ => false
 
 /-- Translate an application of the given shape to its translated children. -/
 def AppShape.toEo : AppShape → List Term → Term
   | .spine head arity, xs => if arity.accepts xs.length then xs.foldl Term.Apply head else Term.Stuck
-  | .rightAssocNil op nil, xs => if 2 ≤ xs.length then eoRightAssocNil op nil xs else Term.Stuck
+  | .rightAssocNil op nil, xs =>
+    if 2 ≤ xs.length then eoRightAssocNil op (nil.eval op (xs.headD Term.Stuck)) xs
+    else Term.Stuck
   | .binderList, xs => eoList xs
   | .binder op, [vs, body] | .binder op, [vs, body, _] => eoApp2 op vs body
   | .binder _, _ => Term.Stuck

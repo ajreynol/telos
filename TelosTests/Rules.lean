@@ -4,7 +4,7 @@ import Telos
 # Tests of the rule database
 
 Each generated rule is applied to its own left-hand side, instantiated with fresh
-Boolean variables (and `:list` variables with zero and with two elements). The
+variables of one type (Boolean, Int or Real) (and `:list` variables with zero and with two elements). The
 certified step must succeed: this catches generator and matcher mistakes, which
 would otherwise only show up as missed rewrites. Rules that cannot fire on fresh
 variables are listed in `expectedToFail`, and tested on concrete instances below.
@@ -14,29 +14,38 @@ open Telos Telos.Node Eo
 
 namespace TelosTests
 
-partial def isListVar : Pat → Nat → Bool
-  | .listVar j, i => i == j
-  | .app _ ps, i => ps.any (isListVar · i)
-  | _, _ => false
+/-- The n-ary operator under which the list variable `i` occurs. -/
+partial def listKind? : Pat → Nat → Option Kind
+  | .app k ps, i =>
+    if ps.any (fun | .listVar j => i == j | _ => false) then some k
+    else ps.findSome? (listKind? · i)
+  | _, _ => none
 
-def freshSubst (r : RuleSpec) (listLen : Nat) : Subst :=
+def freshSubst (r : RuleSpec) (T : TypeNode) (listLen : Nat) : Subst :=
   (Array.range r.numVars).map fun i =>
-    some <| if isListVar r.lhs i then
-        .list .AND ((List.range listLen).map fun j => .var s!"l{i}_{j}" .boolean)
-      else .node (.var s!"v{i}" .boolean)
+    some <| match listKind? r.lhs i with
+      | some k => .list k ((List.range listLen).map fun j => .var s!"l{i}_{j}" T)
+      | none => .node (.var s!"v{i}" T)
 
-/-- Whether the rule fires on its fresh left-hand side. -/
+/-- Whether the rule fires on its fresh left-hand side, with variables of some
+type (all of the same type). -/
 def firesOnFresh (r : RuleSpec) (listLen : Nat) : Bool :=
-  match r.lhs.instantiate (freshSubst r listLen) with
-  | some n => (r.apply n).isSome
-  | none => false
+  [TypeNode.boolean, .integer, .real].any fun T =>
+    match r.lhs.instantiate (freshSubst r T listLen) with
+    | some n => (r.apply n).isSome
+    | none => false
 
-/-- Rules that do not fire on fresh Boolean variables: their premises do not hold
-there, or their variables are not Boolean, or their right-hand sides use kinds
-that `Node.ofEo` cannot read back yet. -/
+/-- Rules that do not fire on fresh variables of one type: their premises do not
+hold there, or their variables have different types, or their right-hand sides
+use kinds that `Node.ofEo` cannot read back yet. -/
 def expectedToFail : List String :=
   ["arith-eq-elim-real", "arith-eq-elim-int",
-   "bool-not-true", "bool-not-false", "ite-neg-branch", "eq-cond-deq"]
+   "bool-not-true", "bool-not-false", "ite-neg-branch", "eq-cond-deq",
+   -- premises that need constants; right-hand sides with `div_total`/`mod_total`,
+   -- which have no kind yet
+   "arith-int-div-total", "arith-int-mod-total", "arith-int-eq-conflict",
+   -- a Boolean condition with arithmetic branches: variables of two types
+   "arith-geq-ite-lift", "arith-leq-ite-lift"]
 
 def selfTestFailures (listLen : Nat) : List String :=
   generatedRules.filterMap fun r =>
