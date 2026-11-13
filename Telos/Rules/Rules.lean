@@ -14,7 +14,7 @@ def findRule? (name : String) : Option RuleSpec :=
   generatedRules.find? (·.name == name)
 
 /-- Rewrite `n` by the named CPC rule, if it applies. -/
-def rewriteBy (name : String) (n : Node) : Option { m // Certified n m } :=
+def rewriteBy (name : String) (n : Node) : Option (Rw n) :=
   (findRule? name).bind (·.apply n)
 
 end Telos

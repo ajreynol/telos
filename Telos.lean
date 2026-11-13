@@ -12,3 +12,7 @@ import Telos.Rules.Rules
 import Telos.Theory.Common
 import Telos.Theory.Bool
 import Telos.Rewrite
+import Telos.Rules.RuleNames
+import Telos.Proof.Eunoia
+import Telos.Proof.Emit
+import Telos.Frontend

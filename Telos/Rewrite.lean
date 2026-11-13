@@ -18,7 +18,10 @@ def theoryRewriter : TheoryId → TheoryRewriter
 /-- The fuel `rewrite` uses. It bounds the recursion depth of the driver. -/
 def defaultFuel : Nat := 10000
 
+/-- Rewrite a node to its normal form, with the certificate of the rewrite. -/
+def rewriteCert (t : Node) : Rw t := rewriteWith theoryRewriter defaultFuel t
+
 /-- cvc5's `Rewriter::rewrite`: rewrite a node to its normal form. -/
-def rewrite (t : Node) : Node := rewriteWith theoryRewriter defaultFuel t
+def rewrite (t : Node) : Node := (rewriteCert t).1
 
 end Telos

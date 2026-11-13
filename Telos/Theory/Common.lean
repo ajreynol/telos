@@ -15,13 +15,7 @@ open Eo
 
 namespace Telos
 
-/-- A certified rewrite of `n`. -/
-abbrev Rw (n : Node) := { m // Certified n m }
-
 namespace Rw
-
-/-- No rewrite. -/
-def id (n : Node) : Rw n := ⟨n, .refl n⟩
 
 /-- Continue a rewrite with a step on its result. If the step does not apply,
 stop where we are. -/
@@ -33,8 +27,6 @@ def next {n : Node} (r : Rw n) (f : (m : Node) → Option (Rw m)) : Rw n :=
 /-- Like `next`, but fail if the step does not apply. -/
 def next? {n : Node} (r : Rw n) (f : (m : Node) → Option (Rw m)) : Option (Rw n) :=
   (f r.1).map fun ⟨k, h⟩ => ⟨k, r.2.trans h⟩
-
-instance (n : Node) : Inhabited (Rw n) := ⟨id n⟩
 
 /-- Rewrite child `i` of `n` by `f`, when `n` is an application whose operator is
 congruent in its children, and all its children are well typed. -/

@@ -104,7 +104,7 @@ def cmds (r : RuleSpec) (σ : Subst) : Option CCmdList := do
 
 /-- Apply the rule to `n`: the first match whose command list Logos's checker
 accepts. -/
-def apply (r : RuleSpec) (n : Node) : Option { m // Certified n m } :=
+def apply (r : RuleSpec) (n : Node) : Option (Rw n) :=
   r.allMatches n |>.findSome? fun σ => r.cmds σ >>= fun cs => applyCmds cs n
 
 end RuleSpec

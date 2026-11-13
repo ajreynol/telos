@@ -37,6 +37,11 @@ jobs:
       - run: lake build
       - name: Rule table is in sync with the pinned Logos signature
         run: python3 scripts/gen-rules.py --check
+      - name: Example scripts give the expected output
+        run: |
+          for f in test/examples/*.smt2; do
+            .lake/build/bin/telos "$f" | diff - "${f%.smt2}.expected"
+          done
 
   verification:
     runs-on: ubuntu-latest

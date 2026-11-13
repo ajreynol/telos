@@ -1,0 +1,7 @@
+a
+(and a b)
+(and (not a) b)
+(= x 0)
+(f x)
+(forall ((y Int)) (= y x))
+false

@@ -26,7 +26,8 @@ Differences from cvc5:
   typed. Under a quantifier only the body is rewritten.
 * A `RewriteResponse n` carries a certificate that its node is CPC-provably equal
   to `n` (`Certified`). Theory rewriters therefore cannot return an unjustified
-  result, and need no proof of their own.
+  result, and need no proof of their own. The driver chains these certificates
+  (`Rw`), so its result is certified too, and can be printed as a CPC proof.
 
 Correctness is `Telos.rewrite_correct` in `verification/TelosProofs/Rewriter.lean`.
 -/
@@ -79,49 +80,60 @@ def theoryOf : Node → TheoryId
       | none => n.getKind.theoryId
   | n => n.getKind.theoryId
 
+/-- The response as a certified rewrite. -/
+def RewriteResponse.toRw {n : Node} (r : RewriteResponse n) : Rw n := ⟨r.node, r.cert⟩
+
 /-- Pre-rewrite at the top, until the node is done and stays in its theory. -/
-def preRewriteLoop (R : TheoryId → TheoryRewriter) : Nat → Node → Node
-  | 0, n => n
+def preRewriteLoop (R : TheoryId → TheoryRewriter) : Nat → (n : Node) → Rw n
+  | 0, n => .id n
   | fuel + 1, n =>
     let r := (R (theoryOf n)).preRewrite n
     match r.status with
     | .REWRITE_DONE =>
-      if theoryOf r.node == theoryOf n then r.node else preRewriteLoop R fuel r.node
-    | _ => preRewriteLoop R fuel r.node
+      if theoryOf r.node == theoryOf n then r.toRw
+      else r.toRw.trans (preRewriteLoop R fuel r.node)
+    | _ => r.toRw.trans (preRewriteLoop R fuel r.node)
 
 /-- Rewrite the children of a node with `f`. -/
-def rewriteChildren (f : Node → Node) (n : Node) : Node :=
+def rewriteChildren (f : (c : Node) → Rw c) (n : Node) : Rw n :=
   match n with
   | .app op cs =>
-    if op.eoShape.isChildCongruent then
-      if cs.all (fun c => decide c.WellTyped) then .app op (cs.map f) else n
+    if hop : op.eoShape.isChildCongruent then
+      if hwt : ∀ c ∈ cs.toList, c.WellTyped then Rw.congr op cs f hop hwt else .id _
     else
       match op, cs with
       | .kind k, ⟨vs :: body :: pats⟩ =>
-        if k.isQuantifier && decide body.WellTyped then
-          .app (.kind k) ⟨vs :: f body :: pats⟩
-        else n
-      | _, _ => n
-  | _ => n
+        if hq : k.isQuantifier = true ∧ body.WellTyped then
+          let b := f body
+          ⟨.app (.kind k) ⟨vs :: b.1 :: pats⟩, .congrBody hq.1 hq.2 b.2 (.refl _)⟩
+        else .id _
+      | _, _ => .id _
+  | _ => .id _
 
 /-- Post-rewrite at the top. `full` rewrites a node from the start, for
 `REWRITE_AGAIN_FULL` and for results that belong to another theory. -/
-def postRewriteLoop (R : TheoryId → TheoryRewriter) (full : Node → Node) : Nat → Node → Node
-  | 0, n => n
+def postRewriteLoop (R : TheoryId → TheoryRewriter) (full : (n : Node) → Rw n) :
+    Nat → (n : Node) → Rw n
+  | 0, n => .id n
   | fuel + 1, n =>
     let tid := theoryOf n
     let r := (R tid).postRewrite n
     match r.status with
-    | .REWRITE_DONE => if theoryOf r.node == tid then r.node else full r.node
+    | .REWRITE_DONE =>
+      if theoryOf r.node == tid then r.toRw else r.toRw.trans (full r.node)
     | .REWRITE_AGAIN =>
-      if theoryOf r.node == tid then postRewriteLoop R full fuel r.node else full r.node
-    | .REWRITE_AGAIN_FULL => full r.node
+      if theoryOf r.node == tid then r.toRw.trans (postRewriteLoop R full fuel r.node)
+      else r.toRw.trans (full r.node)
+    | .REWRITE_AGAIN_FULL => r.toRw.trans (full r.node)
 
-/-- cvc5's `Rewriter::rewriteTo`, with the given theory rewriters and fuel. -/
-def rewriteWith (R : TheoryId → TheoryRewriter) : Nat → Node → Node
-  | 0, n => n
+/-- cvc5's `Rewriter::rewriteTo`, with the given theory rewriters and fuel. The
+result is certified, so it is correct by construction (`Certified.equiv`). -/
+def rewriteWith (R : TheoryId → TheoryRewriter) : Nat → (n : Node) → Rw n
+  | 0, n => .id n
   | fuel + 1, n =>
     let full := fun m => rewriteWith R fuel m
-    postRewriteLoop R full fuel (rewriteChildren full (preRewriteLoop R fuel n))
+    let pre := preRewriteLoop R fuel n
+    let mid := rewriteChildren full pre.1
+    pre.trans (mid.trans (postRewriteLoop R full fuel mid.1))
 
 end Telos

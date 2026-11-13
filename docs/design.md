@@ -141,18 +141,27 @@ def ProvesEq (cs : CCmdList) (n m : Node) : Prop :=
   CmdListTranslationOk cs ∧ __eo_state_is_closed (runFromEmpty cs) = true ∧
     __eo_state_proven_nth (runFromEmpty cs) 0 = eqFormula n m
 
-inductive Certified : Node → Node → Prop
+inductive Certified : Node → Node → Type
   | refl (n : Node) : Certified n n
   | step (cs : CCmdList) : ProvesEq cs n k → Certified k m → Certified n m
   | congrArg (i : Nat) (c' : Node) … :    -- rewrite child i, below a congruent
       …  Certified cs[i] c' → Certified (.app op (cs.set i c')) m →
       Certified (.app op cs) m
+  | congr …       -- rewrite every child of a congruent operator
+  | congrBody …   -- rewrite the body of a quantifier
+
+abbrev Rw (n : Node) := (m : Node) × Certified n m
 ```
 
+`Certified` is data, not a proposition: it keeps the command lists, which is
+what lets telos print proofs (below). Its proof fields are erased at run time.
+
 `congrArg` lets a strategy rewrite below the top, for example to flip an
-equality inside another before applying a rule. It requires the operator to be
-child-congruent and the children to be well typed (checked at run time), and is
-justified by `Node.Equiv.congr`.
+equality inside another before applying a rule. The driver uses `congr` and
+`congrBody` to rewrite children. The congruence constructors require the
+operator to be child-congruent and the children (or the body) to be well typed,
+checked at run time, and are justified by `Node.Equiv.congr` and
+`Node.Equiv.congr_binder`.
 
 `ProvesEq` is decidable, and is decided by running Logos's checker. In
 `verification/` (`TelosProofs/Certified.lean`):
@@ -163,11 +172,10 @@ theorem Certified.equiv : Certified n m → n.WellTyped → n.Equiv m
 
 proved from Logos's `proven_from_empty_valid` (`Cpc/Proofs/ProvenFromEmpty.lean`:
 the checker's soundness, from the empty state) and `Node.equiv_iff_termEquiv`. A
-`RewriteResponse n` carries a proof of `Certified n node`, so every theory
-rewriter is correct by construction (`TheoryRewriter.correct`), and strategies
-need no proofs. The proof is erased at run time, and the command lists are not
-kept yet. Keeping them, and joining them with `trans` and `cong`, would give a
-CPC proof of `(= t (rewrite t))`.
+`RewriteResponse n` carries a `Certified n node`, so every theory rewriter is
+correct by construction (`TheoryRewriter.correct`), and strategies need no
+proofs. The driver chains the certificates, so it is correct by construction
+too.
 
 The certificate depends on all of Logos's rule proofs, since the checker's
 soundness does. A cold build of `verification/` therefore compiles every rule
@@ -253,7 +261,8 @@ work. Porting a theory rewriter is pure programming.
   theory of its kind. `theoryRewriter` (`Telos/Rewrite.lean`) maps each theory
   to its rewriter: `THEORY_BOOL` to the port of `TheoryBoolRewriter`
   (`Telos/Theory/Bool.lean`), the others to the identity so far.
-- `rewriteWith`: cvc5's `Rewriter::rewriteTo`. Pre-rewrite until done and in the
+- `rewriteWith`: cvc5's `Rewriter::rewriteTo`, returning a certified rewrite
+  (`Rw n`). Pre-rewrite until done and in the
   same theory, rewrite the children, post-rewrite. `REWRITE_AGAIN` post-rewrites
   again, while `REWRITE_AGAIN_FULL` or a change of theory rewrites the result from
   the start. It takes fuel and returns its input when the fuel runs out, which
@@ -262,6 +271,38 @@ work. Porting a theory rewriter is pure programming.
 - Children are rewritten only when each is well typed, a runtime check
   (`decide c.WellTyped`) that stands in for a proof that the children of a
   well-typed node are well typed. Under a quantifier only the body is rewritten.
+
+### Front end (`Telos/Frontend.lean`, `Main.lean`)
+
+`telos FILE` reads an SMT-LIB script of declarations (`declare-const`,
+`declare-fun`, `declare-sort`) and `(simplify t)` commands, and prints the
+rewrite of each `t`. Terms are read by Logos's own parser: the script is turned
+into Eunoia input in which `(simplify t)` becomes `(assume @sN (= t t))`, and `t`
+is taken back from the parsed assumption. Declared constants come back as
+Logos's numbered `UConst`s; the front end replays the numbering to make them
+named `Node.var`s, and `Node.ofEo` reads the rest. A term with an operator that
+has no `Kind` yet is reported as unsupported.
+
+### Proof output (`Telos/Proof/`)
+
+With `--proof` (or `--proof-dir DIR`), each result comes with a CPC proof of
+`(= t result)`. `Proof.emitProof` flattens the certificate into one list of
+steps: each step's command list as is, `trans` between consecutive steps, and
+`cong` (`nary_cong` for `and`/`or`) below an operator, with `refl` for the
+children that do not change. The list is run through Logos's checker from the
+empty state and must prove `(= t result)`, so telos only prints proofs Logos
+accepts. `Eunoia.print` prints terms by inverting the operator table of Logos's
+parser, and `ruleName` (generated) names the rules.
+
+The proof is a refutation: the declarations, `(assume @goal (not (= t
+result)))`, the steps, and `false` by `contra`. It checks with
+`ethos --include=Cpc.cached.eo`, and with Logos unless it mentions a bound
+variable outside its binder (printed `(eo::var "x" T)`, which Logos's parser does
+not read yet). `scripts/check-proofs.py` checks proofs with Ethos, on example
+scripts or on fuzzed terms.
+
+None of this is trusted. Proof output is for exchanging proofs with other tools;
+results are correct with or without it.
 
 ### Correctness (`verification/TelosProofs/`)
 
@@ -278,10 +319,8 @@ theorem Telos.rewrite_correct (t : Node) (h : t.WellTyped) : t.Equiv (rewrite t)
   soundness proof of the CPC `cong` rule, which is generic over application
   spines, so there is one case per `AppShape` and new kinds need no new proof.
 - `Certified.lean`: `Certified.equiv`, from Logos's checker soundness.
-- `Driver.lean`: `rewriteWith_sound`. If every theory rewriter is
-  `TheoryRewriter.Correct` (its pre- and post-rewrites return equivalent nodes),
-  the driver is sound. `TheoryRewriter.correct` proves it for every theory
-  rewriter, from the certificates.
+- `Driver.lean`: `rewriteWith_sound`, for any theory rewriters: the driver's
+  result is certified, so this is an instance of `Certified.equiv`.
 - `Axioms.lean`: the axiom audit (`TRUSTED.md`).
 
 Upstream requests to Logos are collected in `../logos/telos-upstream-requests.md`
@@ -359,27 +398,33 @@ tested:
 1. ~~Equivalence algebra, congruence, driver.~~ Done, with trivial theory
    rewriters.
 2. ~~Certified steps.~~ Done: `Node.ofEo`, `ProvesEq`, `Certified`,
-   `Certified.equiv`; `TheoryRewriter.Correct` holds generically.
+   `Certified.equiv`; the driver returns certified rewrites, so it is correct
+   by construction.
 3. ~~Rule extractor and matcher.~~ Done: `scripts/gen-rules.py` (55 rules: the
    `bool-*`, `ite-*` and `eq-*` rules), `RuleSpec`, the matcher, the self-test
    (`TelosTests/Rules.lean`) and the CI sync check.
 4. ~~Booleans.~~ `TheoryBoolRewriter` is ported (`Telos/Theory/Bool.lean`, tests
    in `TelosTests/Bool.lean`). Open: the equality rewriting of the other
    theories (cvc5's builtin and UF rewriters: `(= x x)`, orientation, constants).
-5. **Front end and fuzzing.** Started: `telos-fuzz` (random Boolean terms over
-   three Booleans and two integer equalities) and `scripts/fuzz.py`, which
-   compares with cvc5's `(simplify t)`. On 6000 terms of depth 4: about 94%
-   identical to cvc5, every other result identical up to (or caused by) the
-   orientation of equalities, and no semantic disagreements. To do: read
-   SMT-LIB benchmarks through the Logos parser into `Node`, and run in CI.
+5. **Front end and fuzzing.** The `telos` executable reads SMT-LIB scripts of
+   `(simplify t)` queries through Logos's parser (`Telos/Frontend.lean`).
+   `telos-fuzz` (random Boolean terms over three Booleans and two integer
+   equalities) and `scripts/fuzz.py` compare with cvc5's `(simplify t)`. On 6000
+   terms of depth 4: about 94% identical to cvc5, every other result identical up
+   to (or caused by) the orientation of equalities, and no semantic
+   disagreements. To do: `define-fun`, and fuzzing in CI.
 6. **Arithmetic, then bit-vectors.** Add kinds to the `toEo` tables and the
    extractor's symbol table, then port strategies. This is where unverified
    right-hand-side computations (`arith_poly_norm`, `bv_poly_norm`) come in.
 7. **Performance.** Rewrite cache, sharing, cached hashes; a proof that children
    of well-typed nodes are well typed (removing the runtime check); generated
    program-equals-template lemmas for hot rules.
-8. **Proof output.** Emit the collected command lists as a CPC proof of
-   `(= t (rewrite t))`, checkable by Ethos and by Logos.
+8. ~~Proof output.~~ Done: `telos --proof` prints a CPC proof of
+   `(= t (rewrite t))`, checked by Logos's checker before printing, and accepted
+   by Ethos (`scripts/check-proofs.py`: 2000 of 2000 fuzzed terms). Open: Logos's
+   parser does not read `eo::var`, so Logos cannot re-read proofs of rewrites
+   under binders; proofs are not compacted (one `cong` per rewrite below an
+   operator).
 
 ## Working conventions
 

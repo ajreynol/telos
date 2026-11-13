@@ -41,8 +41,10 @@ instance (cs : CCmdList) (n m : Node) : Decidable (ProvesEq cs n m) :=
   inferInstanceAs (Decidable (_ ∧ _ ∧ _))
 
 /-- `n` rewrites to `m` by a chain of CPC-checked steps, at the top or below an
-operator. The proof is erased at run time; the command lists are not kept (yet). -/
-inductive Certified : Node → Node → Prop
+operator. It is data, not a proposition: it keeps the command lists, so that a
+rewrite can be printed as a CPC proof (`Telos/Proof/`). Its proof fields are
+erased at run time. -/
+inductive Certified : Node → Node → Type
   | refl (n : Node) : Certified n n
   /-- A CPC-checked step at the top. -/
   | step {n k m : Node} (cs : CCmdList) : ProvesEq cs n k → Certified k m → Certified n m
@@ -51,13 +53,59 @@ inductive Certified : Node → Node → Prop
   | congrArg {op : Op} {cs : Array Node} {m : Node} (i : Nat) (c' : Node) (hi : i < cs.size) :
       op.eoShape.isChildCongruent = true → (∀ c ∈ cs.toList, c.WellTyped) →
       Certified cs[i] c' → Certified (.app op (cs.set i c')) m → Certified (.app op cs) m
+  /-- A rewrite of every child of such an application. -/
+  | congr {op : Op} {cs ds : Array Node} {m : Node} (hsize : cs.size = ds.size) :
+      op.eoShape.isChildCongruent = true → (∀ c ∈ cs.toList, c.WellTyped) →
+      ((i : Nat) → (hi : i < cs.size) → Certified cs[i] (ds[i]'(hsize ▸ hi))) →
+      Certified (.app op ds) m → Certified (.app op cs) m
+  /-- A rewrite of the well-typed body of a quantifier
+  (`Node.Equiv.congr_binder`). -/
+  | congrBody {k : Kind} {vs body body' m : Node} {pats : List Node} :
+      k.isQuantifier = true → body.WellTyped → Certified body body' →
+      Certified (.app (.kind k) ⟨vs :: body' :: pats⟩) m →
+      Certified (.app (.kind k) ⟨vs :: body :: pats⟩) m
 
-theorem Certified.trans {a b c : Node} (h₁ : Certified a b) (h₂ : Certified b c) :
-    Certified a c := by
-  induction h₁ with
-  | refl => exact h₂
-  | step cs h _ ih => exact .step cs h (ih h₂)
-  | congrArg i c' hi hop hwt hc _ _ ih => exact .congrArg i c' hi hop hwt hc (ih h₂)
+def Certified.trans {a b c : Node} : Certified a b → Certified b c → Certified a c
+  | .refl _, h₂ => h₂
+  | .step cs h r, h₂ => .step cs h (r.trans h₂)
+  | .congrArg i c' hi hop hwt hc r, h₂ => .congrArg i c' hi hop hwt hc (r.trans h₂)
+  | .congr hsize hop hwt hc r, h₂ => .congr hsize hop hwt hc (r.trans h₂)
+  | .congrBody hk hb hc r, h₂ => .congrBody hk hb hc (r.trans h₂)
+
+/-- A certified rewrite of `n`: the result, and how it was obtained. -/
+abbrev Rw (n : Node) := (m : Node) × Certified n m
+
+namespace Rw
+
+/-- No rewrite. -/
+def id (n : Node) : Rw n := ⟨n, .refl n⟩
+
+instance (n : Node) : Inhabited (Rw n) := ⟨id n⟩
+
+/-- `r` followed by `s`. -/
+def trans {n : Node} (r : Rw n) (s : Rw r.1) : Rw n := ⟨s.1, r.2.trans s.2⟩
+
+/-- Rewrite every child of `.app op cs` by `f`, when the operator is congruent in
+its children and they are all well typed. Each child is rewritten once. -/
+def congr (op : Op) (cs : Array Node) (f : (c : Node) → Rw c)
+    (hop : op.eoShape.isChildCongruent = true) (hwt : ∀ c ∈ cs.toList, c.WellTyped) :
+    Rw (.app op cs) :=
+  let rs : Array ((c : Node) × Rw c) := cs.map fun c => ⟨c, f c⟩
+  let ds := rs.map (·.2.1)
+  have hsize : cs.size = ds.size := by simp [ds, rs]
+  ⟨.app op ds, .congr hsize hop hwt (fun i hi =>
+    have hr : i < rs.size := by simpa [rs] using hi
+    match h : rs[i] with
+    | ⟨c, m, cert⟩ =>
+      have e₁ : c = cs[i] := by
+        have := congrArg Sigma.fst h
+        simp [rs] at this
+        exact this.symm
+      have e₂ : m = ds[i]'(hsize ▸ hi) := by
+        simp only [ds, Array.getElem_map]; exact (congrArg (fun x => x.2.1) h).symm
+      cast (by rw [e₁, e₂]) cert) (.refl _)⟩
+
+end Rw
 
 /-- The right-hand side of `(= l r)`. -/
 def eqRhs? : Term → Option Term
@@ -66,7 +114,7 @@ def eqRhs? : Term → Option Term
 
 /-- Run `cs`. If it proves `(= n r)` and `r` reads back as a node `m`, return `m`,
 certified. -/
-def applyCmds (cs : CCmdList) (n : Node) : Option { m // Certified n m } :=
+def applyCmds (cs : CCmdList) (n : Node) : Option (Rw n) :=
   if hT : CmdListTranslationOk cs then
     if hC : __eo_state_is_closed (runFromEmpty cs) = true then
       let P := __eo_state_proven_nth (runFromEmpty cs) 0
@@ -84,7 +132,7 @@ def toArgList : List Term → CArgList
   | t :: ts => .cons t (toArgList ts)
 
 /-- Apply one CPC rule, with the given arguments and no premises, to `n`. -/
-def applyRule (r : CRule) (args : List Node) (n : Node) : Option { m // Certified n m } :=
+def applyRule (r : CRule) (args : List Node) (n : Node) : Option (Rw n) :=
   applyCmds (.cons (.step r (toArgList (args.map Node.toEo)) .nil) .nil) n
 
 end Telos

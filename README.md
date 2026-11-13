@@ -15,6 +15,27 @@ theory rewriters and is tested against cvc5 by differential fuzzing.
 theorem Telos.rewrite_correct (t : Node) (h : t.WellTyped) : t.Equiv (rewrite t)
 ```
 
+## Usage
+
+```sh
+lake build telos
+.lake/build/bin/telos test/examples/bool.smt2            # rewritten terms
+.lake/build/bin/telos --proof test/examples/bool.smt2    # ... each with a CPC proof
+```
+
+The input is an SMT-LIB script of `declare-const`, `declare-fun`, `declare-sort`
+and `(simplify t)` commands, read by Logos's parser. For each `t`, telos prints
+its rewrite, as cvc5 does. Only some theories are ported so far (Booleans, and
+equality, UF and quantifiers as far as they are Boolean); terms with other
+operators are reported as unsupported, and rewriting of the supported ones is
+incomplete.
+
+With `--proof` (or `--proof-dir DIR`, one file per query), each result comes with
+a CPC proof of `(= t result)`, as a refutation of `(not (= t result))`. telos
+prints only proofs that Logos's checker accepts. Check them with
+`ethos --include=.lake/packages/Cpc/install/defs/Cpc.cached.eo FILE`, or run
+`python3 scripts/check-proofs.py --fuzz 500`.
+
 See [`docs/design.md`](docs/design.md) for the architecture and roadmap, and
 [`TRUSTED.md`](TRUSTED.md) for what the theorem relies on.
 
@@ -22,8 +43,8 @@ See [`docs/design.md`](docs/design.md) for the architecture and roadmap, and
 
 Two Lake projects, so the rewriter builds without Mathlib:
 
-- `.` (package `Telos`): `Node`, its translation to Logos terms, the rewriter and
-  the `telos` executable. Requires Logos's root package `Cpc`. `TelosTests/`
+- `.` (package `Telos`): `Node`, its translation to Logos terms, the rewriter,
+  the SMT-LIB front end, proof output and the `telos` executable. Requires Logos's root package `Cpc`. `TelosTests/`
   holds tests checked at build time.
 - `verification/` (package `TelosVerification`): the specification `Node.Equiv`
   and the correctness proofs. Requires `Telos`, Logos's `LogosVerification` and
@@ -38,6 +59,7 @@ lake -d verification build              # proofs (also builds part of Logos's pr
 bash scripts/check-hygiene.sh           # no sorry/axiom; trusted code is listed
 python3 scripts/gen-rules.py            # regenerate Telos/Rules/Generated.lean
 lake build telos-fuzz && python3 scripts/fuzz.py --cvc5 PATH   # compare with cvc5
+python3 scripts/check-proofs.py --fuzz 500                      # proofs, with Ethos
 ```
 
 The rule table `Telos/Rules/Generated.lean` is generated from the CPC signature in

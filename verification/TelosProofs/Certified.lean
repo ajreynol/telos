@@ -31,6 +31,12 @@ theorem forall₂_set {α : Type} {R : α → α → Prop} :
     exact List.Forall₂.cons (hrefl y (by simp))
       (forall₂_set l i x (by simpa using hi) (fun z hz => hrefl z (by simp [hz])) (by simpa using hx))
 
+theorem forall₂_of_getElem {R : Node → Node → Prop} {cs ds : Array Node}
+    (hsize : cs.size = ds.size) (h : ∀ i (hi : i < cs.size), R cs[i] (ds[i]'(hsize ▸ hi))) :
+    List.Forall₂ R cs.toList ds.toList := by
+  rw [List.forall₂_iff_get]
+  exact ⟨by simpa using hsize, fun i h₁ h₂ => by simpa using h i (by simpa using h₁)⟩
+
 /-- **Certified rewrites are equivalences.** -/
 theorem Certified.equiv {n m : Node} (h : Certified n m) (hn : n.WellTyped) : n.Equiv m := by
   induction h with
@@ -45,6 +51,15 @@ theorem Certified.equiv {n m : Node} (h : Certified n m) (hn : n.WellTyped) : n.
       exact forall₂_set _ i c' (by simpa using hi)
         (fun y hy => Node.Equiv.refl y (hwt y hy)) (by simpa using hci)
     have h₁ := Node.Equiv.congr hop hn hch
+    exact h₁.trans (ih h₁.wellTyped_right)
+  | @congr op cs ds m hsize hop hwt _ _ ihc ih =>
+    have hch : List.Forall₂ Node.Equiv cs.toList ds.toList :=
+      forall₂_of_getElem hsize fun i hi => ihc i hi (hwt _ (Array.getElem_mem_toList hi))
+    have h₁ := Node.Equiv.congr hop hn hch
+    exact h₁.trans (ih h₁.wellTyped_right)
+  | @congrBody k vs body body' m pats hk hb _ _ ihb ih =>
+    have hk' : k = .FORALL ∨ k = .EXISTS := by cases k <;> simp_all [Kind.isQuantifier]
+    have h₁ := Node.Equiv.congr_binder hk' rfl hn (ihb hb)
     exact h₁.trans (ih h₁.wellTyped_right)
 
 end Telos

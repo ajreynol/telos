@@ -32,6 +32,16 @@ rewrite or differ from cvc5, but not return a non-equivalent node:
 - `Node.ofEo` (`Telos/Node/OfEo.lean`), the term order (`Telos/Node/Order.lean`)
   and the printer (`Telos/Node/Print.lean`).
 
+The theorem is about `Node`s. The following turn text into nodes and nodes into
+text, and are not covered by it:
+
+- the SMT-LIB front end (`Telos/Frontend.lean`) and Logos's parser, which is
+  unverified. A parsing bug can make telos rewrite a different term than the one
+  written; the result is still equivalent to the term telos read.
+- proof output (`Telos/Proof/`, `Telos/Rules/RuleNames.lean`). A printed proof is
+  checked by Logos's checker before it is printed, and is meant to be checked
+  again by its reader (Ethos or Logos).
+
 ## Tools
 
 - The Lean 4 kernel, compiler and runtime (`leanprover/lean4:v4.34.0`).
