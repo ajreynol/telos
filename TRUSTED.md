@@ -38,5 +38,4 @@ the build if `Telos.rewrite_correct` uses any axiom other than:
   the **Lean compiler** in addition to the kernel. They come from Logos's proofs,
   which use `native_decide` throughout (577 uses, including its checker core),
   and enter through the congruence lemmas reused from
-  `Cpc/Proofs/RuleSupport/Cong/`. (Open question: accept this, or ask Logos to
-  replace `native_decide` in the lemmas we use.)
+  `Cpc/Proofs/RuleSupport/Cong/`. Trusting them was decided on 2026-11-12.
