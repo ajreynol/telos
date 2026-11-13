@@ -1,0 +1,79 @@
+import Telos.Node.Node
+
+/-!
+# A total order on nodes
+
+cvc5 orders nodes by id, for example to orient equalities (`(= a b)` with
+`a.getId() > b.getId()` becomes `(= b a)`) and to sort the children of
+commutative operators. Ids depend on creation order, which telos cannot
+reproduce, so it uses this fixed structural order instead: constants, then free
+variables, then bound variables, then applications; within each, by payload,
+name and type, or by operator and then children, lexicographically.
+
+Untrusted: the order only decides which certified rewrite to try.
+-/
+
+namespace Telos
+
+namespace Const
+
+private def rank : Const → Nat
+  | .boolean _ => 0
+  | .integer _ => 1
+  | .rational _ => 2
+  | .bitVector .. => 3
+  | .string _ => 4
+
+private def cmpOfLt {α} [LT α] [DecidableEq α] [DecidableLT α] (a b : α) : Ordering :=
+  if a = b then .eq else if a < b then .lt else .gt
+
+def cmp : Const → Const → Ordering
+  | .boolean a, .boolean b => compare a b
+  | .integer a, .integer b => compare a b
+  | .rational a, .rational b => cmpOfLt a b
+  | .bitVector w v, .bitVector w' v' => (compare w w').then (compare v v')
+  | .string a, .string b => compare a b
+  | a, b => compare a.rank b.rank
+
+end Const
+
+namespace Node
+
+private def rank : Node → Nat
+  | .const _ => 0
+  | .var .. => 1
+  | .boundVar .. => 2
+  | .app .. => 3
+
+mutual
+
+/-- The structural order on nodes. -/
+partial def cmp : Node → Node → Ordering
+  | .const a, .const b => a.cmp b
+  | .var n T, .var m U | .boundVar n T, .boundVar m U => (compare n m).then (compare T U)
+  | .app op cs, .app op' cs' => (opCmp op op').then (listCmp cs.toList cs'.toList)
+  | a, b => compare a.rank b.rank
+
+partial def opCmp : Op → Op → Ordering
+  | .kind k, .kind k' => compare k k'
+  | .indexed k is, .indexed k' is' => (compare k k').then (compare is.toList is'.toList)
+  | .node k f, .node k' f' => (compare k k').then (cmp f f')
+  | .kind _, _ => .lt
+  | _, .kind _ => .gt
+  | .indexed .., _ => .lt
+  | _, .indexed .. => .gt
+
+partial def listCmp : List Node → List Node → Ordering
+  | [], [] => .eq
+  | [], _ :: _ => .lt
+  | _ :: _, [] => .gt
+  | a :: as, b :: bs => (cmp a b).then (listCmp as bs)
+
+end
+
+/-- `a` comes before `b` in the order (cvc5: `a.getId() < b.getId()`). -/
+def lt (a b : Node) : Bool := cmp a b == .lt
+
+end Node
+
+end Telos

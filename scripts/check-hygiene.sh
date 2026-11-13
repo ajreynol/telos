@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-mapfile -d '' files < <(find Telos verification/TelosProofs Main.lean Telos.lean -name '*.lean' -print0)
+mapfile -d '' files < <(find Telos TelosTests verification/TelosProofs Main.lean FuzzMain.lean Telos.lean -name '*.lean' -print0)
 status=0
 
 if LC_ALL=C grep -nHE "(^|[^[:alnum:]_'])(sorry|admit|axiom)([^[:alnum:]_']|$)" "${files[@]}"; then

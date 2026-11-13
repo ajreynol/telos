@@ -1,5 +1,6 @@
 import TelosProofs.Spec
-import Cpc.Proofs.Common
+import Cpc.Proofs.CommonBoolOps
+import Cpc.Proofs.TypePreservation.CoreArith
 
 /-!
 # The algebra of `Node.Equiv`
@@ -43,25 +44,6 @@ end SmtEquiv
 
 /-! ## From `eo_satisfiability` to `SmtEquiv` -/
 
-theorem typeof_eq_arm (a b : SmtTerm) :
-    __smtx_typeof (SmtTerm.eq a b) = __smtx_typeof_eq (__smtx_typeof a) (__smtx_typeof b) := by
-  rw [__smtx_typeof.eq_def]
-
-theorem eval_not_arm (M : SmtModel) (a : SmtTerm) :
-    __smtx_model_eval M (SmtTerm.not a) = __smtx_model_eval_not (__smtx_model_eval M a) := by
-  rw [__smtx_model_eval.eq_def]
-
-theorem eval_eq_arm (M : SmtModel) (a b : SmtTerm) :
-    __smtx_model_eval M (SmtTerm.eq a b) =
-      __smtx_model_eval_eq (__smtx_model_eval M a) (__smtx_model_eval M b) := by
-  rw [__smtx_model_eval.eq_def]
-
-theorem typeof_eq_eq_bool_iff (T U : SmtType) :
-    __smtx_typeof_eq T U = SmtType.Bool ↔ T ≠ SmtType.None ∧ T = U := by
-  unfold __smtx_typeof_eq __smtx_typeof_guard
-  by_cases hT : T = SmtType.None <;> by_cases hTU : T = U <;>
-    simp [native_ite, native_Teq, hT, hTU]
-
 /-- `=` always evaluates to a Boolean. -/
 theorem eval_eq_boolean (v w : SmtValue) : ∃ b, __smtx_model_eval_eq v w = SmtValue.Boolean b := by
   unfold __smtx_model_eval_eq
@@ -88,14 +70,14 @@ theorem smt_satisfiability_false_iff (t : SmtTerm) :
 theorem Node.equiv_iff (t s : Node) :
     t.Equiv s ↔ t.WellTyped ∧ SmtEquiv t.toSmt s.toSmt := by
   have hTy : __smtx_typeof (__eo_to_smt (eqFormula t s)) =
-      __smtx_typeof_eq t.smtType s.smtType := typeof_eq_arm _ _
+      __smtx_typeof_eq t.smtType s.smtType := typeof_eq_eq _ _
   have hSat : eo_satisfiability (eoApp1 UserOp.not (eqFormula t s)) false ↔
       ∀ M, model_wf M → smt_value_rel (__smtx_model_eval M t.toSmt)
         (__smtx_model_eval M s.toSmt) := by
     change smt_satisfiability (SmtTerm.not (SmtTerm.eq t.toSmt s.toSmt)) false ↔ _
     rw [smt_satisfiability_false_iff]
     refine forall_congr' fun M => imp_congr_right fun _ => ?_
-    rw [eval_not_arm, eval_eq_arm, eval_not_eq_false_iff]
+    rw [model_eval_not_eq, model_eval_eq_eq, eval_not_eq_false_iff]
   unfold Node.Equiv
   rw [hTy, typeof_eq_eq_bool_iff, hSat]
   exact ⟨fun ⟨⟨hw, he⟩, hv⟩ => ⟨hw, he, hv⟩, fun ⟨hw, he, hv⟩ => ⟨⟨hw, he⟩, hv⟩⟩

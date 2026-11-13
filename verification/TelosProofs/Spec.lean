@@ -23,9 +23,7 @@ open Smtm
 
 namespace Telos
 
-/-- The CPC formula `(= t s)`. -/
-def eqFormula (t s : Node) : Term :=
-  eoApp2 UserOp.eq t.toEo s.toEo
+-- `eqFormula t s` is the CPC formula `(= t s)` (`Telos/Node/ToEo.lean`).
 
 /-- `t` and `s` are equivalent: `(= t s)` is well typed and valid. -/
 def Node.Equiv (t s : Node) : Prop :=

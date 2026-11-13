@@ -1,4 +1,4 @@
-import TelosProofs.Congruence
+import TelosProofs.Certified
 
 /-!
 # Correctness of the rewriting driver
@@ -6,6 +6,9 @@ import TelosProofs.Congruence
 If every theory rewriter returns equivalent nodes, so does the driver
 (`rewriteWith_sound`). The proof follows the driver's three steps; rewriting under
 operators uses `Node.Equiv.congr` and `Node.Equiv.congr_binder`.
+
+Every theory rewriter does return equivalent nodes (`TheoryRewriter.correct`),
+since its responses carry CPC certificates (`Certified.equiv`).
 -/
 
 namespace Telos
@@ -14,13 +17,13 @@ namespace Telos
 def Sound (f : Node → Node) : Prop :=
   ∀ n : Node, n.WellTyped → n.Equiv (f n)
 
-/-- A theory rewriter whose pre- and post-rewrites return equivalent nodes. This
-is the obligation each ported cvc5 theory rewriter must meet. -/
+/-- A theory rewriter whose pre- and post-rewrites return equivalent nodes. -/
 def TheoryRewriter.Correct (R : TheoryRewriter) : Prop :=
   ∀ n : Node, n.WellTyped → n.Equiv (R.preRewrite n).node ∧ n.Equiv (R.postRewrite n).node
 
-theorem TheoryRewriter.trivial_correct : TheoryRewriter.trivial.Correct :=
-  fun n h => ⟨Node.Equiv.refl n h, Node.Equiv.refl n h⟩
+/-- Every theory rewriter is correct: its responses are certified. -/
+theorem TheoryRewriter.correct (R : TheoryRewriter) : R.Correct :=
+  fun n h => ⟨(R.preRewrite n).cert.equiv h, (R.postRewrite n).cert.equiv h⟩
 
 variable {R : TheoryId → TheoryRewriter}
 
@@ -98,6 +101,6 @@ theorem rewriteWith_sound (hR : ∀ tid, (R tid).Correct) : ∀ fuel, Sound (rew
     exact h₁.trans (h₂.trans h₃)
 
 theorem theoryRewriter_correct : ∀ tid, (theoryRewriter tid).Correct :=
-  fun _ => TheoryRewriter.trivial_correct
+  fun tid => (theoryRewriter tid).correct
 
 end Telos

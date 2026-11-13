@@ -1,6 +1,6 @@
 name = "Telos"
 version = "0.1.0"
-defaultTargets = ["Telos", "telos"]
+defaultTargets = ["Telos", "TelosTests", "telos"]
 
 # Logos, the CPC checker. Only its root package `Cpc` is required here, so the
 # rewriter builds without Mathlib. Keep `rev` in sync with the
@@ -8,12 +8,24 @@ defaultTargets = ["Telos", "telos"]
 [[require]]
 name = "Cpc"
 git = "https://github.com/ajreynol/logos"
-rev = "8c3fe85d5cd3c362d87b8b8fe273d0534323ba84"
+rev = "b1b49e7e7451a51af4752071022656f86e5a93e8"
 
 [[lean_lib]]
 name = "Telos"
 moreLeanArgs = ["-DwarningAsError=true"]
 
+# Tests, checked at build time (`#guard`).
+[[lean_lib]]
+name = "TelosTests"
+roots = []
+globs = ["TelosTests.+"]
+moreLeanArgs = ["-DwarningAsError=true"]
+
 [[lean_exe]]
 name = "telos"
 root = "Main"
+
+# Random terms and their rewrites, for differential testing (`scripts/fuzz.py`).
+[[lean_exe]]
+name = "telos-fuzz"
+root = "FuzzMain"

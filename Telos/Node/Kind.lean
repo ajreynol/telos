@@ -42,7 +42,7 @@ inductive Kind where
   | BOUND_VAR_LIST
   /-- Instantiation patterns. They carry no semantics, and `toEo` drops them. -/
   | INST_PATTERN_LIST
-  deriving DecidableEq, Repr, Inhabited, Hashable
+  deriving DecidableEq, Repr, Inhabited, Hashable, Ord
 
 /-- cvc5's `TheoryId` (`src/theory/theory_id.h`), for the theories `Kind` covers. -/
 inductive TheoryId where

@@ -185,6 +185,10 @@ instance (t : Node) : Decidable t.WellTyped :=
 
 end Node
 
+/-- The CPC formula `(= t s)`. -/
+def eqFormula (t s : Node) : Term :=
+  eoApp2 UserOp.eq t.toEo s.toEo
+
 namespace TypeNode
 
 /-- The type of a Logos SMT type, if `TypeNode` has one for it. -/

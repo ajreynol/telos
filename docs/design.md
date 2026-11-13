@@ -35,7 +35,7 @@ Five layers, from the bottom:
 | Layer | Where | Trusted? | Proof cost per rule |
 |---|---|---|---|
 | `Node` and its semantics (`toEo`) | `Telos/Node/` | specification | — |
-| Certified rule step | `Telos/Rewriter/Step.lean` | verified once | none |
+| Certified rule step | `Telos/Rewriter/Certified.lean` | verified once | none |
 | Rule database | `Telos/Rules/` (generated) | untrusted | none |
 | Theory strategies | `Telos/Theory/` (hand-written) | untrusted | none |
 | Driver (`rewriteWith`) | `Telos/Rewriter/` | verified once | none |
@@ -84,7 +84,7 @@ underneath later without changing the specification.
 Equality is structural (`Telos/Node/DecEq.lean`, written by hand because Lean
 cannot derive it for nested mutual inductives).
 
-`Node.ofEo` (planned) is the partial inverse of `toEo`. It turns the right-hand
+`Node.ofEo` (`Telos/Node/OfEo.lean`) is the partial inverse of `toEo`. It turns the right-hand
 side of a rule's conclusion, an `Eo.Term`, back into a node. Its correctness is
 checked at run time, `(ofEo r).toEo == r`, so it needs no proof and can be
 incomplete.
@@ -108,7 +108,7 @@ incomplete.
   Logos evaluates `=` to a Boolean even on ill-typed arguments, so without it
   two ill-typed nodes would be "equivalent".
 
-### Certified rule steps (`Telos/Rewriter/Step.lean`, planned)
+### Certified rule steps (`Telos/Rewriter/Certified.lean`)
 
 A rule step rewrites a node `n` to `m` by one CPC rule. Logos compiles every
 CPC rule into Lean (`Cpc/Logos.lean`). `__eo_prog_ite_true_cond x y` computes
@@ -119,35 +119,59 @@ covers any command list run from the empty state. So telos does not compute
 right-hand sides, and does not prove anything per rule. A step:
 
 1. takes a rule and its arguments from a matcher (`Telos/Rules/`);
-2. builds a short CPC command list. That is `evaluate` steps for the rule's
-   premises, if any, then the rule itself;
+2. builds a short CPC command list. That is a step for each of the rule's
+   premises, if any (`evaluate` by default, or a step the strategy chooses, such
+   as `bool-double-not-elim` for `(= (not (not b)) b)`), then the rule itself;
 3. runs Logos's checker on it from the empty state. It returns the last proven
    fact;
-4. checks that the fact is `(= n.toEo r)`, sets `m := Node.ofEo r`, and checks
-   `m.toEo == r`.
+4. reads `r` off the fact `(= l r)`, sets `m := Node.ofEo r`, and checks that
+   the fact is exactly `(= n m)` (`eqFormula n m`), which also checks `l`.
 
-If any check fails, the step does not apply. Its result is a node together with
-the command list that proves it. Whole rewrites concatenate these lists (with
-`trans`, and `cong` from the driver), which gives a CPC proof of
-`(= t (rewrite t))`.
+Only steps are run, never assumptions, so the proven facts may contain free
+variables. This is what lets rewrites under binders, whose bodies contain the
+bound variables, be certified.
 
-Soundness is stated once. In the root package (no Mathlib, no proofs):
+If any check fails, the step does not apply. Soundness is stated once. In the
+root package (no Mathlib, no proofs):
 
 ```lean
-/-- `cs`, run by Logos's checker from the empty state, proves `(= n m)`. -/
-def Certified (n m : Node) : Prop := ∃ cs, provesEq cs n m = true
+/-- `cs` meets Logos's translation side conditions and, run from the empty
+state, is closed and its last proven fact is `(= n m)`. -/
+def ProvesEq (cs : CCmdList) (n m : Node) : Prop :=
+  CmdListTranslationOk cs ∧ __eo_state_is_closed (runFromEmpty cs) = true ∧
+    __eo_state_proven_nth (runFromEmpty cs) 0 = eqFormula n m
+
+inductive Certified : Node → Node → Prop
+  | refl (n : Node) : Certified n n
+  | step (cs : CCmdList) : ProvesEq cs n k → Certified k m → Certified n m
+  | congrArg (i : Nat) (c' : Node) … :    -- rewrite child i, below a congruent
+      …  Certified cs[i] c' → Certified (.app op (cs.set i c')) m →
+      Certified (.app op cs) m
 ```
 
-and in `verification/`:
+`congrArg` lets a strategy rewrite below the top, for example to flip an
+equality inside another before applying a rule. It requires the operator to be
+child-congruent and the children to be well typed (checked at run time), and is
+justified by `Node.Equiv.congr`.
+
+`ProvesEq` is decidable, and is decided by running Logos's checker. In
+`verification/` (`TelosProofs/Certified.lean`):
 
 ```lean
 theorem Certified.equiv : Certified n m → n.WellTyped → n.Equiv m
 ```
 
-proved from Logos's checker soundness and `Node.equiv_iff`. Strategies return
-`{ m // Certified n m }`. The proof is the successful check, so any function
-written against that interface is correct by construction, and
-`TheoryRewriter.Correct` holds for every theory rewriter by one generic theorem.
+proved from Logos's `proven_from_empty_valid` (`Cpc/Proofs/ProvenFromEmpty.lean`:
+the checker's soundness, from the empty state) and `Node.equiv_iff_termEquiv`. A
+`RewriteResponse n` carries a proof of `Certified n node`, so every theory
+rewriter is correct by construction (`TheoryRewriter.correct`), and strategies
+need no proofs. The proof is erased at run time, and the command lists are not
+kept yet. Keeping them, and joining them with `trans` and `cong`, would give a
+CPC proof of `(= t (rewrite t))`.
+
+The certificate depends on all of Logos's rule proofs, since the checker's
+soundness does. A cold build of `verification/` therefore compiles every rule
+proof in Logos (hours on CI; cached afterwards).
 
 The cost is speed. Every step translates to `Eo.Term` and runs a Logos program.
 That is acceptable to start. Later, generated lemmas of the form "for
@@ -155,7 +179,7 @@ non-stuck arguments, the program returns the instantiated template" (the shape
 Logos's own `prog_eq_of_nonstuck` lemmas take, proved by `cases <;> rfl`) can
 replace the run-time check for hot rules.
 
-### Rule database (`Telos/Rules/`, generated, planned)
+### Rule database (`Telos/Rules/`, generated)
 
 For each rewrite rule, the database holds what is needed to *find* an
 application. That is the rule's `CRule` constructor, its `:args` variables, the
@@ -177,7 +201,8 @@ handles:
 - implicit parameters (`@n0`, `@T0`). These are not `:args`, and Logos infers
   them from the arguments' types.
 
-Premises are instantiated from their templates and discharged by `evaluate`. A
+Premises are instantiated from their templates and discharged by `evaluate`
+(`RuleSpec.apply`). A
 premise of the form `(= c v)` holds when Logos evaluates `c` to `v`.
 `bv-extract-whole`'s `(= (>= n1 (- (@bvsize x1) 1)) true)` is an example. If the
 evaluation does not give `v`, the rule does not apply. As in cvc5, rules with
@@ -189,7 +214,10 @@ theory rewrites of CPC (`ProofRewriteRule`). Examples are `aci_norm`,
 quantifier miniscoping and the string rules. Many of them take the whole
 equation as an argument and check it. For these, telos computes the right-hand
 side with ordinary, unverified code ported from cvc5, and the rule validates
-it. The interface is the same.
+it (`checkBy`, `Telos/Theory/Common.lean`). The interface is the same. For
+example, cvc5's `flattenNode` is computed as in C++ and certified by `aci_norm`
+(flattening, removing `true`/`false` and duplicates: both sides have the same
+sorted normal form) or, when the result is the zero element, by `absorb`.
 
 ### Theory strategies (`Telos/Theory/`, hand-written)
 
@@ -206,7 +234,7 @@ knowledge. Each is a port of the control flow of a cvc5 theory rewriter
 
 **Term order.** cvc5 orders by node id, which depends on creation order and is
 not reproducible outside one cvc5 run. telos uses a fixed total order on `Node`
-(`Telos/Node/Order.lean`, planned). Its first version is structural: kind, then
+(`Telos/Node/Order.lean`). Its first version is structural: kind, then
 operator, then children lexicographically. It is used wherever cvc5 compares
 ids: orienting equalities, sorting the children of commutative operators
 (`aci_norm`), and choosing between symmetric rewrites. telos's normal forms will
@@ -222,8 +250,9 @@ work. Porting a theory rewriter is pure programming.
   `postRewrite`), as in cvc5.
 - `theoryOf`: cvc5's type-based `Theory::theoryOf`. Variables go to the theory of
   their type, `EQUAL` to the theory of its arguments' type, anything else to the
-  theory of its kind. `theoryRewriter` maps each theory to its rewriter (all
-  trivial so far).
+  theory of its kind. `theoryRewriter` (`Telos/Rewrite.lean`) maps each theory
+  to its rewriter: `THEORY_BOOL` to the port of `TheoryBoolRewriter`
+  (`Telos/Theory/Bool.lean`), the others to the identity so far.
 - `rewriteWith`: cvc5's `Rewriter::rewriteTo`. Pre-rewrite until done and in the
   same theory, rewrite the children, post-rewrite. `REWRITE_AGAIN` post-rewrites
   again, while `REWRITE_AGAIN_FULL` or a change of theory rewrites the result from
@@ -248,10 +277,11 @@ theorem Telos.rewrite_correct (t : Node) (h : t.WellTyped) : t.Equiv (rewrite t)
   `Node.Equiv.congr_binder` (quantifiers, in their body). Both reuse Logos's
   soundness proof of the CPC `cong` rule, which is generic over application
   spines, so there is one case per `AppShape` and new kinds need no new proof.
-- `Step.lean` (planned): `Certified.equiv`, from Logos's checker soundness.
+- `Certified.lean`: `Certified.equiv`, from Logos's checker soundness.
 - `Driver.lean`: `rewriteWith_sound`. If every theory rewriter is
   `TheoryRewriter.Correct` (its pre- and post-rewrites return equivalent nodes),
-  the driver is sound. With certified steps, this holds for every strategy.
+  the driver is sound. `TheoryRewriter.correct` proves it for every theory
+  rewriter, from the certificates.
 - `Axioms.lean`: the axiom audit (`TRUSTED.md`).
 
 Upstream requests to Logos are collected in `../logos/telos-upstream-requests.md`
@@ -328,16 +358,20 @@ tested:
 
 1. ~~Equivalence algebra, congruence, driver.~~ Done, with trivial theory
    rewriters.
-2. **Certified steps.** `Node.ofEo` for the current kinds, `provesEq`,
-   `Certified`, and `Certified.equiv` from Logos's checker soundness. Rewire
-   `TheoryRewriter.Correct` to hold generically.
-3. **Rule extractor and matcher.** `scripts/gen-rules.py`, `RuleSpec`, the generic
-   matcher, the self-test, and the CI sync check. Start with the `bool-*`,
-   `ite-*` and `eq-*` rules.
-4. **Booleans.** Port the control flow of `TheoryBoolRewriter` and the builtin
-   rewriter for `EQUAL`/`ITE`, with the term order.
-5. **Front end and fuzzing.** Read SMT-LIB through the Logos parser into `Node`,
-   print rewritten terms, and the differential harness above.
+2. ~~Certified steps.~~ Done: `Node.ofEo`, `ProvesEq`, `Certified`,
+   `Certified.equiv`; `TheoryRewriter.Correct` holds generically.
+3. ~~Rule extractor and matcher.~~ Done: `scripts/gen-rules.py` (55 rules: the
+   `bool-*`, `ite-*` and `eq-*` rules), `RuleSpec`, the matcher, the self-test
+   (`TelosTests/Rules.lean`) and the CI sync check.
+4. ~~Booleans.~~ `TheoryBoolRewriter` is ported (`Telos/Theory/Bool.lean`, tests
+   in `TelosTests/Bool.lean`). Open: the equality rewriting of the other
+   theories (cvc5's builtin and UF rewriters: `(= x x)`, orientation, constants).
+5. **Front end and fuzzing.** Started: `telos-fuzz` (random Boolean terms over
+   three Booleans and two integer equalities) and `scripts/fuzz.py`, which
+   compares with cvc5's `(simplify t)`. On 6000 terms of depth 4: about 94%
+   identical to cvc5, every other result identical up to (or caused by) the
+   orientation of equalities, and no semantic disagreements. To do: read
+   SMT-LIB benchmarks through the Logos parser into `Node`, and run in CI.
 6. **Arithmetic, then bit-vectors.** Add kinds to the `toEo` tables and the
    extractor's symbol table, then port strategies. This is where unverified
    right-hand-side computations (`arith_poly_norm`, `bv_poly_norm`) come in.

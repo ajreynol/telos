@@ -1,5 +1,4 @@
-import Telos.Node.ToEo
-import Telos.Node.DecEq
+import Telos.Rewriter.Certified
 
 /-!
 # Rewriter
@@ -25,6 +24,9 @@ Differences from cvc5:
 * Children are rewritten only when each is well typed, a runtime check that
   stands in, for now, for a proof that the children of a well-typed node are well
   typed. Under a quantifier only the body is rewritten.
+* A `RewriteResponse n` carries a certificate that its node is CPC-provably equal
+  to `n` (`Certified`). Theory rewriters therefore cannot return an unjustified
+  result, and need no proof of their own.
 
 Correctness is `Telos.rewrite_correct` in `verification/TelosProofs/Rewriter.lean`.
 -/
@@ -41,23 +43,28 @@ inductive RewriteStatus where
   | REWRITE_AGAIN_FULL
   deriving DecidableEq, Repr, Inhabited
 
-/-- cvc5's `RewriteResponse`. -/
-structure RewriteResponse where
+/-- cvc5's `RewriteResponse`, for a rewrite of `n`. It also carries a
+certificate that `n` rewrites to `node` by CPC-checked steps. -/
+structure RewriteResponse (n : Node) where
   status : RewriteStatus
   node : Node
-  deriving Inhabited
+  cert : Certified n node
+
+/-- `n` is in normal form. -/
+def RewriteResponse.done (n : Node) : RewriteResponse n :=
+  ⟨.REWRITE_DONE, n, .refl n⟩
 
 /-- cvc5's `TheoryRewriter` interface. -/
 structure TheoryRewriter where
-  preRewrite : Node → RewriteResponse
-  postRewrite : Node → RewriteResponse
+  preRewrite : (n : Node) → RewriteResponse n
+  postRewrite : (n : Node) → RewriteResponse n
 
 namespace TheoryRewriter
 
 /-- A theory rewriter that leaves every node unchanged. -/
 def trivial : TheoryRewriter where
-  preRewrite n := ⟨.REWRITE_DONE, n⟩
-  postRewrite n := ⟨.REWRITE_DONE, n⟩
+  preRewrite := .done
+  postRewrite := .done
 
 end TheoryRewriter
 
@@ -71,10 +78,6 @@ def theoryOf : Node → TheoryId
       | some T => T.theoryId
       | none => n.getKind.theoryId
   | n => n.getKind.theoryId
-
-/-- The rewriter of each theory. None is implemented yet. -/
-def theoryRewriter : TheoryId → TheoryRewriter
-  | _ => .trivial
 
 /-- Pre-rewrite at the top, until the node is done and stays in its theory. -/
 def preRewriteLoop (R : TheoryId → TheoryRewriter) : Nat → Node → Node
@@ -120,11 +123,5 @@ def rewriteWith (R : TheoryId → TheoryRewriter) : Nat → Node → Node
   | fuel + 1, n =>
     let full := fun m => rewriteWith R fuel m
     postRewriteLoop R full fuel (rewriteChildren full (preRewriteLoop R fuel n))
-
-/-- The fuel `rewrite` uses. It bounds the recursion depth of the driver. -/
-def defaultFuel : Nat := 10000
-
-/-- cvc5's `Rewriter::rewrite`: rewrite a node to its normal form. -/
-def rewrite (t : Node) : Node := rewriteWith theoryRewriter defaultFuel t
 
 end Telos

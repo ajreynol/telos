@@ -19,6 +19,19 @@ the wrong thing, so review them as specifications, not as code.
   giving each operator's CPC head symbol and arity.
 - `verification/TelosProofs/Spec.lean`: the definition of `Node.Equiv`.
 
+## Not trusted
+
+The rewriting logic itself is outside the trusted base: every rewrite is a CPC
+step checked by Logos's checker, whose soundness Logos proves
+(`Certified.equiv`). A bug in any of the following can make telos miss a
+rewrite or differ from cvc5, but not return a non-equivalent node:
+
+- the theory strategies (`Telos/Theory/`) and the driver's control flow;
+- the generated rule table (`Telos/Rules/Generated.lean`), its generator
+  (`scripts/gen-rules.py`) and the matcher (`Telos/Rules/Match.lean`);
+- `Node.ofEo` (`Telos/Node/OfEo.lean`), the term order (`Telos/Node/Order.lean`)
+  and the printer (`Telos/Node/Print.lean`).
+
 ## Tools
 
 - The Lean 4 kernel, compiler and runtime (`leanprover/lean4:v4.34.0`).
@@ -37,5 +50,6 @@ the build if `Telos.rewrite_correct` uses any axiom other than:
   that a decision procedure, run as compiled code, returned `true`, so they trust
   the **Lean compiler** in addition to the kernel. They come from Logos's proofs,
   which use `native_decide` throughout (577 uses, including its checker core),
-  and enter through the congruence lemmas reused from
-  `Cpc/Proofs/RuleSupport/Cong/`. Trusting them was decided on 2026-11-12.
+  and enter through Logos's checker soundness proof (every CPC rule) and the
+  congruence lemmas reused from `Cpc/Proofs/RuleSupport/Cong/`. Trusting them
+  was decided on 2026-11-12.

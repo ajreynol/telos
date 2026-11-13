@@ -2,5 +2,13 @@ import Telos.Node.Kind
 import Telos.Node.TypeNode
 import Telos.Node.Node
 import Telos.Node.DecEq
+import Telos.Node.Order
+import Telos.Node.Print
 import Telos.Node.ToEo
+import Telos.Node.OfEo
+import Telos.Rewriter.Certified
 import Telos.Rewriter.Rewriter
+import Telos.Rules.Rules
+import Telos.Theory.Common
+import Telos.Theory.Bool
+import Telos.Rewrite

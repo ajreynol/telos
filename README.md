@@ -23,7 +23,8 @@ See [`docs/design.md`](docs/design.md) for the architecture and roadmap, and
 Two Lake projects, so the rewriter builds without Mathlib:
 
 - `.` (package `Telos`): `Node`, its translation to Logos terms, the rewriter and
-  the `telos` executable. Requires Logos's root package `Cpc`.
+  the `telos` executable. Requires Logos's root package `Cpc`. `TelosTests/`
+  holds tests checked at build time.
 - `verification/` (package `TelosVerification`): the specification `Node.Equiv`
   and the correctness proofs. Requires `Telos`, Logos's `LogosVerification` and
   Mathlib.
@@ -35,7 +36,13 @@ lake build                              # rewriter
 lake -d verification exe cache get      # Mathlib binaries (once)
 lake -d verification build              # proofs (also builds part of Logos's proofs)
 bash scripts/check-hygiene.sh           # no sorry/axiom; trusted code is listed
+python3 scripts/gen-rules.py            # regenerate Telos/Rules/Generated.lean
+lake build telos-fuzz && python3 scripts/fuzz.py --cvc5 PATH   # compare with cvc5
 ```
+
+The rule table `Telos/Rules/Generated.lean` is generated from the CPC signature in
+the pinned Logos checkout. After changing the Logos `rev`, regenerate it; CI
+fails when it is out of date (`--check`).
 
 ## Updating Logos
 

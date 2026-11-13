@@ -35,10 +35,14 @@ jobs:
           key: solver-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lakefile.toml', 'lake-manifest.json') }}-${{ github.sha }}
           restore-keys: solver-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lakefile.toml', 'lake-manifest.json') }}-
       - run: lake build
+      - name: Rule table is in sync with the pinned Logos signature
+        run: python3 scripts/gen-rules.py --check
 
   verification:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # A cold build compiles every Logos rule proof (Cpc.Proofs.Checker), which
+    # takes hours; later runs restore it from the cache below.
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v6
       - uses: leanprover/lean-action@v1
