@@ -296,10 +296,10 @@ parser, and `ruleName` (generated) names the rules.
 
 The proof is a refutation: the declarations, `(assume @goal (not (= t
 result)))`, the steps, and `false` by `contra`. It checks with
-`ethos --include=Cpc.cached.eo`, and with Logos unless it mentions a bound
-variable outside its binder (printed `(eo::var "x" T)`, which Logos's parser does
-not read yet). `scripts/check-proofs.py` checks proofs with Ethos, on example
-scripts or on fuzzed terms.
+`ethos --include=Cpc.cached.eo` and with Logos. A bound variable outside its
+binder (in a step about a quantifier's body) is printed `(@var "x" T)`, the
+signature's macro for `eo::var`. `scripts/check-proofs.py` checks proofs with
+Ethos, on example scripts or on fuzzed terms.
 
 None of this is trusted. Proof output is for exchanging proofs with other tools;
 results are correct with or without it.
@@ -421,10 +421,8 @@ tested:
    program-equals-template lemmas for hot rules.
 8. ~~Proof output.~~ Done: `telos --proof` prints a CPC proof of
    `(= t (rewrite t))`, checked by Logos's checker before printing, and accepted
-   by Ethos (`scripts/check-proofs.py`: 2000 of 2000 fuzzed terms). Open: Logos's
-   parser does not read `eo::var`, so Logos cannot re-read proofs of rewrites
-   under binders; proofs are not compacted (one `cong` per rewrite below an
-   operator).
+   by Ethos (`scripts/check-proofs.py`: 2000 of 2000 fuzzed terms). Open:
+   proofs are not compacted (one `cong` per rewrite below an operator).
 
 ## Working conventions
 

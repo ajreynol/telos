@@ -6,8 +6,7 @@ import Telos
 Each query is read by Logos's parser, rewritten, and its CPC proof printed. The
 proof must be accepted by Logos twice: by its checker, before printing
 (`Proof.proofOf`), and as text, re-parsed as a refutation (`logos_check_proof`),
-which checks the printer. Proofs under binders use `eo::var`, which Logos's
-parser does not read yet; `scripts/check-proofs.py` checks those with Ethos.
+which checks the printer. `scripts/check-proofs.py` checks proofs with Ethos.
 -/
 
 open Telos Telos.Frontend

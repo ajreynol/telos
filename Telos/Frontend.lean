@@ -137,11 +137,7 @@ def simplify (sc : Script) (q : Query) (withProof : Bool) : Result :=
           match logos_check_proof text with
           | .ok .correct => pure text
           | .ok _ => throw "internal error: Logos does not accept the printed proof"
-          | .error e =>
-            -- Logos's parser does not read `eo::var` yet, which proofs of
-            -- rewrites under binders need. Their steps were checked above.
-            if (text.splitOn "(eo::var ").length > 1 then pure text
-            else throw s!"internal error: Logos cannot parse the printed proof: {e}")
+          | .error e => throw s!"internal error: Logos cannot parse the printed proof: {e}")
         else none
       { source := q.source, output := .ok r.1.toSmtLib, proof }
 

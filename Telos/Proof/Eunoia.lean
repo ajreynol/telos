@@ -67,7 +67,8 @@ structure Names where
   const : Nat → Option String := fun _ => none
   /-- Whether a variable of this name is a declared constant. telos represents
   declared constants as variables (`Node.var`); other variables are bound, and
-  are printed as `(eo::var "x" T)` outside their binder. -/
+  are printed as `(@var "x" T)` outside their binder (the signature's
+  `(define @var ((s String) (T Type)) (eo::var s T))`). -/
   isConst : String → Bool := fun _ => false
 
 def isSimpleSymbolChar (c : Char) : Bool :=
@@ -110,7 +111,7 @@ partial def printIn (N : Names) (bound : List Term) (t : Term) : String :=
   | .Var (.String s) T =>
     let x := nativeStringToString s
     if bound.contains t || N.isConst x then symbol x
-    else s!"(eo::var {stringLit s} {print N T})"
+    else s!"(@var {stringLit s} {print N T})"
   | .Bool => "Bool"
   | .Type => "Type"
   | .FunType => "->"
