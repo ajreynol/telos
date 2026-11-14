@@ -1,3 +1,4 @@
+import Std.Data.HashMap
 import Telos.Rewriter.Certified
 
 /-!
@@ -20,10 +21,12 @@ Differences from cvc5:
 * The driver takes **fuel** and returns its input when the fuel runs out. That is
   sound, since the identity is an equivalence, and it avoids `partial def`, which
   proofs cannot see through. Fuel bounds the recursion depth, not the work.
-* Recursion instead of cvc5's explicit stack, and no rewrite cache yet.
-* Children are rewritten only when each is well typed, a runtime check that
-  stands in, for now, for a proof that the children of a well-typed node are well
-  typed. Under a quantifier only the body is rewritten.
+* Recursion instead of cvc5's explicit stack. The rewrite cache (`Cache`) lasts
+  for one call of `rewriteWith`, where cvc5's lasts for the whole run.
+* Children are rewritten only when each is well typed: for the kinds of
+  `Op.childrenTypedOfParent` this is proved (`ChildTyping.children_wellTyped`),
+  and for the others it is checked at run time. Under a quantifier only the body
+  is rewritten.
 * A `RewriteResponse n` carries a certificate that its node is CPC-provably equal
   to `n` (`Certified`). Theory rewriters therefore cannot return an unjustified
   result, and need no proof of their own. The driver chains these certificates
@@ -94,52 +97,86 @@ def preRewriteLoop (R : TheoryId → TheoryRewriter) : Nat → (n : Node) → Rw
       else r.toRw.trans (preRewriteLoop R fuel r.node)
     | _ => r.toRw.trans (preRewriteLoop R fuel r.node)
 
+/-- The rewrite cache: the rewrite of each node rewritten so far, as cvc5's
+rewriter caches the result of `rewriteTo`. -/
+abbrev Cache := Std.HashMap Node ((n : Node) × Rw n)
+
+/-- The rewriter's monad: a computation with the rewrite cache. -/
+abbrev RwM := StateM Cache
+
+/-- The cached rewrite of `n`, if any. -/
+def Cache.find (c : Cache) (n : Node) : Option (Rw n) :=
+  match c.get? n with
+  | some ⟨n', r⟩ => if h : n' = n then some (h ▸ r) else none
+  | none => none
+
+/-- The rewrites of `cs` by `f`, in order. -/
+def mapChildren (f : (c : Node) → RwM (Rw c)) :
+    (cs : List Node) → RwM {rs : List ((c : Node) × Rw c) // rs.map (·.1) = cs}
+  | [] => return ⟨[], rfl⟩
+  | c :: cs => do
+    let r ← f c
+    let ⟨rs, h⟩ ← mapChildren f cs
+    return ⟨⟨c, r⟩ :: rs, by simp [h]⟩
+
 /-- Rewrite the children of a node with `f`. -/
-def rewriteChildren (f : (c : Node) → Rw c) (n : Node) : Rw n :=
+def rewriteChildren (f : (c : Node) → RwM (Rw c)) (n : Node) : RwM (Rw n) :=
   match n with
   | .app op cs =>
     if hop : op.eoShape.isChildCongruent then
-      if hc : op.childrenTypedOfParent = true then Rw.congr op cs f hop (Or.inl hc)
-      else if hwt : Profile.time "types" (fun _ => "driver: children well typed")
-          (fun _ => decide (∀ c ∈ cs.toList, c.WellTyped)) = true then
-        Rw.congr op cs f hop (Or.inr (of_decide_eq_true hwt))
-      else .id _
+      let typed := op.childrenTypedOfParent = true ∨ Profile.time "types"
+        (fun _ => "driver: children well typed") (fun _ => decide (∀ c ∈ cs.toList, c.WellTyped)) = true
+      if hwt : typed then do
+        let ⟨rs, hrs⟩ ← mapChildren f cs.toList
+        let hwt' : op.childrenTypedOfParent = true ∨ ∀ c ∈ cs.toList, c.WellTyped :=
+          hwt.imp (fun h => h) of_decide_eq_true
+        return Rw.congrList op cs rs hrs hop hwt'
+      else return .id _
     else
       match op, cs with
       | .kind k, ⟨vs :: body :: pats⟩ =>
         if hq : Profile.time "types" (fun _ => "driver: quantifier body well typed")
-            (fun _ => decide (k.isQuantifier = true ∧ body.WellTyped)) = true then
-          let b := f body
+            (fun _ => decide (k.isQuantifier = true ∧ body.WellTyped)) = true then do
+          let b ← f body
           have hq := of_decide_eq_true hq
-          ⟨.app (.kind k) ⟨vs :: b.1 :: pats⟩, .congrBody hq.1 hq.2 b.2 (.refl _)⟩
-        else .id _
-      | _, _ => .id _
-  | _ => .id _
+          return ⟨.app (.kind k) ⟨vs :: b.1 :: pats⟩, .congrBody hq.1 hq.2 b.2 (.refl _)⟩
+        else return .id _
+      | _, _ => return .id _
+  | _ => return .id _
 
 /-- Post-rewrite at the top. `full` rewrites a node from the start, for
 `REWRITE_AGAIN_FULL` and for results that belong to another theory. -/
-def postRewriteLoop (R : TheoryId → TheoryRewriter) (full : (n : Node) → Rw n) :
-    Nat → (n : Node) → Rw n
-  | 0, n => .id n
-  | fuel + 1, n =>
+def postRewriteLoop (R : TheoryId → TheoryRewriter) (full : (n : Node) → RwM (Rw n)) :
+    Nat → (n : Node) → RwM (Rw n)
+  | 0, n => return .id n
+  | fuel + 1, n => do
     let tid := theoryOf n
     let r := (R tid).postRewrite n
     match r.status with
     | .REWRITE_DONE =>
-      if theoryOf r.node == tid then r.toRw else r.toRw.trans (full r.node)
+      if theoryOf r.node == tid then return r.toRw else return r.toRw.trans (← full r.node)
     | .REWRITE_AGAIN =>
-      if theoryOf r.node == tid then r.toRw.trans (postRewriteLoop R full fuel r.node)
-      else r.toRw.trans (full r.node)
-    | .REWRITE_AGAIN_FULL => r.toRw.trans (full r.node)
+      if theoryOf r.node == tid then return r.toRw.trans (← postRewriteLoop R full fuel r.node)
+      else return r.toRw.trans (← full r.node)
+    | .REWRITE_AGAIN_FULL => return r.toRw.trans (← full r.node)
+
+/-- cvc5's `Rewriter::rewriteTo`, with the given theory rewriters and fuel, and
+the rewrite cache. -/
+def rewriteWithM (R : TheoryId → TheoryRewriter) : Nat → (n : Node) → RwM (Rw n)
+  | 0, n => return .id n
+  | fuel + 1, n => do
+    if let some r := (← get).find n then return r
+    let full := fun m => rewriteWithM R fuel m
+    let pre := preRewriteLoop R fuel n
+    let mid ← rewriteChildren full pre.1
+    let post ← postRewriteLoop R full fuel mid.1
+    let r := pre.trans (mid.trans post)
+    modify (·.insert n ⟨n, r⟩)
+    return r
 
 /-- cvc5's `Rewriter::rewriteTo`, with the given theory rewriters and fuel. The
 result is certified, so it is correct by construction (`Certified.equiv`). -/
-def rewriteWith (R : TheoryId → TheoryRewriter) : Nat → (n : Node) → Rw n
-  | 0, n => .id n
-  | fuel + 1, n =>
-    let full := fun m => rewriteWith R fuel m
-    let pre := preRewriteLoop R fuel n
-    let mid := rewriteChildren full pre.1
-    pre.trans (mid.trans (postRewriteLoop R full fuel mid.1))
+def rewriteWith (R : TheoryId → TheoryRewriter) (fuel : Nat) (n : Node) : Rw n :=
+  (rewriteWithM R fuel n).run' {}
 
 end Telos

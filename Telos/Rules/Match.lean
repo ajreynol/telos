@@ -146,9 +146,14 @@ partial def Pat.instantiateList (σ : Subst) (ps : List Pat) (sym : Bool := fals
 
 end
 
-/-- The value of `a`, by an `evaluate` step. -/
+/-- The value of `a`, as the `evaluate` step proving the premise computes it
+(Logos's evaluator, run directly: this only decides whether the rule is tried;
+the certificate still has the `evaluate` step). -/
 def evalNode (a : Node) : Option Node :=
-  (applyCmds (.cons (.step .evaluate (.cons a.toEo .nil) .nil) .nil) a).map (·.1)
+  Profile.time "strategy: premise evaluation" (fun _ => "") fun _ =>
+    match __run_evaluate a.toEo with
+    | .Stuck => none
+    | v => Node.ofEo [] v
 
 /-- Extend `σ` by the premises, in order: the value of each premise's left-hand
 side must match its right-hand side. -/

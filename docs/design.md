@@ -521,10 +521,19 @@ tested:
    - Not ported: `UmuloEliminate` and `SmuloEliminate` (applied by cvc5 only to
      constants), `BvIteConstCond` and the constant evaluation of `bvcomp`
      (Logos's `evaluate` does not reduce them), `BvComp`, `IneqElimConversion`.
-   - Performance: 3000 terms of depth 3 take 4.7s (arithmetic: 0.8s for depth
-     4). RARE matching is a quarter of it (1.9M match attempts), and premises
-     are evaluated twice, when matching and in the certificate.
-7. **Performance.** Rewrite cache, sharing, cached hashes; a proof that children
+   - Performance (3000 terms of depth 3, `telos-fuzz ... bv`): 4.65s at first,
+     3.73s after indexing rules by name (`ruleTable`), evaluating premises at
+     match time with Logos's evaluator directly rather than a checker run, and
+     structural bit-vector types in `typeHint`; 2.55s with the rewrite cache;
+     2.36s after `childrenTypedOfParent` for the non-indexed bit-vector kinds.
+     Outputs are unchanged throughout. The rest is spread out: checker runs,
+     comparisons and read-backs about 35%, RARE matching 18%.
+   - cvc5 bug found while porting: `RewriteRule<NegMult>::applies` never holds
+     (`cvc5-negmult-bug.md`).
+7. **Performance.** ~~Rewrite cache~~ (done: `Cache` in
+   `Telos/Rewriter/Rewriter.lean`, for one call of `rewriteWith`, as cvc5 caches
+   `rewriteTo`; children are rewritten in order and assembled by
+   `Rw.congrList`). Sharing, cached hashes; a proof that children
    of well-typed nodes are well typed (removing the runtime check); generated
    program-equals-template lemmas for hot rules; normalizers (first
    `arith_poly_norm`) proven to produce steps the checker accepts, so that

@@ -52,7 +52,13 @@ def Op.childrenTypedOfParent : Op → Bool
     | .EQUAL | .NOT | .AND | .OR | .IMPLIES | .XOR | .ITE
     | .ADD | .MULT | .SUB | .NEG | .DIVISION | .INTS_DIVISION | .INTS_MODULUS
     | .DIVISION_TOTAL | .INTS_DIVISION_TOTAL | .INTS_MODULUS_TOTAL | .ABS
-    | .LT | .LEQ | .GT | .GEQ | .TO_REAL | .TO_INTEGER | .IS_INTEGER => true
+    | .LT | .LEQ | .GT | .GEQ | .TO_REAL | .TO_INTEGER | .IS_INTEGER
+    | .BITVECTOR_NOT | .BITVECTOR_NEG | .BITVECTOR_NAND | .BITVECTOR_NOR | .BITVECTOR_XNOR
+    | .BITVECTOR_COMP | .BITVECTOR_SUB | .BITVECTOR_UDIV | .BITVECTOR_UREM | .BITVECTOR_SDIV
+    | .BITVECTOR_SREM | .BITVECTOR_SMOD | .BITVECTOR_SHL | .BITVECTOR_LSHR | .BITVECTOR_ASHR
+    | .BITVECTOR_ULT | .BITVECTOR_ULE | .BITVECTOR_UGT | .BITVECTOR_UGE | .BITVECTOR_SLT
+    | .BITVECTOR_SLE | .BITVECTOR_SGT | .BITVECTOR_SGE | .BITVECTOR_AND | .BITVECTOR_OR
+    | .BITVECTOR_XOR | .BITVECTOR_ADD | .BITVECTOR_MULT | .BITVECTOR_CONCAT => true
     | _ => false
   | _ => false
 
@@ -127,6 +133,30 @@ def congr (op : Op) (cs : Array Node) (f : (c : Node) → Rw c)
         exact this.symm
       have e₂ : m = ds[i]'(hsize ▸ hi) := by
         simp only [ds, Array.getElem_map]; exact (congrArg (fun x => x.2.1) h).symm
+      cast (by rw [e₁, e₂]) cert) (.refl _)⟩
+
+/-- `congr` with the rewrites of the children given in order, as a list. -/
+def congrList (op : Op) (cs : Array Node) (rs : List ((c : Node) × Rw c))
+    (hrs : rs.map (·.1) = cs.toList) (hop : op.eoShape.isChildCongruent = true)
+    (hwt : op.childrenTypedOfParent = true ∨ ∀ c ∈ cs.toList, c.WellTyped) :
+    Rw (.app op cs) :=
+  let ds : Array Node := (rs.map (·.2.1)).toArray
+  have hlen : rs.length = cs.size := by
+    have := congrArg List.length hrs; simpa using this
+  have hsize : cs.size = ds.size := by simp [ds, hlen]
+  ⟨.app op ds, .congr hsize hop hwt (fun i hi =>
+    have hr : i < rs.length := by omega
+    have e₀ : rs[i].1 = cs[i] := by
+      have := congrArg (·[i]?) hrs
+      simp only [List.getElem?_map, List.getElem?_eq_getElem hr, Option.map_some,
+        Array.getElem?_toList] at this
+      rw [Array.getElem?_eq_getElem hi] at this
+      exact Option.some.inj this
+    have e₃ : rs[i].2.1 = ds[i]'(hsize ▸ hi) := by simp [ds]
+    match h : rs[i] with
+    | ⟨c, m, cert⟩ =>
+      have e₁ : c = cs[i] := by rw [h] at e₀; exact e₀
+      have e₂ : m = ds[i]'(hsize ▸ hi) := by rw [h] at e₃; exact e₃
       cast (by rw [e₁, e₂]) cert) (.refl _)⟩
 
 end Rw
