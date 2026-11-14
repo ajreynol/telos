@@ -1,4 +1,5 @@
 import Telos.Theory.Common
+import Telos.Arith.PolyNorm
 import Telos.Rewriter.Rewriter
 
 /-!
@@ -31,145 +32,6 @@ namespace Telos.Arith
 
 open Node
 
-/-! ## Polynomials, as cvc5's `rewriter::Sum` -/
-
-def isInt (n : Node) : Bool :=
-  Profile.time "types" (fun _ => "arith: isInt/isReal") fun _ => n.getType == some .integer
-
-def isReal (n : Node) : Bool :=
-  Profile.time "types" (fun _ => "arith: isInt/isReal") fun _ => n.getType == some .real
-
-/-- cvc5's `LeafNodeComparator`, for non-constant leaves: real terms before
-integer terms, variables before other terms, then the term order. -/
-def leafLt (a b : Node) : Bool :=
-  if a == b then false
-  else if isInt a != isInt b then !isInt a
-  else if a.isVar != b.isVar then a.isVar
-  else Node.lt a b
-
-/-- A monomial: its non-constant factors, sorted by `leafLt`. -/
-abbrev Mono := List Node
-
-def sortLeaves (fs : List Node) : List Node :=
-  fs.foldr (fun x acc => insert x acc) []
-where
-  insert (x : Node) : List Node → List Node
-    | [] => [x]
-    | y :: ys => if leafLt y x then y :: insert x ys else x :: y :: ys
-
-/-- The node cvc5 keys a monomial by (`mkNonlinearMult`). -/
-def monoKey : Mono → Node
-  | [] => .const (.integer 1)
-  | [x] => x
-  | xs => mkNode .MULT xs.toArray
-
-/-- cvc5's `LeafNodeComparator` on monomial keys: the constant monomial first. -/
-def monoLt (a b : Mono) : Bool :=
-  match a, b with
-  | [], [] => false
-  | [], _ => true
-  | _, [] => false
-  | _, _ =>
-    let ka := monoKey a
-    let kb := monoKey b
-    let ia := a.all isInt
-    let ib := b.all isInt
-    if ka == kb then false
-    else if ia != ib then !ia
-    else if ka.isVar != kb.isVar then ka.isVar
-    else Node.lt ka kb
-
-/-- A sum of monomials with rational coefficients, none zero. -/
-abbrev Poly := List (Mono × Rat)
-
-namespace Poly
-
-def addMono (p : Poly) (m : Mono) (c : Rat) : Poly :=
-  if c == 0 then p
-  else match p.find? (·.1 == m) with
-    | some (_, d) =>
-      let p := p.filter (·.1 != m)
-      if c + d == 0 then p else p ++ [(m, c + d)]
-    | none => p ++ [(m, c)]
-
-def add (p q : Poly) : Poly := q.foldl (fun acc (m, c) => acc.addMono m c) p
-
-def scale (p : Poly) (c : Rat) : Poly :=
-  if c == 0 then [] else p.map fun (m, d) => (m, c * d)
-
-def mul (p q : Poly) : Poly :=
-  p.foldl (fun acc (m₁, c₁) =>
-    q.foldl (fun acc (m₂, c₂) => acc.addMono (sortLeaves (m₁ ++ m₂)) (c₁ * c₂)) acc) []
-
-def const (c : Rat) : Poly := Poly.addMono [] [] c
-
-def constant (p : Poly) : Rat := ((p.find? (·.1 == [])).map (·.2)).getD 0
-
-def removeConstant (p : Poly) : Poly := p.filter (·.1 != [])
-
-def sorted (p : Poly) : Poly := p.mergeSort fun a b => !monoLt b.1 a.1
-
-/-- The leading (first non-constant) coefficient, in cvc5's order. -/
-def leadingCoeff? (p : Poly) : Option Rat := ((p.sorted.find? (·.1 != [])).map (·.2))
-
-/-- Whether every leaf is an integer (cvc5's `isIntegral`). -/
-def isIntegral (p : Poly) : Bool := p.all fun (m, _) => m.all isInt
-
-end Poly
-
-/-- The polynomial of an arithmetic term (cvc5's `addToSum`, flattening through
-`+`, `-`, `*`, unary `-`, `to_real` and division by a constant). -/
-partial def polyOf (n : Node) : Poly :=
-  match n with
-  | .const (.integer i) => .const i
-  | .const (.rational q) => .const q
-  | .app (.kind .ADD) cs => cs.foldl (fun p c => p.add (polyOf c)) []
-  | .app (.kind .SUB) #[a, b] => (polyOf a).add ((polyOf b).scale (-1))
-  | .app (.kind .NEG) #[a] => (polyOf a).scale (-1)
-  | .app (.kind .MULT) cs => cs.foldl (fun p c => p.mul (polyOf c)) (.const 1)
-  | .app (.kind .TO_REAL) #[a] => polyOf a
-  | .app (.kind .DIVISION) #[a, .const (.rational q)] =>
-    if q == 0 then [([n], 1)] else (polyOf a).scale (1 / q)
-  | .app (.kind .DIVISION) #[a, .const (.integer i)] =>
-    if i == 0 then [([n], 1)] else (polyOf a).scale (1 / (i : Rat))
-  | n => [([n], 1)]
-
-/-- A constant of the given arithmetic type. -/
-def constNode (real : Bool) (c : Rat) : Node :=
-  if real then .const (.rational c) else .const (.integer c.num)
-
-/-- The node of a polynomial in cvc5's normal form (`collectSum`, `mkMultTerm`),
-of type `Real` when `real`. -/
-def Poly.toNodeAt (real : Bool) (p : Poly) : Node :=
-  let wrap (l : Node) := if real && isInt l then mkNode .TO_REAL #[l] else l
-  let product (fs : List Node) : Node := match fs with
-    | [x] => x
-    | xs => mkNode .MULT xs.toArray
-  let monoNode (fs : Mono) : Node := product (fs.map wrap)
-  let term : Mono × Rat → Node
-    | ([], c) => constNode real c
-    | (fs, c) =>
-      if real && fs.all isInt then
-        -- An integer monomial of a real sum: as cvc5 prints its mixed sums,
-        -- `(to_real (* c m))` for an integral `c`, else `(* c (to_real m))`.
-        if c.isInt then
-          mkNode .TO_REAL #[if c == 1 then product fs else
-            mkNode .MULT #[constNode false c, product fs]]
-        else mkNode .MULT #[constNode true c, mkNode .TO_REAL #[product fs]]
-      else if c == 1 then monoNode fs else mkNode .MULT #[constNode real c, monoNode fs]
-  match p.sorted.map term with
-  | [] => constNode real 0
-  | [t] => t
-  | ts => mkNode .ADD ts.toArray
-
-/-- The node of a polynomial in cvc5's normal form. A real sum of integer leaves
-with integral coefficients is an integer sum for cvc5 (`maybeEnsureReal`), so it
-is `(to_real (+ (- 3) x))`. -/
-def Poly.toNode (real : Bool) (p : Poly) : Node :=
-  if real && p.isIntegral && p.all (·.2.isInt) && p.any (·.1 != []) then
-    mkNode .TO_REAL #[p.toNodeAt false]
-  else p.toNodeAt real
-
 /-! ## Terms -/
 
 def isArithTerm (n : Node) : Bool :=
@@ -177,11 +39,17 @@ def isArithTerm (n : Node) : Bool :=
   | .ADD | .SUB | .NEG | .MULT | .DIVISION => true
   | _ => false
 
-/-- The normal form of an arithmetic term, certified by `arith_poly_norm`. -/
+/-- The normal form of an arithmetic term. When `ArithNormOk` holds, the step is
+justified statically (`Certified.arithNorm`); otherwise it is checked by
+`arith_poly_norm`. -/
 def normalizeTerm (n : Node) : Option (Rw n) :=
-  let m := Profile.time "strategy: arith normal form" (fun _ => "term") fun _ =>
-    (polyOf n).toNode (isReal n)
-  if m == n then none else checkBy .arith_poly_norm n m
+  let p := Profile.time "strategy: arith normal form" (fun _ => "term") fun _ => polyOf n
+  let m := p.toNode (isReal n)
+  if m == n then none
+  else if h : Profile.time "static: side conditions" (fun _ => "arith_poly_norm")
+      (fun _ => decide (ArithNormOk n p m)) = true then
+    some ⟨m, .arithNorm (of_decide_eq_true h) (.refl m)⟩
+  else checkBy .arith_poly_norm n m
 
 /-- `(to_real c)` for a constant `c`: the real constant, by `evaluate`. -/
 def rewriteToReal (n : Node) : Option (Rw n) :=

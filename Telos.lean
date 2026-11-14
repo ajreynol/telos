@@ -12,6 +12,7 @@ import Telos.Rewriter.Rewriter
 import Telos.Rules.Rules
 import Telos.Theory.Common
 import Telos.Theory.Bool
+import Telos.Arith.PolyNorm
 import Telos.Theory.Arith
 import Telos.Rewrite
 import Telos.Rules.RuleNames

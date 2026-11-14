@@ -3,6 +3,7 @@ import Telos.Node.DecEq
 import Cpc.TranslationChecks
 import Telos.Rules.RuleNames
 import Telos.Profile
+import Telos.Arith.PolyNorm
 
 /-!
 # Certified rewrite steps
@@ -60,6 +61,13 @@ inductive Certified : Node → Node → Type
       op.eoShape.isChildCongruent = true → (∀ c ∈ cs.toList, c.WellTyped) →
       ((i : Nat) → (hi : i < cs.size) → Certified cs[i] (ds[i]'(hsize ▸ hi))) →
       Certified (.app op ds) m → Certified (.app op cs) m
+  /-- `n` to its arithmetic normal form, justified statically: under
+  `ArithNormOk n`, `(= n (arithNorm n))` is an `arith_poly_norm` step that Logos's
+  checker accepts (`verification/TelosProofs/ArithNorm.lean`), so it is not run.
+  The step is rebuilt when a proof is printed (`Certified.arithNormCmds`). -/
+  | arithNorm {n m : Node} :
+      Arith.ArithNormOk n (Arith.polyOf n) (Arith.arithNorm n) → Certified (Arith.arithNorm n) m →
+      Certified n m
   /-- A rewrite of the well-typed body of a quantifier
   (`Node.Equiv.congr_binder`). -/
   | congrBody {k : Kind} {vs body body' m : Node} {pats : List Node} :
@@ -73,6 +81,11 @@ def Certified.trans {a b c : Node} : Certified a b → Certified b c → Certifi
   | .congrArg i c' hi hop hwt hc r, h₂ => .congrArg i c' hi hop hwt hc (r.trans h₂)
   | .congr hsize hop hwt hc r, h₂ => .congr hsize hop hwt hc (r.trans h₂)
   | .congrBody hk hb hc r, h₂ => .congrBody hk hb hc (r.trans h₂)
+  | .arithNorm h r, h₂ => .arithNorm h (r.trans h₂)
+
+/-- The CPC step a statically justified `arithNorm` stands for. -/
+def Certified.arithNormCmds (n : Node) : CCmdList :=
+  .cons (.step .arith_poly_norm (.cons (eqFormula n (Arith.arithNorm n)) .nil) .nil) .nil
 
 /-- A certified rewrite of `n`: the result, and how it was obtained. -/
 abbrev Rw (n : Node) := (m : Node) × Certified n m

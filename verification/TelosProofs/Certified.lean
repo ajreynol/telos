@@ -1,5 +1,6 @@
 import TelosProofs.Congruence
 import Cpc.Proofs.ProvenFromEmpty
+import TelosProofs.ArithNorm
 
 /-!
 # Certified steps are equivalences
@@ -56,6 +57,9 @@ theorem Certified.equiv {n m : Node} (h : Certified n m) (hn : n.WellTyped) : n.
     have hch : List.Forall₂ Node.Equiv cs.toList ds.toList :=
       forall₂_of_getElem hsize fun i hi => ihc i hi (hwt _ (Array.getElem_mem_toList hi))
     have h₁ := Node.Equiv.congr hop hn hch
+    exact h₁.trans (ih h₁.wellTyped_right)
+  | arithNorm h _ ih =>
+    have h₁ := ProvesEq.equiv (arithNorm_provesEq h)
     exact h₁.trans (ih h₁.wellTyped_right)
   | @congrBody k vs body body' m pats hk hb _ _ ihb ih =>
     have hk' : k = .FORALL ∨ k = .EXISTS := by cases k <;> simp_all [Kind.isQuantifier]

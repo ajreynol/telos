@@ -106,6 +106,9 @@ partial def emitChain : {n m : Node} → Certified n m → EmitM (Array Nat)
           closeChain (cs[j]'(List.mem_range.1 hj)) chains[j]!
         some <$> congStep (.app op cs) op eqs
     return p.toArray ++ (← emitChain rest)
+  | n, _, .arithNorm _ rest => do
+    let p ← emitCmds (Certified.arithNormCmds n)
+    return #[p] ++ (← emitChain rest)
   | _, _, @Certified.congrBody k vs body _ _ pats _ _ hc rest => do
     let ch ← emitChain hc
     let p ← if ch.isEmpty then pure none

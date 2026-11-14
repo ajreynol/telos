@@ -20,7 +20,6 @@ that block.
 -/
 
 set_option linter.unusedSimpArgs false
-set_option linter.internalConstructors false
 
 open Eo SmtEval
 
