@@ -1,6 +1,8 @@
 import Telos.Node.OfEo
 import Telos.Node.DecEq
 import Cpc.TranslationChecks
+import Telos.Rules.RuleNames
+import Telos.Profile
 
 /-!
 # Certified rewrite steps
@@ -112,19 +114,30 @@ def eqRhs? : Term → Option Term
   | .Apply (.Apply (.UOp UserOp.eq) _) r => some r
   | _ => none
 
+/-- The name of the rule of the last step of `cs`, for profiling. -/
+def lastRuleName : CCmdList → String
+  | .cons (.step r _ _) .nil | .cons (.step_pop r _ _) .nil => ruleName r
+  | .cons _ .nil | .nil => "?"
+  | .cons _ cs => lastRuleName cs
+
 /-- Run `cs`. If it proves `(= n r)` and `r` reads back as a node `m`, return `m`,
-certified. -/
+certified. Each phase is a profiling probe, keyed by the rule of the last step. -/
 def applyCmds (cs : CCmdList) (n : Node) : Option (Rw n) :=
-  if hT : CmdListTranslationOk cs then
-    if hC : __eo_state_is_closed (runFromEmpty cs) = true then
-      let P := __eo_state_proven_nth (runFromEmpty cs) 0
-      match eqRhs? P >>= Node.ofEo n.vars with
+  let rule := fun (_ : Unit) => lastRuleName cs
+  let rejected (_ : Unit) : Option (Rw n) := Profile.time "checker: rejected" rule fun _ => none
+  if hT : Profile.time "checker: side conditions" rule
+      (fun _ => decide (CmdListTranslationOk cs)) = true then
+    let st := Profile.time "checker: run" rule fun _ => runFromEmpty cs
+    if hC : __eo_state_is_closed st = true then
+      let P := __eo_state_proven_nth st 0
+      match Profile.time "checker: read back" rule fun _ => eqRhs? P >>= Node.ofEo n.vars with
       | some m =>
-        if hE : P = eqFormula n m then some ⟨m, .step cs ⟨hT, hC, hE⟩ (.refl m)⟩
-        else none
-      | none => none
-    else none
-  else none
+        if hE : Profile.time "checker: compare" rule (fun _ => decide (P = eqFormula n m)) = true then
+          some ⟨m, .step cs ⟨of_decide_eq_true hT, hC, of_decide_eq_true hE⟩ (.refl m)⟩
+        else rejected ()
+      | none => rejected ()
+    else rejected ()
+  else rejected ()
 
 /-- A list of terms as a rule's argument list. -/
 def toArgList : List Term → CArgList

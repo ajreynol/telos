@@ -453,7 +453,18 @@ tested:
      comes in.
 7. **Performance.** Rewrite cache, sharing, cached hashes; a proof that children
    of well-typed nodes are well typed (removing the runtime check); generated
-   program-equals-template lemmas for hot rules.
+   program-equals-template lemmas for hot rules; normalizers (first
+   `arith_poly_norm`) proven to produce steps the checker accepts, so that
+   their steps need no run-time check.
+   - Profiling: `--profile` on `telos` and `telos-fuzz` prints where the time
+     went (`Telos/Profile.lean`: probes on the checker's phases, per rule, on
+     type queries, the RARE matcher and the arithmetic normal form);
+     `scripts/profile.sh` is the standard benchmark. Baseline (3000 arithmetic
+     terms of depth 4, 1.1s): running the checker 31%, of which
+     `arith_poly_norm_rel` is 61%; comparing its result with the expected
+     equation 9% and reading it back 7%; type queries 12% (260k, uncached);
+     telos's polynomial normal form 4%; matching 1%; unprobed strategy and
+     driver code most of the rest. No check is rejected.
 8. ~~Proof output.~~ Done: `telos --proof` prints a CPC proof of
    `(= t (rewrite t))`, checked by Logos's checker before printing, and accepted
    by Ethos (`scripts/check-proofs.py`: 2000 of 2000 fuzzed terms). Open:

@@ -50,7 +50,14 @@ text, and are not covered by it:
 
 ## `unsafe` / `@[extern]` / `implemented_by` in this repository
 
-None.
+- `Telos/Profile.lean`: the profiling probe `Profile.time cat key f`, whose
+  definition is `f ()`, is `implemented_by` an `unsafe` function that also reads
+  the clock and records the time in a global table (`unsafeBaseIO`). The
+  theorem is about the definition; the compiled rewriter runs the
+  implementation, so this is trusted to return `f ()` on every path, which it
+  does in four lines. Probes sit in untrusted code only (the checker call
+  `applyCmds`, the driver, the matcher and the arithmetic strategy), never in
+  the specification files above.
 
 ## Axioms
 

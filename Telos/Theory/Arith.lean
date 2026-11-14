@@ -33,9 +33,11 @@ open Node
 
 /-! ## Polynomials, as cvc5's `rewriter::Sum` -/
 
-def isInt (n : Node) : Bool := n.getType == some .integer
+def isInt (n : Node) : Bool :=
+  Profile.time "types" (fun _ => "arith: isInt/isReal") fun _ => n.getType == some .integer
 
-def isReal (n : Node) : Bool := n.getType == some .real
+def isReal (n : Node) : Bool :=
+  Profile.time "types" (fun _ => "arith: isInt/isReal") fun _ => n.getType == some .real
 
 /-- cvc5's `LeafNodeComparator`, for non-constant leaves: real terms before
 integer terms, variables before other terms, then the term order. -/
@@ -177,7 +179,8 @@ def isArithTerm (n : Node) : Bool :=
 
 /-- The normal form of an arithmetic term, certified by `arith_poly_norm`. -/
 def normalizeTerm (n : Node) : Option (Rw n) :=
-  let m := (polyOf n).toNode (isReal n)
+  let m := Profile.time "strategy: arith normal form" (fun _ => "term") fun _ =>
+    (polyOf n).toNode (isReal n)
   if m == n then none else checkBy .arith_poly_norm n m
 
 /-- `(to_real c)` for a constant `c`: the real constant, by `evaluate`. -/
@@ -294,7 +297,8 @@ def negTail (s : Node) (c : Rat) (t : Node) : Option (Rw t) := do
 /-- Rewrite `(>= a b)` to cvc5's normal form (`buildIntegerInequality`,
 `buildRealInequality`). -/
 def normalizeGeq (n : Node) (a b : Node) : Option (Rw n) := do
-  let sum := (polyOf a).add ((polyOf b).scale (-1))
+  let sum := Profile.time "strategy: arith normal form" (fun _ => "inequality") fun _ =>
+    (polyOf a).add ((polyOf b).scale (-1))
   let terms := sum.removeConstant
   let realSides := isReal a
   if terms.isEmpty then
@@ -378,7 +382,8 @@ where
   /-- cvc5's `normalizeEquality`, of which the arithmetic rewriter keeps only a
   constant result, or else the orientation. -/
   normalizeEq (n a b : Node) : Option (Rw n) := do
-    let sum := (polyOf a).add ((polyOf b).scale (-1))
+    let sum := Profile.time "strategy: arith normal form" (fun _ => "equality") fun _ =>
+      (polyOf a).add ((polyOf b).scale (-1))
     let terms := sum.removeConstant
     let real := isReal a
     let x := mkNode .SUB #[a, b]

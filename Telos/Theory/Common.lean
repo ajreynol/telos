@@ -35,9 +35,9 @@ def congrArg (n : Node) (i : Nat) (f : (c : Node) → Option (Rw c)) : Option (R
   | .app op cs =>
     if hi : i < cs.size then
       if hop : op.eoShape.isChildCongruent = true then
-        if hwt : ∀ c ∈ cs.toList, c.WellTyped then
+        if hwt : Profile.time "types" (fun _ => "congrArg: children well typed") (fun _ => decide (∀ c ∈ cs.toList, c.WellTyped)) = true then
           (f cs[i]).map fun ⟨c', hc⟩ =>
-            ⟨.app op (cs.set i c'), .congrArg i c' hi hop hwt hc (.refl _)⟩
+            ⟨.app op (cs.set i c'), .congrArg i c' hi hop (of_decide_eq_true hwt) hc (.refl _)⟩
         else none
       else none
     else none

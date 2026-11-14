@@ -1,3 +1,4 @@
+import Telos.Profile
 import Telos.Node.Kind
 import Telos.Node.TypeNode
 import Telos.Node.Node

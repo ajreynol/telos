@@ -3,11 +3,13 @@ import Telos
 /-!
 # `telos-fuzz`: random terms and their rewrites
 
-`telos-fuzz SEED COUNT DEPTH [arith]` prints `COUNT` random Boolean terms over
+`telos-fuzz SEED COUNT DEPTH [arith] [--profile]` prints `COUNT` random Boolean terms over
 `a`, `b`, `c` (and the integer `x`), each with its telos rewrite, as
 `input<TAB>output` lines. With `arith`, the terms also contain comparisons of
 integer and real terms over `x`, `y`, `r` and `s`.
-`scripts/fuzz.py` compares them against cvc5's rewriter.
+`scripts/fuzz.py` compares them against cvc5's rewriter. With `--profile`, a table
+of where the rewriting time went is printed to standard error
+(`Telos/Profile.lean`); `scripts/profile.sh` runs a standard benchmark.
 -/
 
 open Telos Telos.Node
@@ -89,6 +91,9 @@ def genBool (arith : Bool) : Nat → GenM Node
     | _ => return iteNode (← genBool arith d) (← genBool arith d) (← genBool arith d)
 
 def main (args : List String) : IO Unit := do
+  let profile := args.contains "--profile"
+  let args := args.filter (· != "--profile")
+  if profile then Profile.enable
   let seed := (args[0]? >>= String.toNat?).getD 1
   let count := (args[1]? >>= String.toNat?).getD 100
   let depth := (args[2]? >>= String.toNat?).getD 3
@@ -97,4 +102,6 @@ def main (args : List String) : IO Unit := do
   for _ in [0:count] do
     let (t, r) := (genBool arith depth).run rng
     rng := r
-    IO.println s!"{t.toSmtLib}\t{(rewrite t).toSmtLib}"
+    let r ← Profile.measure "total" "rewrite" fun _ => rewrite t
+    IO.println s!"{t.toSmtLib}\t{r.toSmtLib}"
+  if profile then Profile.report

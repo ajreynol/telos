@@ -70,6 +70,7 @@ python3 scripts/gen-rules.py            # regenerate Telos/Rules/Generated.lean
 lake build telos-fuzz && python3 scripts/fuzz.py --cvc5 PATH   # compare with cvc5
 python3 scripts/check-proofs.py --fuzz 500                      # proofs, with Ethos
 python3 scripts/loc-summary.py                                  # lines: spec, rewriter, proofs
+bash scripts/profile.sh                                         # where rewriting time goes
 ```
 
 The rule table `Telos/Rules/Generated.lean` is generated from the CPC signature in
