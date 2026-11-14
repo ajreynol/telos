@@ -1,4 +1,5 @@
 import Telos.Node.ToEo
+import Telos.Node.FastType
 import Telos.Node.Order
 import Telos.Node.DecEq
 import Telos.Profile
@@ -26,10 +27,10 @@ open Node
 /-! ## Polynomials, as cvc5's `rewriter::Sum` -/
 
 def isInt (n : Node) : Bool :=
-  Profile.time "types" (fun _ => "arith: isInt/isReal") fun _ => n.getType == some .integer
+  Profile.time "types" (fun _ => "arith: isInt/isReal") fun _ => n.typeHint == some .integer
 
 def isReal (n : Node) : Bool :=
-  Profile.time "types" (fun _ => "arith: isInt/isReal") fun _ => n.getType == some .real
+  Profile.time "types" (fun _ => "arith: isInt/isReal") fun _ => n.typeHint == some .real
 
 /-- cvc5's `LeafNodeComparator`, for non-constant leaves: real terms before
 integer terms, variables before other terms, then the term order. -/

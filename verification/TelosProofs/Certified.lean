@@ -1,6 +1,7 @@
 import TelosProofs.Congruence
 import Cpc.Proofs.ProvenFromEmpty
 import TelosProofs.ArithNorm
+import TelosProofs.ChildTyping
 
 /-!
 # Certified steps are equivalences
@@ -45,7 +46,8 @@ theorem Certified.equiv {n m : Node} (h : Certified n m) (hn : n.WellTyped) : n.
   | step cs hs _ ih =>
     have h₁ := ProvesEq.equiv hs
     exact h₁.trans (ih h₁.wellTyped_right)
-  | @congrArg op cs m i c' hi hop hwt _ _ ihc ih =>
+  | @congrArg op cs m i c' hi hop hwt' _ _ ihc ih =>
+    have hwt := hwt'.elim (fun hc => ChildTyping.children_wellTyped hc hn) id
     have hci : cs[i].Equiv c' := ihc (hwt _ (Array.getElem_mem_toList hi))
     have hch : List.Forall₂ Node.Equiv cs.toList (cs.set i c').toList := by
       rw [Array.toList_set]
@@ -53,7 +55,8 @@ theorem Certified.equiv {n m : Node} (h : Certified n m) (hn : n.WellTyped) : n.
         (fun y hy => Node.Equiv.refl y (hwt y hy)) (by simpa using hci)
     have h₁ := Node.Equiv.congr hop hn hch
     exact h₁.trans (ih h₁.wellTyped_right)
-  | @congr op cs ds m hsize hop hwt _ _ ihc ih =>
+  | @congr op cs ds m hsize hop hwt' _ _ ihc ih =>
+    have hwt := hwt'.elim (fun hc => ChildTyping.children_wellTyped hc hn) id
     have hch : List.Forall₂ Node.Equiv cs.toList ds.toList :=
       forall₂_of_getElem hsize fun i hi => ihc i hi (hwt _ (Array.getElem_mem_toList hi))
     have h₁ := Node.Equiv.congr hop hn hch

@@ -482,6 +482,18 @@ tested:
      translations and type queries (`types` 15%, checker read back and compare
      15%) rather than checking. To do: prove the typing side conditions
      statically, cache types and translations, template lemmas for RARE rules.
+   - Congruence without type checks: under the built-in Boolean, equality and
+     arithmetic operators (`Op.childrenTypedOfParent`), the driver no longer
+     checks at run time that the children are well typed. `Certified.congr` and
+     `congrArg` accept that condition instead, and `Certified.equiv` derives
+     the children's typing from the parent's
+     (`TelosProofs/ChildTyping.lean`, `children_wellTyped`). Other operators
+     (`APPLY_UF`, `extract`) keep the check. Strategies' type queries (`isInt`,
+     `theoryOf`) use `Node.typeHint`, a structural type that falls back to
+     Logos's type checker; nothing proved depends on it. Arithmetic benchmark:
+     0.89s to 0.76s; Booleans 0.27s to 0.22s. Remaining: checking the
+     remaining RARE, `evaluate` and `aci_norm` steps (run, read back, compare:
+     about 28%).
    - Profiling: `--profile` on `telos` and `telos-fuzz` prints where the time
      went (`Telos/Profile.lean`: probes on the checker's phases, per rule, on
      type queries, the RARE matcher and the arithmetic normal form);

@@ -75,7 +75,7 @@ arguments, and anything else to the theory of its kind. -/
 def theoryOf : Node → TheoryId
   | .var _ T | .boundVar _ T => T.theoryId
   | n@(.app (.kind .EQUAL) cs) =>
-      match Profile.time "types" (fun _ => "theoryOf: type of equality") fun _ => cs[0]?.bind Node.getType with
+      match Profile.time "types" (fun _ => "theoryOf: type of equality") fun _ => cs[0]?.bind Node.typeHint with
       | some T => T.theoryId
       | none => n.getKind.theoryId
   | n => n.getKind.theoryId
@@ -99,8 +99,10 @@ def rewriteChildren (f : (c : Node) → Rw c) (n : Node) : Rw n :=
   match n with
   | .app op cs =>
     if hop : op.eoShape.isChildCongruent then
-      if hwt : Profile.time "types" (fun _ => "driver: children well typed") (fun _ => decide (∀ c ∈ cs.toList, c.WellTyped)) = true then
-        Rw.congr op cs f hop (of_decide_eq_true hwt)
+      if hc : op.childrenTypedOfParent = true then Rw.congr op cs f hop (Or.inl hc)
+      else if hwt : Profile.time "types" (fun _ => "driver: children well typed")
+          (fun _ => decide (∀ c ∈ cs.toList, c.WellTyped)) = true then
+        Rw.congr op cs f hop (Or.inr (of_decide_eq_true hwt))
       else .id _
     else
       match op, cs with

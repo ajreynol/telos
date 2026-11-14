@@ -47,11 +47,11 @@ def main (args : List String) : IO UInt32 := do
     | .error e => IO.eprintln s!"telos: {e}\n{usage}"; return 2
   let some file := opts.file | IO.eprintln usage; return 2
   let input ← if file == "-" then (← IO.getStdin).readToEnd else IO.FS.readFile file
-  let sc ← match readScript input with
+  if opts.profile then Profile.enable
+  let sc ← match ← Profile.measure "frontend" "parse script" fun _ => readScript input with
     | .ok sc => pure sc
     | .error e => IO.eprintln s!"telos: {e}"; return 1
   if let some d := opts.proofDir then IO.FS.createDirAll d
-  if opts.profile then Profile.enable
   let mut status : UInt32 := 0
   for (q, i) in sc.queries.zipIdx do
     let r ← Profile.measure "total" "simplify" fun _ => simplify sc q (opts.proof || opts.proofDir.isSome)

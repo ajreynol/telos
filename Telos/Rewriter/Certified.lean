@@ -43,6 +43,19 @@ def ProvesEq (cs : CCmdList) (n m : Node) : Prop :=
 instance (cs : CCmdList) (n m : Node) : Decidable (ProvesEq cs n m) :=
   inferInstanceAs (Decidable (_ ∧ _ ∧ _))
 
+/-- Operators whose applications, when well typed, have well-typed children
+(`verification/TelosProofs/ChildTyping.lean`), so congruence under them needs no
+run-time check of the children: the built-in Boolean, equality and arithmetic
+operators. -/
+def Op.childrenTypedOfParent : Op → Bool
+  | .kind k => match k with
+    | .EQUAL | .NOT | .AND | .OR | .IMPLIES | .XOR | .ITE
+    | .ADD | .MULT | .SUB | .NEG | .DIVISION | .INTS_DIVISION | .INTS_MODULUS
+    | .DIVISION_TOTAL | .INTS_DIVISION_TOTAL | .INTS_MODULUS_TOTAL | .ABS
+    | .LT | .LEQ | .GT | .GEQ | .TO_REAL | .TO_INTEGER | .IS_INTEGER => true
+    | _ => false
+  | _ => false
+
 /-- `n` rewrites to `m` by a chain of CPC-checked steps, at the top or below an
 operator. It is data, not a proposition: it keeps the command lists, so that a
 rewrite can be printed as a CPC proof (`Telos/Proof/`). Its proof fields are
@@ -54,11 +67,13 @@ inductive Certified : Node → Node → Type
   /-- A rewrite of the child `i` of an application whose operator is congruent
   in its children (`Node.Equiv.congr`), all of which are well typed. -/
   | congrArg {op : Op} {cs : Array Node} {m : Node} (i : Nat) (c' : Node) (hi : i < cs.size) :
-      op.eoShape.isChildCongruent = true → (∀ c ∈ cs.toList, c.WellTyped) →
+      op.eoShape.isChildCongruent = true →
+      (op.childrenTypedOfParent = true ∨ ∀ c ∈ cs.toList, c.WellTyped) →
       Certified cs[i] c' → Certified (.app op (cs.set i c')) m → Certified (.app op cs) m
   /-- A rewrite of every child of such an application. -/
   | congr {op : Op} {cs ds : Array Node} {m : Node} (hsize : cs.size = ds.size) :
-      op.eoShape.isChildCongruent = true → (∀ c ∈ cs.toList, c.WellTyped) →
+      op.eoShape.isChildCongruent = true →
+      (op.childrenTypedOfParent = true ∨ ∀ c ∈ cs.toList, c.WellTyped) →
       ((i : Nat) → (hi : i < cs.size) → Certified cs[i] (ds[i]'(hsize ▸ hi))) →
       Certified (.app op ds) m → Certified (.app op cs) m
   /-- `n` to its arithmetic normal form, justified statically: under
@@ -115,7 +130,8 @@ def trans {n : Node} (r : Rw n) (s : Rw r.1) : Rw n := ⟨s.1, r.2.trans s.2⟩
 /-- Rewrite every child of `.app op cs` by `f`, when the operator is congruent in
 its children and they are all well typed. Each child is rewritten once. -/
 def congr (op : Op) (cs : Array Node) (f : (c : Node) → Rw c)
-    (hop : op.eoShape.isChildCongruent = true) (hwt : ∀ c ∈ cs.toList, c.WellTyped) :
+    (hop : op.eoShape.isChildCongruent = true)
+    (hwt : op.childrenTypedOfParent = true ∨ ∀ c ∈ cs.toList, c.WellTyped) :
     Rw (.app op cs) :=
   let rs : Array ((c : Node) × Rw c) := cs.map fun c => ⟨c, f c⟩
   let ds := rs.map (·.2.1)
