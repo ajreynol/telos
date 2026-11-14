@@ -1,4 +1,5 @@
 import Telos.Theory.Common
+import Telos.Theory.BVNorm
 import Telos.Rewriter.Rewriter
 
 /-!
@@ -13,16 +14,13 @@ rules, such as `bv-ult-zero-1` and `bv-ult-zero-2`), and its constant evaluation
 its rules in sequence, each to the result of the previous, and `TRY_REWRITE`
 returns the first rule that applies with `REWRITE_AGAIN_FULL`.
 
+The normalizations over whole n-ary terms are in `Telos/Theory/BVNorm.lean`.
+
 Not ported yet (the node is left as it is where cvc5 would apply them):
 
-* the normalizations that cvc5 implements as macros over whole n-ary terms:
-  `FlattenAssocCommut`, `AddCombineLikeTerms` and `MultSimplify` (for `bvadd`
-  and `bvmul`; CPC certifies them with `bv_poly_norm`), `AndSimplify`,
-  `OrSimplify` and `XorSimplify` (only their RARE instances `bv-*-simplify-*` are
-  tried), `MultDistrib`, `MultDistribConst`, `NegAdd`,
-  `NegMult`, `NegSub`, `NegIdemp`, `XorZero` and `BvComp`;
-* the rules whose RARE versions telos cannot generate yet: `RepeatEliminate`,
-  `BitwiseSlicing`, `UmuloEliminate`, `SmuloEliminate` (they use `:requires`);
+* `NegMult` (see `BVNorm.lean`) and `BvComp`;
+* `UmuloEliminate` and `SmuloEliminate`, which cvc5 applies only to constant
+  arguments;
 * `IneqElimConversion`, which only applies to `ubv_to_int` comparisons.
 -/
 
@@ -30,7 +28,7 @@ namespace Telos
 
 namespace BvRewriter
 
-open Node
+open Node BvNorm
 
 /-- A step that may apply to a node. -/
 abbrev Step := (m : Node) → Option (Rw m)
@@ -104,6 +102,81 @@ def concatFlatten : Step := fun m =>
       | cs => mkNode .BITVECTOR_CONCAT cs.toArray
     checkBy .aci_norm m r
 
+/-- A rule whose argument is the equation `(= n m)` and whose `:requires` computes
+`m` with a Logos program (`bv-repeat-elim`, `bv-bitwise-slicing`): `m` is
+computed by that program, read back, and validated by the rule. -/
+def byProgram (r : Eo.CRule) (compute : Eo.Term → Eo.Term) : Step := fun m =>
+  Node.ofEo m.vars (compute m.toEo) >>= fun k => if k == m then none else checkBy r m k
+
+/-- cvc5's `RepeatEliminate`, by `bv-repeat-elim`. -/
+def repeatEliminate : Step :=
+  byProgram .bv_repeat_elim fun
+    | .Apply (.UOp1 .repeat n) a =>
+      Eo.__eo_list_singleton_elim (.UOp .concat) (Eo.__eo_list_repeat (.UOp .concat) a n)
+    | _ => .Stuck
+
+/-- cvc5's `BitwiseSlicing`, by `bv-bitwise-slicing`: it applies when the first
+constant child is neither zero nor all ones, and the width is not 1. -/
+def bitwiseSlicing : Step := fun m =>
+  let first := m.getChildren.findSome? fun c => match c with
+    | .const (.bitVector w v) => some (w, v)
+    | _ => none
+  match first with
+  | some (w, v) =>
+    if w > 1 && v != 0 && v != 2 ^ w.toNat - 1 then
+      byProgram .bv_bitwise_slicing Eo.__bv_mk_bitwise_slicing m
+    else none
+  | none => none
+
+/-- cvc5's `UltOnes` with the all-ones constant on the left: `(bvult ones x)` is
+`false`. CPC has no rule for it, so it is derived: `bv-ule-max` gives
+`(= (bvule x ones) true)` and `bv-ule-eliminate` gives
+`(= (bvule x ones) (not (bvult ones x)))`; then `symm`, `trans`, `true_elim` and
+`false_intro`. The rules write `ones` as `((_ int_to_bv w) (2^w - 1))`, so the
+literal is first written that way (`toSymbolic`). -/
+def ultOnesLeft : Step := fun m =>
+  match m.getChildren with
+  | #[c@(.const (.bitVector w v)), x] =>
+    if w ≥ 1 && v == 2 ^ w.toNat - 1 then do
+      let ones := Node.app (.indexed .INT_TO_BITVECTOR #[w]) #[.const (.integer v)]
+      let m' := mkNode .BITVECTOR_ULT #[ones, x]
+      let size := mkNode .BITVECTOR_SIZE #[x]
+      let maxE := mkNode .SUB #[mkNode .POW2 #[size], .const (.integer 1)]
+      let cmds : List Eo.CCmd := [
+        .step .evaluate (toArgList [size.toEo]) .nil,
+        .step .symm .nil (.cons 0 .nil),
+        .step .evaluate (toArgList [maxE.toEo]) .nil,
+        .step .symm .nil (.cons 0 .nil),
+        .step .bv_ule_max (toArgList [x.toEo, Eo.Term.Numeral v, Eo.Term.Numeral w]) (.cons 2 (.cons 0 .nil)),
+        .step .bv_ule_eliminate (toArgList [x.toEo, ones.toEo]) .nil,
+        .step .symm .nil (.cons 0 .nil),
+        .step .trans .nil (.cons 0 (.cons 2 .nil)),
+        .step .true_elim .nil (.cons 0 .nil),
+        .step .false_intro .nil (.cons 0 .nil)]
+      let r ← toSymbolic m m'
+      let _ := c
+      r.next? (applyCmds (cmds.foldr .cons .nil))
+    else none
+  | _ => none
+
+/-- cvc5's `AndOrXorConcatPullUp` applies when the first `concat` child has a
+constant, and its first constant is zero, one or all ones. -/
+def pullUpApplies (m : Node) : Bool :=
+  match m.getChildren.find? (·.getKind == .BITVECTOR_CONCAT) with
+  | some c =>
+    match c.getChildren.findSome? fun d => match d with
+        | .const (.bitVector w v) => some (w, v)
+        | _ => none with
+    | some (w, v) => v == 0 || v == 1 || v == 2 ^ w.toNat - 1
+    | none => false
+  | none => false
+
+/-- cvc5's `AndOrXorConcatPullUp`, by the RARE rules `bv-<op>-concat-pullup*`. -/
+def concatPullUp (op : String) : Step := fun m =>
+  if pullUpApplies m then
+    rules [s!"bv-{op}-concat-pullup", s!"bv-{op}-concat-pullup2", s!"bv-{op}-concat-pullup3"] m
+  else none
+
 /-! ## The rewrite table -/
 
 /-- The rules cvc5's `RewriteExtract` applies, before the final linear strategy. -/
@@ -133,9 +206,9 @@ def rewriteIte (n : Node) : RewriteResponse n :=
 
 /-- cvc5's `RewriteXor`. -/
 def rewriteXor (pre : Bool) (n : Node) : RewriteResponse n :=
-  orDone <| (tryRewrite n [evalConst, rules ["bv-xor-simplify-1", "bv-xor-simplify-2", "bv-xor-simplify-3"],
-      rules ["bv-xor-concat-pullup", "bv-xor-concat-pullup2", "bv-xor-concat-pullup3"]]).orElse
-    fun _ => if pre then none else tryRewrite n [rules ["bv-xor-ones"]]
+  orDone <| (tryRewrite n [evalConst, bitwiseStep xorSimplify, bitwiseStep xorZero,
+      concatPullUp "xor"]).orElse
+    fun _ => if pre then none else tryRewrite n [rules ["bv-xor-ones"], bitwiseSlicing]
 
 /-- The rewrite of `n` by cvc5's rewrite table, in pre- or post-rewriting. -/
 def rewriteNode (pre : Bool) (n : Node) : RewriteResponse n :=
@@ -143,7 +216,7 @@ def rewriteNode (pre : Bool) (n : Node) : RewriteResponse n :=
   | .EQUAL => rewriteEqual n
   | .BITVECTOR_ULT =>
     respond (linear n [evalConst, rules ["bv-ult-self"], rules ["bv-ult-one"],
-      rules ["bv-ult-ones"], rules ["bv-ult-zero-1", "bv-ult-zero-2"],
+      rules ["bv-ult-ones"], ultOnesLeft, rules ["bv-ult-zero-1", "bv-ult-zero-2"],
       rules ["bv-sign-extend-ult-const-1", "bv-sign-extend-ult-const-2",
         "bv-sign-extend-ult-const-3", "bv-sign-extend-ult-const-4"],
       rules ["bv-zero-extend-ult-const-1", "bv-zero-extend-ult-const-2"]]) .REWRITE_AGAIN_FULL
@@ -174,11 +247,13 @@ def rewriteNode (pre : Bool) (n : Node) : RewriteResponse n :=
     orDone <| (tryRewrite n [concatFlatten, rules ["bv-concat-extract-merge"]]).orElse fun _ =>
       some (respond (linear n [rules ["bv-concat-merge-const"], evalConst]) .REWRITE_AGAIN)
   | .BITVECTOR_AND =>
-    orDone <| tryRewrite n [rules ["bv-and-simplify-1", "bv-and-simplify-2"],
-      rules ["bv-and-concat-pullup", "bv-and-concat-pullup2", "bv-and-concat-pullup3"], evalConst]
+    orDone <| tryRewrite n ([evalConst, bitwiseStep (andOrSimplify true),
+      concatPullUp "and"] ++
+      if pre then [] else [bitwiseSlicing])
   | .BITVECTOR_OR =>
-    orDone <| tryRewrite n [rules ["bv-or-simplify-1", "bv-or-simplify-2"],
-      rules ["bv-or-concat-pullup", "bv-or-concat-pullup2", "bv-or-concat-pullup3"], evalConst]
+    orDone <| tryRewrite n ([evalConst, bitwiseStep (andOrSimplify false),
+      concatPullUp "or"] ++
+      if pre then [] else [bitwiseSlicing])
   | .BITVECTOR_XOR => rewriteXor pre n
   | .BITVECTOR_XNOR =>
     respond (linear n [rules ["bv-xnor-eliminate"]]) .REWRITE_AGAIN_FULL .REWRITE_AGAIN_FULL
@@ -188,12 +263,20 @@ def rewriteNode (pre : Bool) (n : Node) : RewriteResponse n :=
     respond (linear n [rules ["bv-nor-eliminate"]]) .REWRITE_AGAIN_FULL .REWRITE_AGAIN_FULL
   | .BITVECTOR_COMP => respond (linear n [evalConst]) .REWRITE_DONE
   | .BITVECTOR_MULT =>
-    orDone <| tryRewrite n (evalConst ::
-      if pre then [] else [rules ["bv-mult-pow2-1", "bv-mult-pow2-2", "bv-mult-pow2-2b"]])
-  | .BITVECTOR_ADD => if pre then .done n else orDone (tryRewrite n [evalConst])
+    orDone <| tryRewrite n ([polyStep flattenAssocCommut, polyStep multSimplify] ++
+      if pre then [] else [rules ["bv-mult-pow2-1", "bv-mult-pow2-2", "bv-mult-pow2-2b"],
+        polyStep multDistribConst, polyStep multDistrib])
+  | .BITVECTOR_ADD =>
+    if pre then respond (linear n [polyStep flattenAssocCommut]) .REWRITE_DONE
+    else respond (linear n [polyStep flattenAssocCommut, polyStep addCombineLikeTerms])
+      .REWRITE_AGAIN_FULL
   | .BITVECTOR_SUB =>
     respond (linear n [rules ["bv-sub-eliminate"]]) .REWRITE_AGAIN_FULL .REWRITE_AGAIN_FULL
-  | .BITVECTOR_NEG => respond (linear n [evalConst]) .REWRITE_AGAIN
+  | .BITVECTOR_NEG =>
+    -- As in cvc5, `NegAdd` is tested on the original node.
+    match polyStep negAdd n with
+    | some ⟨m, h⟩ => ⟨.REWRITE_AGAIN_FULL, m, h⟩
+    | none => respond (linear n [evalConst, polyStep negIdemp, polyStep negSub]) .REWRITE_AGAIN
   | .BITVECTOR_UDIV =>
     orDone <| (tryRewrite n [rules ["bv-udiv-pow2-not-one"]]).orElse fun _ =>
       some (respond (linear n [evalConst, rules ["bv-udiv-zero"], rules ["bv-udiv-one"]]) .REWRITE_DONE)
@@ -209,6 +292,8 @@ def rewriteNode (pre : Bool) (n : Node) : RewriteResponse n :=
   | .BITVECTOR_SHL => shift n "shl"
   | .BITVECTOR_LSHR => shift n "lshr"
   | .BITVECTOR_ASHR => shift n "ashr"
+  | .BITVECTOR_REPEAT =>
+    respond (linear n [repeatEliminate]) .REWRITE_AGAIN_FULL .REWRITE_AGAIN_FULL
   | .BITVECTOR_ZERO_EXTEND =>
     respond (linear n [rules ["bv-zero-extend-eliminate-0", "bv-zero-extend-eliminate"]])
       .REWRITE_AGAIN .REWRITE_AGAIN

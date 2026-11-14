@@ -81,10 +81,13 @@ def rewriteCommon (n : Node) : Option (Rw n) :=
   | .DISTINCT, cs => rewriteDistinct n cs
   | _, _ => none
 
-/-- cvc5's `rewriteIntToBV`, for a constant argument: its value. -/
+/-- cvc5's `rewriteIntToBV`, for a constant argument: its value. telos also
+evaluates a variable-free argument here, such as `(+ (* 1 (int.pow2 2)) 1)`,
+which CPC rules produce for `(@bv v w)` and which the arithmetic rewriter does not
+evaluate (`int.pow2` is not ported); cvc5's rules produce the constant. -/
 def rewriteIntToBV (n : Node) : Option (Rw n) :=
   match n.getChildren with
-  | #[c] => if c.isConst then byEvaluate n else none
+  | #[c] => if c.vars.isEmpty then byEvaluate n else none
   | _ => none
 
 /-- cvc5's `TheoryUfRewriter::preRewrite`. -/

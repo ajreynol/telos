@@ -17,6 +17,7 @@ import Telos.Theory.Bool
 import Telos.Arith.PolyNorm
 import Telos.Theory.Arith
 import Telos.Theory.UF
+import Telos.Theory.BVNorm
 import Telos.Theory.BV
 import Telos.Rewrite
 import Telos.Rules.RuleNames

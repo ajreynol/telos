@@ -140,7 +140,7 @@ partial def Pat.instantiateList (σ : Subst) (ps : List Pat) (sym : Bool := fals
   | [] => some []
   | .listVar i :: ps => do
     match σ[i]? with
-    | some (some (.list _ elems)) => return elems ++ (← Pat.instantiateList σ ps sym)
+    | some (some (.list _ elems _)) => return elems ++ (← Pat.instantiateList σ ps sym)
     | _ => none
   | p :: ps => do return (← p.instantiate σ sym) :: (← Pat.instantiateList σ ps sym)
 
@@ -183,6 +183,27 @@ partial def toSymbolic (n target : Node) : Option (Rw n) :=
     else none
   | _ => none
 
+/-- Whether a node has an `int_to_bv` application. -/
+partial def hasIntToBv : Node → Bool
+  | .app (.indexed .INT_TO_BITVECTOR _) _ => true
+  | .app _ cs => cs.any hasIntToBv
+  | _ => false
+
+/-- The variable-free `int_to_bv` applications of `n` evaluated to literals,
+under congruence. Logos writes the `(@bv v w)` of a rule's right-hand side this
+way; cvc5's rules produce the literal. -/
+partial def foldIntToBv (n : Node) : Rw n :=
+  let cs := n.getChildren
+  if n.getKind == .INT_TO_BITVECTOR && cs.size == 1 && cs[0]!.vars.isEmpty then
+    (applyCmds (.cons (.step .evaluate (.cons n.toEo .nil) .nil) .nil) n).getD (Rw.id n)
+  else
+    (List.range cs.size).foldl (init := Rw.id n) fun r i =>
+      r.next fun m => Rw.congrArg m i fun c =>
+        if hasIntToBv c then
+          let rc := foldIntToBv c
+          if rc.1 == c then none else some rc
+        else none
+
 namespace RuleSpec
 
 /-- Every match of the rule's left-hand side against `n`, with its premises. -/
@@ -211,9 +232,8 @@ def cmds (r : RuleSpec) (σ : Subst) : Option CCmdList := do
   let ruleStep := CCmd.step r.rule (toArgList args) indices
   return (steps ++ [ruleStep]).foldr .cons .nil
 
-/-- Apply the rule to `n`: the first match whose command list Logos's checker
-accepts. -/
-def apply (r : RuleSpec) (n : Node) : Option (Rw n) :=
+/-- `apply`, before folding `int_to_bv` applications. -/
+def applyRaw (r : RuleSpec) (n : Node) : Option (Rw n) :=
   Profile.time "strategy: RARE matching" (fun _ => r.name) (fun _ => r.allMatches n) |>.findSome? fun σ =>
     r.cmds σ >>= fun cs =>
       if r.lhs.hasBvLit then
@@ -222,6 +242,11 @@ def apply (r : RuleSpec) (n : Node) : Option (Rw n) :=
         r.lhs.instantiate σ (sym := true) >>= fun n' =>
           toSymbolic n n' >>= fun rw => rw.next? (applyCmds cs)
       else applyCmds cs n
+
+/-- Apply the rule to `n`: the first match whose command list Logos's checker
+accepts. -/
+def apply (r : RuleSpec) (n : Node) : Option (Rw n) :=
+  (r.applyRaw n).map fun rw => rw.next fun m => if hasIntToBv m then some (foldIntToBv m) else none
 
 end RuleSpec
 

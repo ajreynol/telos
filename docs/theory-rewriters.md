@@ -87,6 +87,12 @@ rejects it:
   unverified algorithms are certified.
 - `Rw.next`, `Rw.next?`, `Rw.congrArg`, `firstOf`: chain steps, rewrite below
   the top, try alternatives.
+- For a rule whose `:requires` computes the right-hand side with a Logos
+  program (`bv-bitwise-slicing`, `bv-repeat-elim`), call that program from Lean
+  to get the result, read it back, and `checkBy` the rule (`BvRewriter.byProgram`).
+- A macro rewrite of cvc5 (a normalization proven by several CPC steps) can be
+  certified by a short search over the steps its elaborator uses, from the input
+  towards cvc5's result (`BvNorm.reach`). If none is found, keep the input.
 
 Rules of thumb:
 

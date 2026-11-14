@@ -484,7 +484,7 @@ tested:
    - To do: the extended operators (`int.log2`, `iand`, transcendentals;
      `int.pow2`, `int.log2` and `int.ispow2` have kinds, for the premises of
      bit-vector rules, but are not rewritten).
-   - **Bit-vectors (stage 1).** Kinds for all of cvc5's bit-vector operators,
+   - **Bit-vectors.** Kinds for all of cvc5's bit-vector operators,
      `int_to_bv`, `ubv_to_int` and `sbv_to_int`. The n-ary ones (`concat`,
      `bvand`, `bvor`, `bvxor`, `bvadd`, `bvmul`) have a typed nil, and their
      congruence is proved (`bv_nary_args`, `typedNil_congr_bv`: equivalent
@@ -492,24 +492,38 @@ tested:
      `eo_typeof_eq_of_smt_type_eq`). The rule table has 141 of the 145
      bit-vector and conversion rules (233 rules in all). `Telos/Theory/BV.lean`
      ports cvc5's `TheoryBVRewriter` kind by kind, with RARE rules for cvc5's
-     rewrite rules, `evaluate` for constants, and `aci_norm` for
-     `ConcatFlatten`. `int_to_bv` of a constant is evaluated by the UF
-     rewriter, as in cvc5; RARE rules produce it for `(@bv v w)`.
-   - Fuzzing (`scripts/fuzz.py --bv`, 3000 terms of depth 3 over three
-     `(_ BitVec 4)` variables and constants): 41.1% identical to cvc5, 45.2% up
-     to the orientation of equalities, no semantic disagreements. Ethos accepts
-     all proofs (`check-proofs.py --bv`).
-   - Not ported yet, so the main differences from cvc5: the normalizations cvc5
-     implements as macros over whole n-ary terms. `FlattenAssocCommut`,
-     `AddCombineLikeTerms`, `MultSimplify`, `NegIdemp`, `NegAdd`, `NegMult`,
-     `NegSub`, `MultDistrib` and `MultDistribConst` are polynomial
-     normalizations, certified in CPC by `bv_poly_norm` (and the natural
-     candidate for a second `StaticProc`). `AndSimplify`, `OrSimplify` and
-     `XorSimplify` group constants by `aci_norm`, evaluate them, and simplify
-     (cvc5's `MacroRewriteElaborator`). Also `BitwiseSlicing`, `RepeatEliminate`,
-     `UmuloEliminate` and `SmuloEliminate` (their RARE rules use `:requires`),
-     `BvIteConstCond` and the constant evaluation of `bvcomp` (Logos's `evaluate`
-     does not reduce them), `XorZero`, `BvComp` and `IneqElimConversion`.
+     rewrite rules and `evaluate` for constants. `Telos/Theory/BVNorm.lean`
+     ports the rules over whole n-ary terms, computed natively and certified:
+     the polynomial ones (`FlattenAssocCommut`, `AddCombineLikeTerms`,
+     `MultSimplify`, `MultDistrib*`, `NegIdemp`, `NegSub`, `NegAdd`) by
+     `bv_poly_norm`, the bitwise ones (`AndSimplify`, `OrSimplify`,
+     `XorSimplify`, `XorZero`) by a short search over `aci_norm`, `absorb`,
+     `evaluate` and the RARE `bv-*-simplify-*` rules (as cvc5's
+     `MacroRewriteElaborator` proves them), and `ConcatFlatten` by `aci_norm`.
+     `RepeatEliminate` and `BitwiseSlicing` use the Logos programs of
+     `bv-repeat-elim` and `bv-bitwise-slicing` to compute their results
+     (`byProgram`). `UltOnes` with the constant on the left has no CPC rule and
+     is derived (`bv-ule-max`, `bv-ule-eliminate`, `true_elim`, `false_intro`).
+     The `(@bv v w)` of a rule's right-hand side, which Logos writes
+     `((_ int_to_bv w) v)`, is evaluated back to a literal after each rule step
+     (`foldIntToBv`).
+   - Fuzzing (`scripts/fuzz.py --bv`, over three `(_ BitVec 4)` variables and
+     constants): at depth 3 (3000 terms), 76.8% identical to cvc5 and 94.8% up
+     to the orientation of equalities; at depth 4 (2000 terms), 64.4% and 90.3%.
+     No semantic disagreements. Ethos accepts all proofs (`check-proofs.py
+     --bv`, depths 3 and 4).
+   - Deviations: cvc5 orders the children of `bvand`, `bvor`, `bvxor` and
+     `bvmul`, and the terms of a combined sum, by node id; telos uses its term
+     order, which accounts for most of the remaining differences. A bitwise
+     result for which the search finds no certificate is not used. cvc5's
+     `NegMult` never applies (its `applies` tests the wrong child) and is not
+     ported.
+   - Not ported: `UmuloEliminate` and `SmuloEliminate` (applied by cvc5 only to
+     constants), `BvIteConstCond` and the constant evaluation of `bvcomp`
+     (Logos's `evaluate` does not reduce them), `BvComp`, `IneqElimConversion`.
+   - Performance: 3000 terms of depth 3 take 4.7s (arithmetic: 0.8s for depth
+     4). RARE matching is a quarter of it (1.9M match attempts), and premises
+     are evaluated twice, when matching and in the certificate.
 7. **Performance.** Rewrite cache, sharing, cached hashes; a proof that children
    of well-typed nodes are well typed (removing the runtime check); generated
    program-equals-template lemmas for hot rules; normalizers (first

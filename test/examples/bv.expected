@@ -31,3 +31,21 @@ x
 (bvnot (bvcomp x #b0000))
 (bvcomp #b0001 #b0001)
 (ite (xor (= #b1 ((_ extract 3 3) x)) (= #b1 ((_ extract 3 3) y))) (bvneg (bvudiv (ite (= #b1 ((_ extract 3 3) x)) (bvneg x) x) (ite (= #b1 ((_ extract 3 3) y)) (bvneg y) y))) (bvudiv (ite (= #b1 ((_ extract 3 3) x)) (bvneg x) x) (ite (= #b1 ((_ extract 3 3) y)) (bvneg y) y)))
+(concat ((_ extract 2 0) x) #b0)
+(bvadd x y #b0011)
+#b0000
+x
+(bvadd y (bvneg x))
+x
+#b0000
+#b0000
+x
+#b0000
+#b1111
+(concat ((_ extract 3 3) x) #b111)
+y
+x
+(bvnot x)
+false
+(concat x x)
+(concat #b00 ((_ extract 1 0) x))
