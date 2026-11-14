@@ -190,6 +190,7 @@ theorem shape_congr (sh : AppShape) (hsh : sh.isChildCongruent = true) {xs ys : 
       exact termEquiv_rightAssocNil _ _ hrest h ht
     · rw [AppShape.toEo, ite_eq_right hle] at ht
       exact absurd ht not_translation_stuck
+  | typedList _ => simp [AppShape.isChildCongruent] at hsh
   | binderList => simp [AppShape.isChildCongruent] at hsh
   | binder _ => simp [AppShape.isChildCongruent] at hsh
   | none => exact absurd ht not_translation_stuck

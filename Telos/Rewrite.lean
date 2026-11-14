@@ -1,5 +1,6 @@
 import Telos.Theory.Bool
 import Telos.Theory.Arith
+import Telos.Theory.UF
 
 /-!
 # The rewriter
@@ -15,6 +16,7 @@ namespace Telos
 def theoryRewriter : TheoryId → TheoryRewriter
   | .THEORY_BOOL => .bool
   | .THEORY_ARITH => .arith
+  | .THEORY_UF => .uf
   | _ => .trivial
 
 /-- The fuel `rewrite` uses. It bounds the recursion depth of the driver. -/

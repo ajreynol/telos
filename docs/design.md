@@ -102,6 +102,11 @@ incomplete.
     computed from the first element as Logos's parser and Eunoia do. The
     congruence proof shows that equivalent first elements give the same nil
     (`typedNil_congr`);
+  - `typedList op`: `distinct`, applied to one typed argument list
+    `(@@TypedList_cons x₁ … (@@TypedList_nil T))`, its nil typed like that of
+    `+`. Its congruence is not proved yet (`isChildCongruent` is false), so the
+    children of a `distinct` are not rewritten; the UF rewriter expands one with
+    at most 10 children first, as cvc5 does;
   - `binderList` and `binder op` for quantifiers; `none` for no CPC counterpart.
 
   Wrong arities become `Term.Stuck`. This file is part of the specification
@@ -410,8 +415,23 @@ tested:
    `bool-*`, `ite-*` and `eq-*` rules), `RuleSpec`, the matcher, the self-test
    (`TelosTests/Rules.lean`) and the CI sync check.
 4. ~~Booleans.~~ `TheoryBoolRewriter` is ported (`Telos/Theory/Bool.lean`, tests
-   in `TelosTests/Bool.lean`). Open: the equality rewriting of the other
-   theories (cvc5's builtin and UF rewriters: `(= x x)`, orientation, constants).
+   in `TelosTests/Bool.lean`).
+   - ~~UF.~~ `TheoryUfRewriter` is ported for the kinds telos has
+     (`Telos/Theory/UF.lean`, `test/examples/uf.smt2`): equalities over
+     uninterpreted sorts and functions (`eq-refl`, orientation by `eq-symm`),
+     and `distinct` (the new kind `DISTINCT`: `distinct-card-conflict`,
+     `distinct-false`, `distinct-true`, and `distinct-elim` to pairwise
+     disequalities). cvc5's builtin rewriter only rewrites `witness` and
+     symbolic indexed applications, which telos does not have.
+   - Fuzzing (`scripts/fuzz.py --uf`, 3000 terms of depth 4, with equalities of
+     `U` terms over `u`, `v`, `w`, `f` and `distinct` over `U`, Booleans and
+     integers): 78.9% identical to cvc5, all others identical up to the
+     orientation of equalities (cvc5 orients by node id), no semantic
+     disagreements. Ethos accepts all proofs (`check-proofs.py --uf`).
+   - Deviations: equalities are oriented by telos's term order; the children of
+     a `distinct` with more than 10 children are not rewritten (see `typedList`).
+   - Open: equality rewriting of the theories not ported yet (strings, bit-vectors,
+     arrays, sets), which cvc5 does in their own rewriters.
 5. **Front end and fuzzing.** The `telos` executable reads SMT-LIB scripts of
    `(simplify t)` queries through Logos's parser (`Telos/Frontend.lean`).
    `telos-fuzz` (random Boolean terms over three Booleans and two integer

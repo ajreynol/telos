@@ -13,7 +13,7 @@ cvc5 to rewrite the same terms with `(simplify t)`, and reports:
   cvc5's, which is a bug in one of them.
 
 Usage:
-  scripts/fuzz.py [--cvc5 PATH] [--seed N] [--count N] [--depth N] [--show N] [--arith]
+  scripts/fuzz.py [--cvc5 PATH] [--seed N] [--count N] [--depth N] [--show N] [--arith | --uf]
 
 Build the fuzzer first: `lake build telos-fuzz`.
 """
@@ -34,6 +34,11 @@ PRELUDE = """(set-logic ALL)
 (declare-const y Int)
 (declare-const r Real)
 (declare-const s Real)
+(declare-sort U 0)
+(declare-const u U)
+(declare-const v U)
+(declare-const w U)
+(declare-fun f (U) U)
 """
 
 
@@ -85,11 +90,12 @@ def main():
     ap.add_argument("--depth", type=int, default=3)
     ap.add_argument("--show", type=int, default=10, help="mismatches to print")
     ap.add_argument("--arith", action="store_true", help="include arithmetic comparisons")
+    ap.add_argument("--uf", action="store_true", help="include equalities and distinct over an uninterpreted sort")
     a = ap.parse_args()
     if not FUZZ.exists():
         sys.exit("error: build the fuzzer first: lake build telos-fuzz")
 
-    lines = subprocess.run([str(FUZZ), str(a.seed), str(a.count), str(a.depth)] + (["arith"] if a.arith else []),
+    lines = subprocess.run([str(FUZZ), str(a.seed), str(a.count), str(a.depth)] + (["arith"] if a.arith else ["uf"] if a.uf else []),
                            capture_output=True, text=True, check=True).stdout.splitlines()
     cases = [tuple(line.split("\t")) for line in lines]
 

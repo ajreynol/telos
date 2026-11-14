@@ -1,0 +1,13 @@
+true
+(= u v)
+(= u (f v))
+false
+(not (= u v))
+(and (not (= u v)) (not (= u w)) (not (= v w)))
+false
+(not (= x 1))
+true
+false
+false
+(not (= a b))
+(= u (f u))

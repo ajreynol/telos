@@ -17,6 +17,8 @@ The encoding follows the CPC signature (`Cpc.eo`) as Ethos elaborates it:
 * `and`/`or` are `:right-assoc-nil` with nil `true`/`false`, so
   `(and a b c)` is `(and a (and b (and c true)))`.
 * `=`, `=>`, `xor`, `not` and `ite` have the fixed arities of cvc5's kinds.
+* `(distinct a b c)` is `(distinct (@@TypedList_cons a (@@TypedList_cons b
+  (@@TypedList_cons c (@@TypedList_nil T)))))`, with `T` the type of `a`.
 * Indexed operators become Logos's `UOp1`/`UOp2` with numeral indices:
   `((_ extract i j) x)` is `Term.Apply (Term.UOp2 UserOp2.extract i j) x`.
 * `(f a b)` is the curried `((f a) b)`, and `(-> A B C)` is `(-> A (-> B C))`.
@@ -116,6 +118,10 @@ inductive AppShape where
   nil terminator is computed from the first element `x₁`, as Logos's parser and
   Eunoia do (`Nil.eval`). -/
   | rightAssocNil (op : UserOp) (nil : Nil)
+  /-- An operator applied to a typed argument list, `(op (@@TypedList_cons x₁ …
+  (@@TypedList_cons xₙ nil)))`, n ≥ 2, with the nil computed from `x₁` as for
+  `rightAssocNil … .typed`. This is how Logos's parser reads `(distinct x₁ … xₙ)`. -/
+  | typedList (op : UserOp)
   /-- A binder variable list `(@list x₁ … xₙ)`. -/
   | binderList
   /-- A binder `(op vars body)`, with optional instantiation patterns (dropped). -/
@@ -151,6 +157,7 @@ def Kind.eoShape : Kind → AppShape
   | .TO_REAL => .spine (Term.UOp UserOp.to_real) (.exactly 1)
   | .TO_INTEGER => .spine (Term.UOp UserOp.to_int) (.exactly 1)
   | .IS_INTEGER => .spine (Term.UOp UserOp.is_int) (.exactly 1)
+  | .DISTINCT => .typedList UserOp.distinct
   | .BOUND_VAR_LIST => .binderList
   | .FORALL => .binder UserOp.forall
   | .EXISTS => .binder UserOp.exists
@@ -169,19 +176,25 @@ def nodeEoShape : Kind → Term → AppShape
 
 /-- Shapes whose congruence is proven child by child: rewriting any child to an
 equivalent node gives an equivalent application. Binders are handled separately,
-since their variable list is not a term. -/
+since their variable list is not a term. Typed argument lists (`distinct`) are
+not yet: their children are not rewritten. -/
 def AppShape.isChildCongruent : AppShape → Bool
   | .spine _ _ => true
   | .rightAssocNil op (.const _) => op == UserOp.and || op == UserOp.or
   | .rightAssocNil op .typed => op == UserOp.plus || op == UserOp.mult
   | .none => true
-  | .binderList | .binder _ => false
+  | .typedList _ | .binderList | .binder _ => false
 
 /-- Translate an application of the given shape to its translated children. -/
 def AppShape.toEo : AppShape → List Term → Term
   | .spine head arity, xs => if arity.accepts xs.length then xs.foldl Term.Apply head else Term.Stuck
   | .rightAssocNil op nil, xs =>
     if 2 ≤ xs.length then eoRightAssocNil op (nil.eval op (xs.headD Term.Stuck)) xs
+    else Term.Stuck
+  | .typedList op, xs =>
+    if 2 ≤ xs.length then
+      eoApp1 op (eoRightAssocNil UserOp._at__at_TypedList_cons
+        (typedNil UserOp._at__at_TypedList_cons (xs.headD Term.Stuck)) xs)
     else Term.Stuck
   | .binderList, xs => eoList xs
   | .binder op, [vs, body] | .binder op, [vs, body, _] => eoApp2 op vs body

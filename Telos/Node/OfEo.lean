@@ -130,6 +130,11 @@ partial def ofEo (env : List Node) (t : Term) : Option Node := do
   | .UOp UserOp.imp, [_, _] => app .IMPLIES xs
   | .UOp UserOp.xor, [_, _] => app .XOR xs
   | .UOp UserOp.ite, [_, _, _] => app .ITE xs
+  | .UOp UserOp.distinct, [l@(.Apply (.Apply _ first) _)] => do
+    let cons := UserOp._at__at_TypedList_cons
+    let elems ← eoRightAssocNilElems cons (typedNil cons first) l
+    if elems.length < 2 then none
+    app .DISTINCT elems
   | .UOp UserOp.forall, [vs, body] => binder .FORALL vs body
   | .UOp UserOp.exists, [vs, body] => binder .EXISTS vs body
   | .UOp2 UserOp2.extract (.Numeral i) (.Numeral j), [x] =>

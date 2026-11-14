@@ -55,6 +55,7 @@ inductive Kind where
   | BITVECTOR_EXTRACT
   -- theory/uf (the function is the operator: `Op.node APPLY_UF f`)
   | APPLY_UF
+  | DISTINCT
   -- theory/quantifiers
   | FORALL
   | EXISTS
@@ -89,7 +90,7 @@ def Kind.theoryId : Kind → TheoryId
   | .DIVISION_TOTAL | .INTS_DIVISION_TOTAL | .INTS_MODULUS_TOTAL
   | .LT | .LEQ | .GT | .GEQ | .TO_REAL | .TO_INTEGER | .IS_INTEGER => .THEORY_ARITH
   | .BITVECTOR_EXTRACT => .THEORY_BV
-  | .APPLY_UF => .THEORY_UF
+  | .APPLY_UF | .DISTINCT => .THEORY_UF
   | .FORALL | .EXISTS | .BOUND_VAR_LIST | .INST_PATTERN_LIST => .THEORY_QUANTIFIERS
 
 /-- The quantifier kinds, whose congruence is in their body only. -/

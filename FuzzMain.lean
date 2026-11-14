@@ -3,10 +3,12 @@ import Telos
 /-!
 # `telos-fuzz`: random terms and their rewrites
 
-`telos-fuzz SEED COUNT DEPTH [arith] [--profile]` prints `COUNT` random Boolean terms over
+`telos-fuzz SEED COUNT DEPTH [arith|uf] [--profile]` prints `COUNT` random Boolean terms over
 `a`, `b`, `c` (and the integer `x`), each with its telos rewrite, as
 `input<TAB>output` lines. With `arith`, the terms also contain comparisons of
-integer and real terms over `x`, `y`, `r` and `s`.
+integer and real terms over `x`, `y`, `r` and `s`. With `uf`, they also contain
+equalities and `distinct` of terms of an uninterpreted sort `U` over `u`, `v`,
+`w` and `f`, and `distinct` of Booleans and integers.
 `scripts/fuzz.py` compares them against cvc5's rewriter. With `--profile`, a table
 of where the rewriting time went is printed to standard error
 (`Telos/Profile.lean`); `scripts/profile.sh` runs a standard benchmark.
@@ -67,6 +69,30 @@ partial def genArith (real : Bool) : Nat → GenM Node
         let k := if (← pick 2) == 0 then Kind.INTS_DIVISION else .INTS_MODULUS
         return mkNode k #[← genArith false d, ← genArith false 0]
 
+/-- The uninterpreted sort `U`, the first sort the prelude declares. -/
+def sortU : TypeNode := .sort 0
+
+def ufAtoms : Array Node := #[.var "u" sortU, .var "v" sortU, .var "w" sortU]
+
+/-- A random term of sort `U`, over `u`, `v`, `w` and `(f : U → U)`. -/
+def genU : Nat → GenM Node
+  | 0 => return ufAtoms[← pick ufAtoms.size]!
+  | d + 1 => do
+    if (← pick 3) == 0 then
+      return .app (.node .APPLY_UF (.var "f" (.function sortU sortU))) #[← genU d]
+    genU 0
+
+/-- A random equality or `distinct` of terms of sort `U`, or `distinct` of
+Booleans or integers. -/
+def genUfAtom : GenM Node := do
+  match ← pick 6 with
+  | 0 | 1 => return eqNode (← genU 2) (← genU 2)
+  | 2 | 3 => return mkNode .DISTINCT (← (List.range (2 + (← pick 3))).toArray.mapM fun _ => genU 1)
+  | 4 => return mkNode .DISTINCT (← (List.range (2 + (← pick 2))).toArray.mapM fun _ =>
+      return atoms[← pick 5]!)
+  | _ => return mkNode .DISTINCT (← (List.range (2 + (← pick 2))).toArray.mapM fun _ =>
+      return intAtoms[← pick 4]!)
+
 /-- A random comparison of arithmetic terms. -/
 def genCmp (d : Nat) : GenM Node := do
   if (← pick 10) == 0 then return mkNode .IS_INTEGER #[← genArith true d]
@@ -74,21 +100,23 @@ def genCmp (d : Nat) : GenM Node := do
   let k := #[Kind.GEQ, .LEQ, .GT, .LT, .EQUAL][← pick 5]!
   return mkNode k #[← genArith real d, ← genArith real d]
 
-def genBool (arith : Bool) : Nat → GenM Node
+def genBool (arith : Bool) (uf : Bool := false) : Nat → GenM Node
   | 0 => do
     if arith && (← pick 2) == 0 then return ← genCmp 1
+    if uf then
+      if (← pick 2) == 0 then return ← genUfAtom
     return atoms[← pick atoms.size]!
   | d + 1 => do
     match ← pick 11 with
-    | 0 | 1 => genBool arith 0
-    | 2 => return notNode (← genBool arith d)
-    | 3 => return mkNode .AND (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith d)
-    | 4 => return mkNode .OR (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith d)
-    | 5 => return mkNode .IMPLIES #[← genBool arith d, ← genBool arith d]
-    | 6 => return mkNode .XOR #[← genBool arith d, ← genBool arith d]
-    | 7 => return eqNode (← genBool arith d) (← genBool arith d)
-    | 8 => if arith then genCmp d else genBool arith d
-    | _ => return iteNode (← genBool arith d) (← genBool arith d) (← genBool arith d)
+    | 0 | 1 => genBool arith uf 0
+    | 2 => return notNode (← genBool arith uf d)
+    | 3 => return mkNode .AND (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf d)
+    | 4 => return mkNode .OR (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf d)
+    | 5 => return mkNode .IMPLIES #[← genBool arith uf d, ← genBool arith uf d]
+    | 6 => return mkNode .XOR #[← genBool arith uf d, ← genBool arith uf d]
+    | 7 => return eqNode (← genBool arith uf d) (← genBool arith uf d)
+    | 8 => if arith then genCmp d else genBool arith uf d
+    | _ => return iteNode (← genBool arith uf d) (← genBool arith uf d) (← genBool arith uf d)
 
 def main (args : List String) : IO Unit := do
   let profile := args.contains "--profile"
@@ -98,9 +126,10 @@ def main (args : List String) : IO Unit := do
   let count := (args[1]? >>= String.toNat?).getD 100
   let depth := (args[2]? >>= String.toNat?).getD 3
   let arith := args[3]? == some "arith"
+  let uf := args[3]? == some "uf"
   let mut rng : Rng := ⟨seed.toUInt64⟩
   for _ in [0:count] do
-    let (t, r) := (genBool arith depth).run rng
+    let (t, r) := (genBool arith uf depth).run rng
     rng := r
     let r ← Profile.measure "total" "rewrite" fun _ => rewrite t
     IO.println s!"{t.toSmtLib}\t{r.toSmtLib}"

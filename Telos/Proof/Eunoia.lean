@@ -27,6 +27,9 @@ structure OpInfo where
   nil : Option (Option Term → Term)
   /-- Whether the operator binds variables, like `forall`. -/
   isBinder : Bool
+  /-- For an operator applied to a list built from its arguments, like
+  `distinct`, how the parser builds that list. -/
+  argList : Option (List Term → Term) := none
 
 /-- The placeholder index used to look up an indexed operator. -/
 def dummyIndex : Term := .Numeral 0
@@ -56,8 +59,11 @@ def opTable : Std.TreeMap Term OpInfo termCmp :=
         let nil := match d.arity with
           | .rightAssocNil nil => some nil
           | _ => none
+        let argList := match d.arity with
+          | .argList mk => some mk
+          | _ => none
         m.insert (headKey h) { name := d.name, indexArity := d.indexArity, nil,
-                               isBinder := d.binder.isSome }
+                               isBinder := d.binder.isSome, argList }
     | none => m
 
 /-- Names for the uninterpreted sorts and constants of a problem, which Logos
@@ -134,6 +140,13 @@ partial def printIn (N : Names) (bound : List Term) (t : Term) : String :=
               | v => s!"({print N v} ?)"
             s!"({info.name} ({" ".intercalate decls}) {printIn N (bvs ++ bound) body})"
           | none => curried h xs
+        | _ => curried h xs
+      else if let some mk := info.argList then
+        -- `(distinct (@tlist x₁ … xₙ))` is written `(distinct x₁ … xₙ)`.
+        match xs with
+        | [l@(.Apply (.Apply lh _) _)] =>
+          let (elems, _) := rightAssocElems lh l
+          if mk elems == l then app (headName info h) elems else curried h xs
         | _ => curried h xs
       else
         match info.nil with

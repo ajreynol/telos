@@ -33,7 +33,7 @@ def Const.toSmtLib : Const → String
 def Kind.smtLibName : Kind → String
   | .EQUAL => "=" | .NOT => "not" | .AND => "and" | .IMPLIES => "=>" | .OR => "or"
   | .XOR => "xor" | .ITE => "ite" | .FORALL => "forall" | .EXISTS => "exists"
-  | .BITVECTOR_EXTRACT => "extract"
+  | .BITVECTOR_EXTRACT => "extract" | .DISTINCT => "distinct"
   | .ADD => "+" | .SUB => "-" | .NEG => "-" | .MULT => "*" | .DIVISION => "/"
   | .INTS_DIVISION => "div" | .INTS_MODULUS => "mod" | .ABS => "abs"
   | .DIVISION_TOTAL => "/_total" | .INTS_DIVISION_TOTAL => "div_total"

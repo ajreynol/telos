@@ -42,7 +42,12 @@ differential fuzzing, not proved.
    so a new kind with an existing shape needs no proof. One exception: a
    `rightAssocNil` operator with a typed nil (like `bvand` or `bvadd`) must also
    be listed in `AppShape.isChildCongruent` (only `+` and `*` are now), with its
-   case in `Congruence.lean`.
+   case in `Congruence.lean`. A new shape also needs its case in
+   `Congruence.lean` (trivial if it is not child-congruent), and the proof
+   printer (`Telos/Proof/Eunoia.lean`) must print it so that Logos's parser
+   reads it back as the same term: check with `scripts/check-proofs.py`, which
+   fails when proofs are missing. `distinct`, an operator applied to a list
+   built from its arguments, is the example.
 3. Read it back in `Node.ofEo`, print it in `Print.lean`, and map its Eunoia
    operator in `scripts/gen-rules.py` (`KINDS`). Then regenerate the rule table
    (`python3 scripts/gen-rules.py`), which picks up every RARE rule whose

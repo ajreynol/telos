@@ -10,7 +10,7 @@ With `--fuzz N`, the queries are N random terms from `telos-fuzz` instead.
 
 Usage:
   scripts/check-proofs.py [--ethos PATH] FILE.smt2 ...
-  scripts/check-proofs.py [--ethos PATH] --fuzz N [--seed S] [--depth D] [--arith]
+  scripts/check-proofs.py [--ethos PATH] --fuzz N [--seed S] [--depth D] [--arith | --uf]
 
 Build first: `lake build telos telos-fuzz`.
 """
@@ -32,11 +32,16 @@ FUZZ_PRELUDE = """(declare-const a Bool)
 (declare-const y Int)
 (declare-const r Real)
 (declare-const s Real)
+(declare-sort U 0)
+(declare-const u U)
+(declare-const v U)
+(declare-const w U)
+(declare-fun f (U) U)
 """
 
 
-def fuzz_script(n, seed, depth, arith):
-    out = subprocess.run([str(BIN / "telos-fuzz"), str(seed), str(n), str(depth)] + (["arith"] if arith else []),
+def fuzz_script(n, seed, depth, arith, uf=False):
+    out = subprocess.run([str(BIN / "telos-fuzz"), str(seed), str(n), str(depth)] + (["arith"] if arith else ["uf"] if uf else []),
                          capture_output=True, text=True, check=True).stdout
     terms = [line.split("\t")[0] for line in out.splitlines()]
     return FUZZ_PRELUDE + "".join(f"(simplify {t})\n" for t in terms)
@@ -49,12 +54,14 @@ def check(ethos, script_path, tmp):
     if run.stderr:
         print(run.stderr, end="", file=sys.stderr)
     proofs = sorted(proof_dir.glob("proof-*.eo"), key=lambda p: int(p.stem.split("-")[1]))
+    # A supported query whose proof telos could not print (it says so on stderr).
+    missing = sum(1 for line in run.stderr.splitlines() if "no proof for" in line)
     failed = []
     for p in proofs:
         r = subprocess.run([ethos, f"--include={SIGNATURE}", str(p)], capture_output=True, text=True)
         if r.returncode != 0 or r.stdout.strip().splitlines()[-1:] != ["correct"]:
             failed.append((p, (r.stdout + r.stderr).strip()))
-    return len(proofs), failed
+    return len(proofs), failed, missing
 
 
 def main():
@@ -65,24 +72,27 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--depth", type=int, default=3)
     ap.add_argument("--arith", action="store_true", help="include arithmetic comparisons")
+    ap.add_argument("--uf", action="store_true", help="include equalities and distinct over an uninterpreted sort")
     a = ap.parse_args()
     if not (BIN / "telos").exists():
         sys.exit("error: build telos first: lake build telos telos-fuzz")
-    total, failures = 0, []
+    total, failures, missing = 0, [], 0
     with tempfile.TemporaryDirectory() as tmp:
         files = list(a.files)
         if a.fuzz:
             f = Path(tmp) / "fuzz.smt2"
-            f.write_text(fuzz_script(a.fuzz, a.seed, a.depth, a.arith))
+            f.write_text(fuzz_script(a.fuzz, a.seed, a.depth, a.arith, a.uf))
             files.append(f)
         for f in files:
-            n, failed = check(a.ethos, f, tmp)
+            n, failed, m = check(a.ethos, f, tmp)
             total += n
             failures += failed
+            missing += m
         for p, msg in failures[:10]:
             print(f"\nREJECTED {p.name}:\n{p.read_text()}{msg}")
-    print(f"{total} proofs, {total - len(failures)} accepted by Ethos, {len(failures)} rejected")
-    sys.exit(1 if failures else 0)
+    print(f"{total} proofs, {total - len(failures)} accepted by Ethos, {len(failures)} rejected, "
+          f"{missing} missing")
+    sys.exit(1 if failures or missing else 0)
 
 
 if __name__ == "__main__":
