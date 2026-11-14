@@ -359,6 +359,18 @@ Cpc.cached.eo (pinned Logos) ──scripts/gen-rules.py──▶ Telos/Rules/Gen
   that the certified step then rejects. To find such mistakes, a generated test
   instantiates each rule's left-hand side with fresh variables and checks that
   the matcher finds it and the step succeeds.
+- **Patterns.** Left-hand sides are patterns over kinds (`Pat`): variables,
+  `:list` variables of n-ary operators, constants, applications, indexed
+  applications whose indices are patterns (`(extract i j x)`, as the signature
+  writes it), and bit-vector literals `(@bv v w)`. The signature defines `@bv`
+  as `((_ int_to_bv w) v)`, a term, so the matcher first rewrites a matched
+  literal to that form (`evaluate` and `symm`, under congruence,
+  `toSymbolic`). `eo::define` is inlined.
+- **Premises** are evaluated: `(= A v)` by `evaluate`, and `(= x E)` with `x` a
+  variable by `evaluate` and `symm`. The matcher evaluates each premise when it
+  matches, and the value must match the other side, binding its variables. This
+  is how rules define arguments, as in `(= wm (- (@bvsize x) 1))`, and it rejects
+  a rule whose premise fails without running the checker.
 - **In sync.** The generated file is checked in. CI regenerates it from the
   pinned Logos checkout (`.lake/packages/Cpc/install/defs/Cpc.cached.eo`) and
   fails on a difference, as Logos's own `install-cpc.sh --check` does.
@@ -469,9 +481,35 @@ tested:
      order, where cvc5 uses node ids, which also decides the leading term of a
      normalized inequality. cvc5 also removes `to_real` from one side of `/`,
      as in `(/ (to_real x) r)` to `(/ x r)`, a mixed division Logos rejects.
-   - To do: the extended operators (`int.pow2`, `int.log2`, `iand`,
-     transcendentals), then bit-vectors. Bit-vectors are where `bv_poly_norm`
-     comes in.
+   - To do: the extended operators (`int.log2`, `iand`, transcendentals;
+     `int.pow2`, `int.log2` and `int.ispow2` have kinds, for the premises of
+     bit-vector rules, but are not rewritten).
+   - **Bit-vectors (stage 1).** Kinds for all of cvc5's bit-vector operators,
+     `int_to_bv`, `ubv_to_int` and `sbv_to_int`. The n-ary ones (`concat`,
+     `bvand`, `bvor`, `bvxor`, `bvadd`, `bvmul`) have a typed nil, and their
+     congruence is proved (`bv_nary_args`, `typedNil_congr_bv`: equivalent
+     bit-vector terms have the same Eunoia type, by Logos's
+     `eo_typeof_eq_of_smt_type_eq`). The rule table has 141 of the 145
+     bit-vector and conversion rules (233 rules in all). `Telos/Theory/BV.lean`
+     ports cvc5's `TheoryBVRewriter` kind by kind, with RARE rules for cvc5's
+     rewrite rules, `evaluate` for constants, and `aci_norm` for
+     `ConcatFlatten`. `int_to_bv` of a constant is evaluated by the UF
+     rewriter, as in cvc5; RARE rules produce it for `(@bv v w)`.
+   - Fuzzing (`scripts/fuzz.py --bv`, 3000 terms of depth 3 over three
+     `(_ BitVec 4)` variables and constants): 41.1% identical to cvc5, 45.2% up
+     to the orientation of equalities, no semantic disagreements. Ethos accepts
+     all proofs (`check-proofs.py --bv`).
+   - Not ported yet, so the main differences from cvc5: the normalizations cvc5
+     implements as macros over whole n-ary terms. `FlattenAssocCommut`,
+     `AddCombineLikeTerms`, `MultSimplify`, `NegIdemp`, `NegAdd`, `NegMult`,
+     `NegSub`, `MultDistrib` and `MultDistribConst` are polynomial
+     normalizations, certified in CPC by `bv_poly_norm` (and the natural
+     candidate for a second `StaticProc`). `AndSimplify`, `OrSimplify` and
+     `XorSimplify` group constants by `aci_norm`, evaluate them, and simplify
+     (cvc5's `MacroRewriteElaborator`). Also `BitwiseSlicing`, `RepeatEliminate`,
+     `UmuloEliminate` and `SmuloEliminate` (their RARE rules use `:requires`),
+     `BvIteConstCond` and the constant evaluation of `bvcomp` (Logos's `evaluate`
+     does not reduce them), `XorZero`, `BvComp` and `IneqElimConversion`.
 7. **Performance.** Rewrite cache, sharing, cached hashes; a proof that children
    of well-typed nodes are well typed (removing the runtime check); generated
    program-equals-template lemmas for hot rules; normalizers (first

@@ -1,0 +1,33 @@
+(bvult y x)
+(not (bvslt x y))
+(bvadd x (bvneg y))
+#b0011
+#b1111
+true
+false
+(= x y)
+x
+(bvite #b1 x y)
+(bvite #b0 x y)
+x
+(bvnot ((_ extract 1 0) x))
+((_ extract 2 1) x)
+(concat ((_ extract 1 0) x) ((_ extract 3 2) y))
+(concat x y z)
+(concat #b00 x)
+x
+(concat ((_ extract 2 0) x) ((_ extract 3 3) x))
+(concat ((_ extract 0 0) x) ((_ extract 3 1) x))
+x
+(concat #b0 ((_ extract 3 1) x))
+false
+(not (= #b1111 x))
+false
+true
+x
+#b0000
+(bvnot (bvxor x y))
+(bvnot (bvand x y))
+(bvnot (bvcomp x #b0000))
+(bvcomp #b0001 #b0001)
+(ite (xor (= #b1 ((_ extract 3 3) x)) (= #b1 ((_ extract 3 3) y))) (bvneg (bvudiv (ite (= #b1 ((_ extract 3 3) x)) (bvneg x) x) (ite (= #b1 ((_ extract 3 3) y)) (bvneg y) y))) (bvudiv (ite (= #b1 ((_ extract 3 3) x)) (bvneg x) x) (ite (= #b1 ((_ extract 3 3) y)) (bvneg y) y)))

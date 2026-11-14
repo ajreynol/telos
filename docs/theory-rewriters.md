@@ -51,7 +51,12 @@ differential fuzzing, not proved.
 3. Read it back in `Node.ofEo`, print it in `Print.lean`, and map its Eunoia
    operator in `scripts/gen-rules.py` (`KINDS`). Then regenerate the rule table
    (`python3 scripts/gen-rules.py`), which picks up every RARE rule whose
-   left-hand side now uses only known kinds.
+   left-hand side now uses only known kinds. An indexed operator goes in
+   `INDEXED`, with its number of indices, and an n-ary one in `NARY`.
+   `python3 scripts/gen-rules.py --report` lists the rules skipped, and why.
+   Rules whose left-hand sides have integer parameters (indices, widths, `@bv`
+   literals) are not covered by the fresh-variable self-test
+   (`TelosTests/Rules.lean`), so test them on concrete terms.
 4. Optionally add the kind to `Op.childrenTypedOfParent`
    (`Telos/Rewriter/Certified.lean`). Then the driver skips the run-time check
    that its children are well typed. This needs the kind's case in
@@ -149,6 +154,9 @@ For a normalization rule (`= a b` accepted when Logos's normal forms of `a` and
 
 Lessons from the arithmetic port:
 
+- The proof printer writes indexed operators with their indices as leading
+  arguments, `(extract 1 0 x)`, as the signature does; Ethos rejects
+  `((_ extract 1 0) x)`. The empty bit-vector is `@bv_empty`.
 - Instances that Lean derives for mutual or nested inductives (`Ord`, `BEq` on
   `Term` and `Node`) are **opaque**: nothing about them can be proved. In code
   you want to reason about, compare with `decide (a = b)` (from `DecidableEq`),

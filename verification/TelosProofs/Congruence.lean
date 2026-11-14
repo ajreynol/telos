@@ -3,6 +3,8 @@ import Cpc.Proofs.RuleSupport.Cong.Spine
 import Cpc.Proofs.RuleSupport.SpineArgsSupport
 import Cpc.Proofs.Translation.Inversions
 import Cpc.Proofs.Translation.EoTypeof
+import Cpc.Proofs.TypePreservation.BitVecPrep
+import Cpc.Proofs.RuleSupport.SubstituteTypeSupport
 
 /-!
 # Congruence
@@ -134,6 +136,71 @@ theorem typedNil_congr {op : UserOp} (hop : op = UserOp.plus ∨ op = UserOp.mul
   obtain ⟨hB0, hB1⟩ := notArith hy
   split <;> simp [hA0, hA1, hB0, hB1]
 
+/-! ## Bit-vector operators -/
+
+theorem typeof_bvand' (a b : SmtTerm) : __smtx_typeof (SmtTerm.bvand a b) =
+    __smtx_typeof_bv_op_2 (__smtx_typeof a) (__smtx_typeof b) := by
+  rw [__smtx_typeof.eq_def]
+theorem typeof_bvor' (a b : SmtTerm) : __smtx_typeof (SmtTerm.bvor a b) =
+    __smtx_typeof_bv_op_2 (__smtx_typeof a) (__smtx_typeof b) := by
+  rw [__smtx_typeof.eq_def]
+theorem typeof_bvxor' (a b : SmtTerm) : __smtx_typeof (SmtTerm.bvxor a b) =
+    __smtx_typeof_bv_op_2 (__smtx_typeof a) (__smtx_typeof b) := by
+  rw [__smtx_typeof.eq_def]
+theorem typeof_bvadd' (a b : SmtTerm) : __smtx_typeof (SmtTerm.bvadd a b) =
+    __smtx_typeof_bv_op_2 (__smtx_typeof a) (__smtx_typeof b) := by
+  rw [__smtx_typeof.eq_def]
+theorem typeof_bvmul' (a b : SmtTerm) : __smtx_typeof (SmtTerm.bvmul a b) =
+    __smtx_typeof_bv_op_2 (__smtx_typeof a) (__smtx_typeof b) := by
+  rw [__smtx_typeof.eq_def]
+
+theorem bv_op_2_args {T U : SmtType} (h : __smtx_typeof_bv_op_2 T U ≠ SmtType.None) :
+    (∃ w, T = SmtType.BitVec w) ∧ U ≠ SmtType.None := by
+  cases T <;> cases U <;> simp_all [__smtx_typeof_bv_op_2]
+
+theorem concat_args {T U : SmtType} (h : __smtx_typeof_concat T U ≠ SmtType.None) :
+    (∃ w, T = SmtType.BitVec w) ∧ U ≠ SmtType.None := by
+  cases T <;> cases U <;> simp_all [__smtx_typeof_concat]
+
+/-- A well-typed application of a `:right-assoc-nil` bit-vector operator has a
+bit-vector first argument and a well-typed tail. -/
+theorem bv_nary_args {op : UserOp} (hop : op.isBvNary = true) {x r : Term}
+    (h : eo_has_smt_translation (eoApp2 op x r)) :
+    (∃ w, __smtx_typeof (__eo_to_smt x) = SmtType.BitVec w) ∧ eo_has_smt_translation r := by
+  unfold eo_has_smt_translation at h ⊢
+  simp only [UserOp.isBvNary, Bool.or_eq_true, beq_iff_eq] at hop
+  rcases hop with ((((rfl | rfl) | rfl) | rfl) | rfl) | rfl
+  · change __smtx_typeof (SmtTerm.concat _ _) ≠ _ at h
+    rw [typeof_concat_eq] at h; exact concat_args h
+  · change __smtx_typeof (SmtTerm.bvand _ _) ≠ _ at h
+    rw [typeof_bvand'] at h; exact bv_op_2_args h
+  · change __smtx_typeof (SmtTerm.bvor _ _) ≠ _ at h
+    rw [typeof_bvor'] at h; exact bv_op_2_args h
+  · change __smtx_typeof (SmtTerm.bvxor _ _) ≠ _ at h
+    rw [typeof_bvxor'] at h; exact bv_op_2_args h
+  · change __smtx_typeof (SmtTerm.bvadd _ _) ≠ _ at h
+    rw [typeof_bvadd'] at h; exact bv_op_2_args h
+  · change __smtx_typeof (SmtTerm.bvmul _ _) ≠ _ at h
+    rw [typeof_bvmul'] at h; exact bv_op_2_args h
+
+/-- Equivalent first elements of a well-typed bit-vector application give the
+same nil: equivalent terms of a bit-vector type have the same Eunoia type. -/
+theorem typedNil_congr_bv {op : UserOp} (hop : op.isBvNary = true) {x y r : Term}
+    (h : TermEquiv x y) (ht : eo_has_smt_translation (eoApp2 op x r)) :
+    typedNil op x = typedNil op y := by
+  obtain ⟨⟨hne, heq⟩, _⟩ := (termEquiv_iff x y).1 h
+  obtain ⟨w, hw⟩ := (bv_nary_args hop ht).1
+  have hx := TranslationProofs.eo_to_smt_type_typeof_of_smt_type x rfl hne
+  have hy : __eo_typeof y = __eo_typeof x := by
+    apply SubstituteSupport.eo_typeof_eq_of_smt_type_eq _ _
+    · show __smtx_typeof (__eo_to_smt y) ≠ SmtType.None
+      rw [← heq]; exact hne
+    · rw [hx, hw]; simp [__smtx_type_wf, __smtx_type_wf_component, __smtx_type_wf_rec,
+        SmtEval.native_and]
+    · rw [hx, ← heq]
+  unfold typedNil
+  rw [hy]
+
 theorem termEquiv_rightAssocNil (op : UserOp) (nil : Term)
     (hrest : ∀ {x r : Term}, eo_has_smt_translation (eoApp2 op x r) → eo_has_smt_translation r)
     {xs ys : List Term} (h : List.Forall₂ TermEquiv xs ys)
@@ -174,9 +241,15 @@ theorem shape_congr (sh : AppShape) (hsh : sh.isChildCongruent = true) {xs ys : 
         | const _ => rfl
         | typed =>
           simp only [AppShape.isChildCongruent, Bool.or_eq_true, beq_iff_eq] at hsh
-          cases h with
-          | nil => simp at hle
-          | cons hxy _ => exact (typedNil_congr hsh hxy).symm
+          rcases hsh with hsh | hbv
+          · cases h with
+            | nil => simp at hle
+            | cons hxy _ => exact (typedNil_congr hsh hxy).symm
+          · cases h with
+            | nil => simp at hle
+            | cons hxy _ =>
+              simp only [eoRightAssocNil] at ht
+              exact (typedNil_congr_bv hbv hxy ht).symm
       rw [hnil]
       have hrest : ∀ {x r : Term}, eo_has_smt_translation (eoApp2 op x r) →
           eo_has_smt_translation r := by
@@ -186,7 +259,9 @@ theorem shape_congr (sh : AppShape) (hsh : sh.isChildCongruent = true) {xs ys : 
           exact translation_rest hsh
         | typed =>
           simp only [AppShape.isChildCongruent, Bool.or_eq_true, beq_iff_eq] at hsh
-          exact translation_rest_arith hsh
+          rcases hsh with hsh | hbv
+          · exact translation_rest_arith hsh
+          · exact fun h => (bv_nary_args hbv h).2
       exact termEquiv_rightAssocNil _ _ hrest h ht
     · rw [AppShape.toEo, ite_eq_right hle] at ht
       exact absurd ht not_translation_stuck

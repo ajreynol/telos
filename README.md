@@ -34,7 +34,8 @@ and `(simplify t)` commands, read by Logos's parser. For each `t`, telos prints
 its rewrite, as cvc5 does. Only some theories are ported so far: Booleans,
 arithmetic (`+`, `-`, `*`, `/`, `div`, `mod`, `abs`, `to_real`, `to_int`,
 `is_int` and the comparisons), equality over uninterpreted sorts and
-`distinct` (cvc5's UF rewriter), and quantifiers as far as they are Boolean.
+`distinct` (cvc5's UF rewriter), bit-vectors (all operators; the rewriter is
+partly ported), and quantifiers as far as they are Boolean.
 Terms
 with other operators are reported as unsupported, and rewriting of the supported
 ones is incomplete.

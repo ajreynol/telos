@@ -157,7 +157,55 @@ def Kind.eoShape : Kind → AppShape
   | .TO_REAL => .spine (Term.UOp UserOp.to_real) (.exactly 1)
   | .TO_INTEGER => .spine (Term.UOp UserOp.to_int) (.exactly 1)
   | .IS_INTEGER => .spine (Term.UOp UserOp.is_int) (.exactly 1)
+  | .POW2 => .spine (Term.UOp UserOp.int_pow2) (.exactly 1)
+  | .INTS_LOG2 => .spine (Term.UOp UserOp.int_log2) (.exactly 1)
+  | .INTS_ISPOW2 => .spine (Term.UOp UserOp.int_ispow2) (.exactly 1)
   | .DISTINCT => .typedList UserOp.distinct
+  | .BITVECTOR_UBV_TO_INT => .spine (Term.UOp UserOp.ubv_to_int) (.exactly 1)
+  | .BITVECTOR_SBV_TO_INT => .spine (Term.UOp UserOp.sbv_to_int) (.exactly 1)
+  | .BITVECTOR_CONCAT => .rightAssocNil UserOp.concat .typed
+  | .BITVECTOR_AND => .rightAssocNil UserOp.bvand .typed
+  | .BITVECTOR_OR => .rightAssocNil UserOp.bvor .typed
+  | .BITVECTOR_XOR => .rightAssocNil UserOp.bvxor .typed
+  | .BITVECTOR_ADD => .rightAssocNil UserOp.bvadd .typed
+  | .BITVECTOR_MULT => .rightAssocNil UserOp.bvmul .typed
+  | .BITVECTOR_NOT => .spine (Term.UOp UserOp.bvnot) (.exactly 1)
+  | .BITVECTOR_NEG => .spine (Term.UOp UserOp.bvneg) (.exactly 1)
+  | .BITVECTOR_REDOR => .spine (Term.UOp UserOp.bvredor) (.exactly 1)
+  | .BITVECTOR_REDAND => .spine (Term.UOp UserOp.bvredand) (.exactly 1)
+  | .BITVECTOR_NEGO => .spine (Term.UOp UserOp.bvnego) (.exactly 1)
+  | .BITVECTOR_SIZE => .spine (Term.UOp UserOp._at_bvsize) (.exactly 1)
+  | .BITVECTOR_NAND => .spine (Term.UOp UserOp.bvnand) (.exactly 2)
+  | .BITVECTOR_NOR => .spine (Term.UOp UserOp.bvnor) (.exactly 2)
+  | .BITVECTOR_XNOR => .spine (Term.UOp UserOp.bvxnor) (.exactly 2)
+  | .BITVECTOR_COMP => .spine (Term.UOp UserOp.bvcomp) (.exactly 2)
+  | .BITVECTOR_SUB => .spine (Term.UOp UserOp.bvsub) (.exactly 2)
+  | .BITVECTOR_UDIV => .spine (Term.UOp UserOp.bvudiv) (.exactly 2)
+  | .BITVECTOR_UREM => .spine (Term.UOp UserOp.bvurem) (.exactly 2)
+  | .BITVECTOR_SDIV => .spine (Term.UOp UserOp.bvsdiv) (.exactly 2)
+  | .BITVECTOR_SREM => .spine (Term.UOp UserOp.bvsrem) (.exactly 2)
+  | .BITVECTOR_SMOD => .spine (Term.UOp UserOp.bvsmod) (.exactly 2)
+  | .BITVECTOR_SHL => .spine (Term.UOp UserOp.bvshl) (.exactly 2)
+  | .BITVECTOR_LSHR => .spine (Term.UOp UserOp.bvlshr) (.exactly 2)
+  | .BITVECTOR_ASHR => .spine (Term.UOp UserOp.bvashr) (.exactly 2)
+  | .BITVECTOR_ULT => .spine (Term.UOp UserOp.bvult) (.exactly 2)
+  | .BITVECTOR_ULE => .spine (Term.UOp UserOp.bvule) (.exactly 2)
+  | .BITVECTOR_UGT => .spine (Term.UOp UserOp.bvugt) (.exactly 2)
+  | .BITVECTOR_UGE => .spine (Term.UOp UserOp.bvuge) (.exactly 2)
+  | .BITVECTOR_SLT => .spine (Term.UOp UserOp.bvslt) (.exactly 2)
+  | .BITVECTOR_SLE => .spine (Term.UOp UserOp.bvsle) (.exactly 2)
+  | .BITVECTOR_SGT => .spine (Term.UOp UserOp.bvsgt) (.exactly 2)
+  | .BITVECTOR_SGE => .spine (Term.UOp UserOp.bvsge) (.exactly 2)
+  | .BITVECTOR_ULTBV => .spine (Term.UOp UserOp.bvultbv) (.exactly 2)
+  | .BITVECTOR_SLTBV => .spine (Term.UOp UserOp.bvsltbv) (.exactly 2)
+  | .BITVECTOR_UADDO => .spine (Term.UOp UserOp.bvuaddo) (.exactly 2)
+  | .BITVECTOR_SADDO => .spine (Term.UOp UserOp.bvsaddo) (.exactly 2)
+  | .BITVECTOR_UMULO => .spine (Term.UOp UserOp.bvumulo) (.exactly 2)
+  | .BITVECTOR_SMULO => .spine (Term.UOp UserOp.bvsmulo) (.exactly 2)
+  | .BITVECTOR_USUBO => .spine (Term.UOp UserOp.bvusubo) (.exactly 2)
+  | .BITVECTOR_SSUBO => .spine (Term.UOp UserOp.bvssubo) (.exactly 2)
+  | .BITVECTOR_SDIVO => .spine (Term.UOp UserOp.bvsdivo) (.exactly 2)
+  | .BITVECTOR_ITE => .spine (Term.UOp UserOp.bvite) (.exactly 3)
   | .BOUND_VAR_LIST => .binderList
   | .FORALL => .binder UserOp.forall
   | .EXISTS => .binder UserOp.exists
@@ -167,12 +215,23 @@ def Kind.eoShape : Kind → AppShape
 def indexedEoShape : Kind → List Int → AppShape
   | .BITVECTOR_EXTRACT, [i, j] =>
       .spine (Term.UOp2 UserOp2.extract (Term.Numeral i) (Term.Numeral j)) (.exactly 1)
+  | .INT_TO_BITVECTOR, [i] => .spine (Term.UOp1 UserOp1.int_to_bv (Term.Numeral i)) (.exactly 1)
+  | .BITVECTOR_REPEAT, [i] => .spine (Term.UOp1 UserOp1.repeat (Term.Numeral i)) (.exactly 1)
+  | .BITVECTOR_ZERO_EXTEND, [i] => .spine (Term.UOp1 UserOp1.zero_extend (Term.Numeral i)) (.exactly 1)
+  | .BITVECTOR_SIGN_EXTEND, [i] => .spine (Term.UOp1 UserOp1.sign_extend (Term.Numeral i)) (.exactly 1)
+  | .BITVECTOR_ROTATE_LEFT, [i] => .spine (Term.UOp1 UserOp1.rotate_left (Term.Numeral i)) (.exactly 1)
+  | .BITVECTOR_ROTATE_RIGHT, [i] => .spine (Term.UOp1 UserOp1.rotate_right (Term.Numeral i)) (.exactly 1)
   | _, _ => .none
 
 /-- The CPC form of an operator that is a term, given its translation `f`. -/
 def nodeEoShape : Kind → Term → AppShape
   | .APPLY_UF, f => .spine f (.atLeast 1)
   | _, _ => .none
+
+/-- The `:right-assoc-nil` bit-vector operators, whose nil is typed. -/
+def _root_.Eo.UserOp.isBvNary (op : UserOp) : Bool :=
+  op == UserOp.concat || op == UserOp.bvand || op == UserOp.bvor || op == UserOp.bvxor ||
+    op == UserOp.bvadd || op == UserOp.bvmul
 
 /-- Shapes whose congruence is proven child by child: rewriting any child to an
 equivalent node gives an equivalent application. Binders are handled separately,
@@ -181,7 +240,7 @@ not yet: their children are not rewritten. -/
 def AppShape.isChildCongruent : AppShape → Bool
   | .spine _ _ => true
   | .rightAssocNil op (.const _) => op == UserOp.and || op == UserOp.or
-  | .rightAssocNil op .typed => op == UserOp.plus || op == UserOp.mult
+  | .rightAssocNil op .typed => op == UserOp.plus || op == UserOp.mult || op.isBvNary
   | .none => true
   | .typedList _ | .binderList | .binder _ => false
 

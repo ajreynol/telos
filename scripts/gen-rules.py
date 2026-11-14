@@ -54,12 +54,72 @@ KINDS = {
     "to_real": "TO_REAL",
     "to_int": "TO_INTEGER",
     "is_int": "IS_INTEGER",
+    "int.pow2": "POW2",
+    "int.log2": "INTS_LOG2",
+    "int.ispow2": "INTS_ISPOW2",
+    "concat": "BITVECTOR_CONCAT",
+    "bvand": "BITVECTOR_AND",
+    "bvor": "BITVECTOR_OR",
+    "bvxor": "BITVECTOR_XOR",
+    "bvadd": "BITVECTOR_ADD",
+    "bvmul": "BITVECTOR_MULT",
+    "bvnot": "BITVECTOR_NOT",
+    "bvneg": "BITVECTOR_NEG",
+    "bvredor": "BITVECTOR_REDOR",
+    "bvredand": "BITVECTOR_REDAND",
+    "bvnego": "BITVECTOR_NEGO",
+    "@bvsize": "BITVECTOR_SIZE",
+    "bvnand": "BITVECTOR_NAND",
+    "bvnor": "BITVECTOR_NOR",
+    "bvxnor": "BITVECTOR_XNOR",
+    "bvcomp": "BITVECTOR_COMP",
+    "bvsub": "BITVECTOR_SUB",
+    "bvudiv": "BITVECTOR_UDIV",
+    "bvurem": "BITVECTOR_UREM",
+    "bvsdiv": "BITVECTOR_SDIV",
+    "bvsrem": "BITVECTOR_SREM",
+    "bvsmod": "BITVECTOR_SMOD",
+    "bvshl": "BITVECTOR_SHL",
+    "bvlshr": "BITVECTOR_LSHR",
+    "bvashr": "BITVECTOR_ASHR",
+    "bvult": "BITVECTOR_ULT",
+    "bvule": "BITVECTOR_ULE",
+    "bvugt": "BITVECTOR_UGT",
+    "bvuge": "BITVECTOR_UGE",
+    "bvslt": "BITVECTOR_SLT",
+    "bvsle": "BITVECTOR_SLE",
+    "bvsgt": "BITVECTOR_SGT",
+    "bvsge": "BITVECTOR_SGE",
+    "bvultbv": "BITVECTOR_ULTBV",
+    "bvsltbv": "BITVECTOR_SLTBV",
+    "bvuaddo": "BITVECTOR_UADDO",
+    "bvsaddo": "BITVECTOR_SADDO",
+    "bvumulo": "BITVECTOR_UMULO",
+    "bvsmulo": "BITVECTOR_SMULO",
+    "bvusubo": "BITVECTOR_USUBO",
+    "bvssubo": "BITVECTOR_SSUBO",
+    "bvsdivo": "BITVECTOR_SDIVO",
+    "bvite": "BITVECTOR_ITE",
+    "ubv_to_int": "BITVECTOR_UBV_TO_INT",
+    "sbv_to_int": "BITVECTOR_SBV_TO_INT",
+}
+# Indexed operators: kind and number of indices. In the signature the indices
+# come first, as in `(extract i j x)`.
+INDEXED = {
+    "extract": ("BITVECTOR_EXTRACT", 2),
+    "int_to_bv": ("INT_TO_BITVECTOR", 1),
+    "repeat": ("BITVECTOR_REPEAT", 1),
+    "zero_extend": ("BITVECTOR_ZERO_EXTEND", 1),
+    "sign_extend": ("BITVECTOR_SIGN_EXTEND", 1),
+    "rotate_left": ("BITVECTOR_ROTATE_LEFT", 1),
+    "rotate_right": ("BITVECTOR_ROTATE_RIGHT", 1),
 }
 # Operators whose kind depends on the number of arguments.
 KINDS_BY_ARITY = {("-", 1): "NEG", ("-", 2): "SUB"}
 # Kinds whose applications are `:right-assoc-nil`, where `:list` variables match
 # a run of children.
-NARY = {"AND", "OR", "ADD", "MULT"}
+NARY = {"AND", "OR", "ADD", "MULT", "BITVECTOR_CONCAT", "BITVECTOR_AND", "BITVECTOR_OR",
+        "BITVECTOR_XOR", "BITVECTOR_ADD", "BITVECTOR_MULT"}
 CONSTS = {"true": ".const (.boolean true)", "false": ".const (.boolean false)"}
 
 
@@ -105,7 +165,22 @@ def lean_string(s):
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def expand_defines(t, env=None):
+    """`t` with every `(eo::define ((v E) ...) body)` replaced by `body` with each
+    `v` replaced by its definition."""
+    env = env or {}
+    if isinstance(t, str):
+        return env.get(t, t)
+    if t and t[0] == "eo::define" and len(t) == 3:
+        env = dict(env)
+        for v, e in t[1]:
+            env[v] = expand_defines(e, env)
+        return expand_defines(t[2], env)
+    return [expand_defines(x, env) for x in t]
+
+
 def spec_of_rule(form, crules):
+    form = expand_defines(form)
     name, params = form[1], form[2]
     attrs, key = {}, None
     for x in form[3:]:
@@ -152,6 +227,15 @@ def spec_of_rule(form, crules):
                 return f".const (.rational (mkRat ({m.group(1)}) {m.group(2)}))"
             raise Skip(f"symbol {t}")
         head = t[0] if t and isinstance(t[0], str) else None
+        if head == "@bv" and len(t) == 3:
+            return f".bvLit ({pat(t[1])}) ({pat(t[2])})"
+        if head in INDEXED:
+            kind, k = INDEXED[head]
+            if len(t) != k + 2:
+                raise Skip(f"arity of {head}")
+            idx = [pat(a) for a in t[1:1 + k]]
+            args = [pat(a, kind) for a in t[1 + k:]]
+            return f".indexed .{kind} [{', '.join(idx)}] [{', '.join(args)}]"
         kind = KINDS.get(head) or KINDS_BY_ARITY.get((head, len(t) - 1))
         if kind is None:
             raise Skip(f"operator {show(t[0]) if t else '()'}")
@@ -165,11 +249,20 @@ def spec_of_rule(form, crules):
     if not isinstance(args_form, list) or not all(isinstance(a, str) and a in variables for a in args_form):
         raise Skip("arguments are not plain variables")
     premises = []
+    bound = set(re.findall(r"\.(?:listVar|var) (\d+)", lhs))
     for prem in attrs.get(":premises", []) or []:
         if not (isinstance(prem, list) and len(prem) == 3 and prem[0] == "="):
             raise Skip("premise is not an equality")
-        premises.append(pat(prem[1]))
-    lhs_vars = set(re.findall(r"\.(?:listVar|var) (\d+)", lhs))
+        a, b = prem[1], prem[2]
+        if isinstance(a, str) and a in variables and (str(variables[a]) not in bound or isinstance(b, list)):
+            # `(= v E)` defines `v`, or checks it against the value of the term `E`:
+            # proven by evaluating `E`, then `symm`.
+            expr, value, symm = pat(b), pat(a), "true"
+        else:
+            expr, value, symm = pat(a), pat(b), "false"
+        premises.append(f"{{ expr := {expr}, value := {value}, symm := {symm} }}")
+        bound |= set(re.findall(r"\.(?:listVar|var) (\d+)", value))
+    lhs_vars = bound
     if {str(variables[a]) for a in args_form} - lhs_vars:
         raise Skip("an argument does not occur in the left-hand side")
     args_str = ", ".join(str(variables[a]) for a in args_form)

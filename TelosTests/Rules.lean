@@ -30,7 +30,7 @@ def freshSubst (r : RuleSpec) (T : TypeNode) (listLen : Nat) : Subst :=
 /-- Whether the rule fires on its fresh left-hand side, with variables of some
 type (all of the same type). -/
 def firesOnFresh (r : RuleSpec) (listLen : Nat) : Bool :=
-  [TypeNode.boolean, .integer, .real].any fun T =>
+  [TypeNode.boolean, .integer, .real, .bitVector 4].any fun T =>
     match r.lhs.instantiate (freshSubst r T listLen) with
     | some n => (r.apply n).isSome
     | none => false
@@ -47,11 +47,32 @@ def expectedToFail : List String :=
    "arith-int-div-total-neg", "arith-int-mod-total-neg", "arith-mod-over-mod-1",
    "arith-mod-over-mod", "arith-mod-over-mod-mult",
    -- a Boolean condition with arithmetic branches: variables of two types
-   "arith-geq-ite-lift", "arith-leq-ite-lift"]
+   "arith-geq-ite-lift", "arith-leq-ite-lift",
+   -- a premise that needs a non-integral constant (tested below)
+   "arith-int-geq-tighten",
+   -- `bvite`: a `(_ BitVec 1)` condition with branches of another width
+   "bv-ite-equal-children", "bv-ite-equal-cond-1", "bv-ite-equal-cond-2", "bv-ite-equal-cond-3",
+   "bv-ite-merge-then-if", "bv-ite-merge-else-if", "bv-ite-merge-then-else", "bv-ite-merge-else-else",
+   -- `concat` of operands of different widths, or premises on widths
+   "bv-and-concat-pullup", "bv-or-concat-pullup", "bv-xor-concat-pullup",
+   "bv-and-concat-pullup2", "bv-or-concat-pullup2", "bv-xor-concat-pullup2",
+   "bv-and-concat-pullup3", "bv-or-concat-pullup3", "bv-xor-concat-pullup3",
+   "bv-ult-add-one",
+   -- integers and bit-vectors
+   "uf-bv2nat-geq-elim"]
+
+/-- Whether a pattern has integer parameters (indices, widths, bit-vector
+literals), which fresh variables cannot instantiate. Such rules are tested on
+concrete terms (`test/examples/bv.smt2`) and by fuzzing. -/
+partial def patHasIntParams : Pat → Bool
+  | .indexed .. | .bvLit .. => true
+  | .app _ ps => ps.any patHasIntParams
+  | _ => false
 
 def selfTestFailures (listLen : Nat) : List String :=
   generatedRules.filterMap fun r =>
-    if expectedToFail.contains r.name || firesOnFresh r listLen then none else some r.name
+    if expectedToFail.contains r.name || patHasIntParams r.lhs || firesOnFresh r listLen then none
+    else some r.name
 
 #guard selfTestFailures 0 == []
 #guard selfTestFailures 2 == []
@@ -66,6 +87,9 @@ def c : Node := .var "c" .boolean
 def t : Node := .var "t" .integer
 def int (i : Int) : Node := .const (.integer i)
 
+-- Premises discharged by evaluation; `(= cc (+ (to_int c) 1))` defines `cc`.
+#guard rw? "arith-int-geq-tighten" (mkNode .GEQ #[mkNode .TO_REAL #[t], .const (.rational (mkRat 1 2))]) ==
+  some (mkNode .GEQ #[t, int 1])
 -- Premises discharged by evaluation.
 #guard rw? "bool-not-true" (notNode mkFalse) == some mkTrue
 #guard rw? "bool-not-true" (notNode c) == none

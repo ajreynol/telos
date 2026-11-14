@@ -13,6 +13,37 @@ open Eo
 
 namespace Telos
 
+namespace Rw
+
+/-- Continue a rewrite with a step on its result. If the step does not apply,
+stop where we are. -/
+def next {n : Node} (r : Rw n) (f : (m : Node) → Option (Rw m)) : Rw n :=
+  match f r.1 with
+  | some ⟨k, h⟩ => ⟨k, r.2.trans h⟩
+  | none => r
+
+/-- Like `next`, but fail if the step does not apply. -/
+def next? {n : Node} (r : Rw n) (f : (m : Node) → Option (Rw m)) : Option (Rw n) :=
+  (f r.1).map fun ⟨k, h⟩ => ⟨k, r.2.trans h⟩
+
+/-- Rewrite child `i` of `n` by `f`, when `n` is an application whose operator is
+congruent in its children, and all its children are well typed. -/
+def congrArg (n : Node) (i : Nat) (f : (c : Node) → Option (Rw c)) : Option (Rw n) :=
+  match n with
+  | .app op cs =>
+    if hi : i < cs.size then
+      if hop : op.eoShape.isChildCongruent = true then
+        if hwt : op.childrenTypedOfParent = true ∨ Profile.time "types"
+            (fun _ => "congrArg: children well typed") (fun _ => decide (∀ c ∈ cs.toList, c.WellTyped)) = true then
+          (f cs[i]).map fun ⟨c', hc⟩ =>
+            ⟨.app op (cs.set i c'), .congrArg i c' hi hop (hwt.imp (fun h => h) of_decide_eq_true) hc (.refl _)⟩
+        else none
+      else none
+    else none
+  | _ => none
+
+end Rw
+
 /-- What a pattern variable is bound to. -/
 inductive Binding where
   | node (n : Node)
@@ -41,6 +72,15 @@ partial def matchPat (σ : Subst) : Pat → Node → List Subst
   | .const c, n => if n == .const c then [σ] else []
   | .app k ps, .app (.kind k') cs => if k == k' then matchList k cs[0]? σ ps cs.toList else []
   | .app _ _, _ => []
+  | .indexed k ips ps, .app (.indexed k' is) cs =>
+    if k == k' then
+      (matchList k none σ ips (is.toList.map fun i => .const (.integer i))).flatMap fun σ' =>
+        matchList k cs[0]? σ' ps cs.toList
+    else []
+  | .indexed .., _ => []
+  | .bvLit vp wp, .const (.bitVector w v) =>
+    (matchPat σ wp (.const (.integer w))).flatMap fun σ' => matchPat σ' vp (.const (.integer v))
+  | .bvLit .., _ => []
 
 /-- All extensions of `σ` under which the patterns `ps` match the children `cs`
 of an application of kind `k`. A list variable takes any run of children. -/
@@ -69,49 +109,119 @@ def Binding.toEo : Binding → Option Term
 
 mutual
 
-/-- The node a pattern stands for under a complete assignment. -/
-partial def Pat.instantiate (σ : Subst) : Pat → Option Node
+/-- The node a pattern stands for under a complete assignment. With `sym`, a
+bit-vector literal pattern `(@bv v w)` stands for `((_ int_to_bv w) v)`, as the
+signature defines `@bv`; otherwise for the literal. -/
+partial def Pat.instantiate (σ : Subst) (p : Pat) (sym : Bool := false) : Option Node :=
+  match p with
   | .var i => match σ[i]? with
     | some (some (.node n)) => some n
     | _ => none
   | .listVar _ => none
   | .const c => some (.const c)
-  | .app k ps => do return .app (.kind k) (← Pat.instantiateList σ ps).toArray
+  | .app k ps => do return .app (.kind k) (← Pat.instantiateList σ ps sym).toArray
+  | .indexed k ips ps => do
+    let is ← ips.mapM fun p => do
+      match ← p.instantiate σ sym with
+      | .const (.integer i) => some i
+      | _ => none
+    return .app (.indexed k is.toArray) (← Pat.instantiateList σ ps sym).toArray
+  | .bvLit vp wp => do
+    match ← vp.instantiate σ sym, ← wp.instantiate σ sym with
+    | .const (.integer v), .const (.integer w) =>
+      if sym then some (.app (.indexed .INT_TO_BITVECTOR #[w]) #[.const (.integer v)])
+      else some (.const (.bitVector w v))
+    | _, _ => none
 
 /-- The children a list of patterns stands for; list variables are spliced in. -/
-partial def Pat.instantiateList (σ : Subst) : List Pat → Option (List Node)
+partial def Pat.instantiateList (σ : Subst) (ps : List Pat) (sym : Bool := false) :
+    Option (List Node) :=
+  match ps with
   | [] => some []
   | .listVar i :: ps => do
     match σ[i]? with
-    | some (some (.list _ elems)) => return elems ++ (← Pat.instantiateList σ ps)
+    | some (some (.list _ elems)) => return elems ++ (← Pat.instantiateList σ ps sym)
     | _ => none
-  | p :: ps => do return (← p.instantiate σ) :: (← Pat.instantiateList σ ps)
+  | p :: ps => do return (← p.instantiate σ sym) :: (← Pat.instantiateList σ ps sym)
 
 end
 
+/-- The value of `a`, by an `evaluate` step. -/
+def evalNode (a : Node) : Option Node :=
+  (applyCmds (.cons (.step .evaluate (.cons a.toEo .nil) .nil) .nil) a).map (·.1)
+
+/-- Extend `σ` by the premises, in order: the value of each premise's left-hand
+side must match its right-hand side. -/
+def bindPremises (σ : Subst) : List Premise → List Subst
+  | [] => [σ]
+  | p :: ps =>
+    match p.expr.instantiate σ >>= evalNode with
+    | some val => (matchPat σ p.value val).flatMap (bindPremises · ps)
+    | none => []
+
+/-- Whether a pattern has a bit-vector literal pattern `(@bv v w)`. -/
+partial def Pat.hasBvLit : Pat → Bool
+  | .bvLit .. => true
+  | .app _ ps | .indexed _ _ ps => ps.any Pat.hasBvLit
+  | _ => false
+
+/-- Rewrite `n` to `target`, which is `n` with some bit-vector literals written
+`((_ int_to_bv w) v)`: each by `evaluate` and `symm`, under congruence. -/
+partial def toSymbolic (n target : Node) : Option (Rw n) :=
+  if n == target then some (Rw.id n) else
+  match target with
+  | .app (.indexed .INT_TO_BITVECTOR _) #[_] =>
+    if n.isConst then
+      applyCmds (.cons (.step .evaluate (.cons target.toEo .nil) .nil)
+        (.cons (.step .symm .nil (.cons 0 .nil)) .nil)) n
+    else none
+  | .app op' ds =>
+    let cs := n.getChildren
+    if n.getOperator? == some op' && cs.size == ds.size then
+      (List.range cs.size).foldlM (init := Rw.id n) fun r i =>
+        r.next? fun m => Rw.congrArg m i fun c => toSymbolic c ds[i]!
+    else none
+  | _ => none
+
 namespace RuleSpec
 
-/-- Every match of the rule's left-hand side against `n`. -/
+/-- Every match of the rule's left-hand side against `n`, with its premises. -/
 def allMatches (r : RuleSpec) (n : Node) : List Subst :=
-  matchPat (Array.replicate r.numVars none) r.lhs n
+  (matchPat (Array.replicate r.numVars none) r.lhs n).flatMap (bindPremises · r.premises)
 
 /-- `[k-1, …, 1, 0]`: the positions of `k` premises proven by the last `k` steps,
 the first premise being the oldest. -/
 def premiseIndices (k : Nat) : CIndexList :=
   (List.range k).foldl (fun acc i => .cons (Int.ofNat i) acc) .nil
 
+/-- The steps proving one premise: an `evaluate` step, then `symm` for a
+premise written `(= value expr)`. -/
+def premiseSteps (p : Premise) (a : Term) : List CCmd :=
+  [CCmd.step .evaluate (.cons a .nil) .nil] ++
+    (if p.symm then [CCmd.step .symm .nil (.cons 0 .nil)] else [])
+
 /-- The CPC command list for applying the rule under the assignment `σ`. -/
 def cmds (r : RuleSpec) (σ : Subst) : Option CCmdList := do
   let args ← r.args.mapM fun i => do (← σ[i]?.join).toEo
-  let prems ← r.premises.mapM fun p => do return (← p.instantiate σ).toEo
-  let evalSteps := prems.map fun a => CCmd.step .evaluate (.cons a .nil) .nil
-  let ruleStep := CCmd.step r.rule (toArgList args) (premiseIndices prems.length)
-  return (evalSteps ++ [ruleStep]).foldr .cons .nil
+  let prems ← r.premises.mapM fun p => do return premiseSteps p (← p.expr.instantiate σ).toEo
+  let steps := prems.flatten
+  -- The position of the last step of each premise, and its offset from the rule.
+  let ends := (prems.scanl (fun n s => n + s.length) 0).tail
+  let indices := ends.foldr (fun e acc => .cons (Int.ofNat (steps.length - e)) acc) .nil
+  let ruleStep := CCmd.step r.rule (toArgList args) indices
+  return (steps ++ [ruleStep]).foldr .cons .nil
 
 /-- Apply the rule to `n`: the first match whose command list Logos's checker
 accepts. -/
 def apply (r : RuleSpec) (n : Node) : Option (Rw n) :=
-  Profile.time "strategy: RARE matching" (fun _ => r.name) (fun _ => r.allMatches n) |>.findSome? fun σ => r.cmds σ >>= fun cs => applyCmds cs n
+  Profile.time "strategy: RARE matching" (fun _ => r.name) (fun _ => r.allMatches n) |>.findSome? fun σ =>
+    r.cmds σ >>= fun cs =>
+      if r.lhs.hasBvLit then
+        -- The rule's left-hand side has `(@bv v w)`, which is `((_ int_to_bv w) v)`:
+        -- write the matched literals that way first.
+        r.lhs.instantiate σ (sym := true) >>= fun n' =>
+          toSymbolic n n' >>= fun rw => rw.next? (applyCmds cs)
+      else applyCmds cs n
 
 end RuleSpec
 

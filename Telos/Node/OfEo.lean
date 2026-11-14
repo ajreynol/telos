@@ -75,6 +75,30 @@ def eoListElems : Term → Option (List Term)
 def nativeStringToString (s : native_String) : String :=
   String.ofList (s.map Char.ofNat)
 
+/-- The `:right-assoc-nil` kind of an operator, for the bit-vector operators
+(the others are read back explicitly in `ofEo`). -/
+def naryKindOf : UserOp → Option Kind
+  | UserOp.concat => some .BITVECTOR_CONCAT
+  | UserOp.bvand => some .BITVECTOR_AND
+  | UserOp.bvor => some .BITVECTOR_OR
+  | UserOp.bvxor => some .BITVECTOR_XOR
+  | UserOp.bvadd => some .BITVECTOR_ADD
+  | UserOp.bvmul => some .BITVECTOR_MULT
+  | _ => none
+
+/-- The kind of an operator with one index. -/
+def indexedKindOf : UserOp1 → Option Kind
+  | UserOp1.int_to_bv => some .INT_TO_BITVECTOR
+  | UserOp1.repeat => some .BITVECTOR_REPEAT
+  | UserOp1.zero_extend => some .BITVECTOR_ZERO_EXTEND
+  | UserOp1.sign_extend => some .BITVECTOR_SIGN_EXTEND
+  | UserOp1.rotate_left => some .BITVECTOR_ROTATE_LEFT
+  | UserOp1.rotate_right => some .BITVECTOR_ROTATE_RIGHT
+  | _ => none
+
+/-- Kinds read back from their spine shape (`Kind.eoShape`). -/
+def shapeKinds : List Kind := [.POW2, .INTS_LOG2, .INTS_ISPOW2, .BITVECTOR_UBV_TO_INT, .BITVECTOR_SBV_TO_INT, .BITVECTOR_NOT, .BITVECTOR_NEG, .BITVECTOR_REDOR, .BITVECTOR_REDAND, .BITVECTOR_NEGO, .BITVECTOR_SIZE, .BITVECTOR_NAND, .BITVECTOR_NOR, .BITVECTOR_XNOR, .BITVECTOR_COMP, .BITVECTOR_SUB, .BITVECTOR_UDIV, .BITVECTOR_UREM, .BITVECTOR_SDIV, .BITVECTOR_SREM, .BITVECTOR_SMOD, .BITVECTOR_SHL, .BITVECTOR_LSHR, .BITVECTOR_ASHR, .BITVECTOR_ULT, .BITVECTOR_ULE, .BITVECTOR_UGT, .BITVECTOR_UGE, .BITVECTOR_SLT, .BITVECTOR_SLE, .BITVECTOR_SGT, .BITVECTOR_SGE, .BITVECTOR_ULTBV, .BITVECTOR_SLTBV, .BITVECTOR_UADDO, .BITVECTOR_SADDO, .BITVECTOR_UMULO, .BITVECTOR_SMULO, .BITVECTOR_USUBO, .BITVECTOR_SSUBO, .BITVECTOR_SDIVO, .BITVECTOR_ITE]
+
 namespace Node
 
 /-- The variables (free and bound) occurring in a node. -/
@@ -139,6 +163,15 @@ partial def ofEo (env : List Node) (t : Term) : Option Node := do
   | .UOp UserOp.exists, [vs, body] => binder .EXISTS vs body
   | .UOp2 UserOp2.extract (.Numeral i) (.Numeral j), [x] =>
       return .app (.indexed .BITVECTOR_EXTRACT #[i, j]) #[← ofEo env x]
+  | .UOp1 op (.Numeral i), [x] =>
+    match indexedKindOf op with
+    | some k => return .app (.indexed k #[i]) #[← ofEo env x]
+    | none => none
+  | .UOp op, [x, _] =>
+    match naryKindOf op with
+    | some k => nary k x
+    | none => byShape op xs
+  | .UOp op, _ => byShape op xs
   | f@(.Var ..), _ :: _ =>
       return .app (.node .APPLY_UF (← varOfEo env f false)) (← xs.mapM (ofEo env)).toArray
   | _, _ => none
@@ -150,6 +183,13 @@ where
     let elems ← eoRightAssocNilElems op (nil.eval op first) t
     if elems.length < 2 then none
     app k elems
+  /-- A kind of `shapeKinds` whose shape is a spine with head `op` taking
+  `xs.length` arguments. -/
+  byShape (op : UserOp) (xs : List Term) : Option Node := do
+    let k ← shapeKinds.find? fun k => match k.eoShape with
+      | .spine (.UOp op') ar => op' == op && ar.accepts xs.length
+      | _ => false
+    app k xs
   binder (k : Kind) (vs body : Term) : Option Node := do
     let bvs ← (← eoListElems vs).mapM (varOfEo env · true)
     return .app (.kind k) #[.app (.kind .BOUND_VAR_LIST) bvs.toArray, ← ofEo env body]

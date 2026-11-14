@@ -15,36 +15,6 @@ open Eo
 
 namespace Telos
 
-namespace Rw
-
-/-- Continue a rewrite with a step on its result. If the step does not apply,
-stop where we are. -/
-def next {n : Node} (r : Rw n) (f : (m : Node) → Option (Rw m)) : Rw n :=
-  match f r.1 with
-  | some ⟨k, h⟩ => ⟨k, r.2.trans h⟩
-  | none => r
-
-/-- Like `next`, but fail if the step does not apply. -/
-def next? {n : Node} (r : Rw n) (f : (m : Node) → Option (Rw m)) : Option (Rw n) :=
-  (f r.1).map fun ⟨k, h⟩ => ⟨k, r.2.trans h⟩
-
-/-- Rewrite child `i` of `n` by `f`, when `n` is an application whose operator is
-congruent in its children, and all its children are well typed. -/
-def congrArg (n : Node) (i : Nat) (f : (c : Node) → Option (Rw c)) : Option (Rw n) :=
-  match n with
-  | .app op cs =>
-    if hi : i < cs.size then
-      if hop : op.eoShape.isChildCongruent = true then
-        if hwt : op.childrenTypedOfParent = true ∨ Profile.time "types"
-            (fun _ => "congrArg: children well typed") (fun _ => decide (∀ c ∈ cs.toList, c.WellTyped)) = true then
-          (f cs[i]).map fun ⟨c', hc⟩ =>
-            ⟨.app op (cs.set i c'), .congrArg i c' hi hop (hwt.imp (fun h => h) of_decide_eq_true) hc (.refl _)⟩
-        else none
-      else none
-    else none
-  | _ => none
-
-end Rw
 
 /-- Rewrite by a named CPC rewrite rule. -/
 def byRule (name : String) (n : Node) : Option (Rw n) := rewriteBy name n

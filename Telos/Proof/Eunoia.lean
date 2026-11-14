@@ -113,7 +113,8 @@ partial def printIn (N : Names) (bound : List Term) (t : Term) : String :=
   | .Numeral n => toString n
   | .Rational q => s!"{q.num}/{q.den}"
   | .String s => stringLit s
-  | .Binary w v => binaryLit w v
+  -- The empty bit-vector has no `#b` literal; the signature names it `@bv_empty`.
+  | .Binary w v => if w == 0 then "@bv_empty" else binaryLit w v
   | .Var (.String s) T =>
     let x := nativeStringToString s
     if bound.contains t || N.isConst x then symbol x
@@ -157,7 +158,11 @@ partial def printIn (N : Names) (bound : List Term) (t : Term) : String :=
             if tail == nil (some x) then app (headName info h) elems
             else curried h xs
           | [] => curried h xs
-        | none => app (headName info h) xs
+        | none =>
+          -- An indexed operator takes its (opaque) indices as leading
+          -- arguments, as the signature writes it: `(extract 1 0 x)`.
+          if info.indexArity == 0 then app info.name xs
+          else app info.name (headIndices h ++ xs)
     | none =>
       match h with
       | .Var .. | .UConst .. => app (print N h) xs

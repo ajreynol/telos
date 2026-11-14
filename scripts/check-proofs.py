@@ -10,7 +10,7 @@ With `--fuzz N`, the queries are N random terms from `telos-fuzz` instead.
 
 Usage:
   scripts/check-proofs.py [--ethos PATH] FILE.smt2 ...
-  scripts/check-proofs.py [--ethos PATH] --fuzz N [--seed S] [--depth D] [--arith | --uf]
+  scripts/check-proofs.py [--ethos PATH] --fuzz N [--seed S] [--depth D] [--arith | --uf | --bv]
 
 Build first: `lake build telos telos-fuzz`.
 """
@@ -37,11 +37,14 @@ FUZZ_PRELUDE = """(declare-const a Bool)
 (declare-const v U)
 (declare-const w U)
 (declare-fun f (U) U)
+(declare-const bx (_ BitVec 4))
+(declare-const by (_ BitVec 4))
+(declare-const bz (_ BitVec 4))
 """
 
 
-def fuzz_script(n, seed, depth, arith, uf=False):
-    out = subprocess.run([str(BIN / "telos-fuzz"), str(seed), str(n), str(depth)] + (["arith"] if arith else ["uf"] if uf else []),
+def fuzz_script(n, seed, depth, arith, uf=False, bv=False):
+    out = subprocess.run([str(BIN / "telos-fuzz"), str(seed), str(n), str(depth)] + (["arith"] if arith else ["uf"] if uf else ["bv"] if bv else []),
                          capture_output=True, text=True, check=True).stdout
     terms = [line.split("\t")[0] for line in out.splitlines()]
     return FUZZ_PRELUDE + "".join(f"(simplify {t})\n" for t in terms)
@@ -73,6 +76,7 @@ def main():
     ap.add_argument("--depth", type=int, default=3)
     ap.add_argument("--arith", action="store_true", help="include arithmetic comparisons")
     ap.add_argument("--uf", action="store_true", help="include equalities and distinct over an uninterpreted sort")
+    ap.add_argument("--bv", action="store_true", help="include bit-vector comparisons")
     a = ap.parse_args()
     if not (BIN / "telos").exists():
         sys.exit("error: build telos first: lake build telos telos-fuzz")
@@ -81,7 +85,7 @@ def main():
         files = list(a.files)
         if a.fuzz:
             f = Path(tmp) / "fuzz.smt2"
-            f.write_text(fuzz_script(a.fuzz, a.seed, a.depth, a.arith, a.uf))
+            f.write_text(fuzz_script(a.fuzz, a.seed, a.depth, a.arith, a.uf, a.bv))
             files.append(f)
         for f in files:
             n, failed, m = check(a.ethos, f, tmp)

@@ -28,7 +28,27 @@ inductive Pat where
   | listVar (i : Nat)
   | const (c : Const)
   | app (k : Kind) (args : List Pat)
+  /-- An application of an indexed operator, like `(extract i j x)`. Each index
+  pattern matches the index as an integer constant. -/
+  | indexed (k : Kind) (indices : List Pat) (args : List Pat)
+  /-- A bit-vector literal `(@bv value width)`: the patterns match the value and
+  the width as integer constants. -/
+  | bvLit (value width : Pat)
   deriving Repr, Inhabited
+
+/-- A premise of a rule, discharged by evaluation: `(= value expr)` when `symm`,
+and `(= expr value)` otherwise. -/
+structure Premise where
+  /-- The term that is evaluated. -/
+  expr : Pat
+  /-- The pattern of its value. Variables of `value` not bound yet are bound to
+  the value: this is how a rule defines arguments, as in
+  `(= wm (- (@bvsize x) 1))`. -/
+  value : Pat
+  /-- Whether the premise is `(= value expr)`, proven by `symm` of the
+  evaluation. -/
+  symm : Bool := false
+  deriving Repr
 
 /-- One CPC rewrite rule, as far as finding its applications goes. -/
 structure RuleSpec where
@@ -41,9 +61,9 @@ structure RuleSpec where
   args : List Nat
   /-- The rule's left-hand side. -/
   lhs : Pat
-  /-- For each premise `(= A v)`, the pattern of `A`. Each is discharged by an
-  `evaluate` step, which proves `(= A v')`; the rule applies when `v'` is `v`. -/
-  premises : List Pat
+  /-- The premises, in order. Each is discharged by an `evaluate` step (and a
+  `symm` step), and the rule applies when the values match. -/
+  premises : List Premise
   deriving Repr
 
 end Telos

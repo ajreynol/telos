@@ -81,6 +81,12 @@ def rewriteCommon (n : Node) : Option (Rw n) :=
   | .DISTINCT, cs => rewriteDistinct n cs
   | _, _ => none
 
+/-- cvc5's `rewriteIntToBV`, for a constant argument: its value. -/
+def rewriteIntToBV (n : Node) : Option (Rw n) :=
+  match n.getChildren with
+  | #[c] => if c.isConst then byEvaluate n else none
+  | _ => none
+
 /-- cvc5's `TheoryUfRewriter::preRewrite`. -/
 def preRewrite (n : Node) : RewriteResponse n :=
   match rewriteCommon n with
@@ -95,7 +101,13 @@ def postRewrite (n : Node) : RewriteResponse n :=
     | _, _ => none
   match r with
   | some ⟨m, h⟩ => ⟨.REWRITE_DONE, m, h⟩
-  | none => .done n
+  | none =>
+    match n.getKind with
+    | .INT_TO_BITVECTOR =>
+      match rewriteIntToBV n with
+      | some ⟨m, h⟩ => ⟨.REWRITE_AGAIN_FULL, m, h⟩
+      | none => .done n
+    | _ => .done n
 
 end UfRewriter
 
