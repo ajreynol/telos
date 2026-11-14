@@ -22,9 +22,7 @@ Differences from cvc5:
   (`(+ r (to_real x))`, which is also how cvc5 prints that sum).
 * Monomials are ordered by telos's structural term order where cvc5 uses node ids
   (`LeafNodeComparator`'s last case).
-* Not ported yet: integer division and modulus, `abs`, `to_int`, `is_int`, equality
-  normalization, and the inequality cases whose tightening needs a negation and a
-  fractional constant.
+* `to_real` is removed from the sides of a division only when both have it.
 -/
 
 open Eo
@@ -226,19 +224,35 @@ def rewriteIntsDivModTotal (n : Node) : Option (Rw n) :=
         | .ADD => byRule "arith-mod-over-mod" n
         | .MULT => byRule "arith-mod-over-mod-mult" n
         | _ => none
-      else none
-    | none => none
+      else divOverMod n t d
+    | none => if isDiv then divOverMod n t d else none
   | _ => none
+where
+  /-- `(div_total (mod_total x d) d)` is `0`, for any `d`. -/
+  divOverMod (n t d : Node) : Option (Rw n) :=
+    if t.getKind == .INTS_MODULUS_TOTAL && t.getChildren[1]? == some d then
+      byRule "arith-int-div-total-over-mod" n
+    else none
 
 /-- cvc5's `rewriteAbs`, `rewriteExtIntegerOp` and constant division: evaluate
-constants; `(to_int (to_real x))` is `x`. -/
+constants; `(to_int (to_real x))` is `x` and `(is_int (to_real x))` is `true`
+(cvc5 goes through `(is_int x)`, which Logos's typing rejects). -/
 def rewriteOther (n : Node) : Option (Rw n) :=
   match n.getKind, n.getChildren with
   | .ABS, #[.const _] | .TO_INTEGER, #[.const _] | .IS_INTEGER, #[.const _] => byEvaluate n
   | .TO_INTEGER, #[.app (.kind .TO_REAL) _] => byRule "arith-to-int-elim-to-real" n
+  | .IS_INTEGER, #[.app (.kind .TO_REAL) _] => byRule "arith-is-int-elim-to-real" n
   | .DIVISION_TOTAL, #[_, .const (.rational 0)] => byRule "arith-div-total-zero-real" n
   | .DIVISION_TOTAL, #[_, .const (.integer 0)] => byRule "arith-div-total-zero-int" n
   | _, _ => none
+
+/-- cvc5's `rewriteDiv` removes `to_real` from the sides of a division by a
+non-constant: `(/ (to_real x) (to_real y))` is `(/ x y)`. Removing it from one
+side only would give a mixed division, which Logos's typing rejects. -/
+def rewriteDivToReal (n : Node) : Option (Rw n) :=
+  match n.getChildren with
+  | #[.app (.kind .TO_REAL) #[_], .app (.kind .TO_REAL) #[_]] => byRule "arith-div-elim-to-real" n
+  | _ => none
 
 /-! ## Inequalities -/
 
@@ -438,7 +452,10 @@ def postRewrite (n : Node) : RewriteResponse n :=
   -- Rewrites to other operators are rewritten again from the start, as cvc5's
   -- `returnRewrite` does (`REWRITE_AGAIN_FULL`).
   let r : Option (RewriteStatus × Rw n) :=
-    if isArithTerm n then (.REWRITE_DONE, ·) <$> normalizeTerm n
+    if isArithTerm n then
+      match (.REWRITE_AGAIN_FULL, ·) <$> (if n.getKind == .DIVISION then rewriteDivToReal n else none) with
+      | some r => some r
+      | none => (.REWRITE_DONE, ·) <$> normalizeTerm n
     else match n.getKind with
       | .TO_REAL => (.REWRITE_DONE, ·) <$> rewriteToReal n
       | .GEQ | .LEQ => (.REWRITE_DONE, ·) <$> rewriteIneq n

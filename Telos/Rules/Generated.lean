@@ -6,7 +6,7 @@ import Telos.Rules.Pattern
 namespace Telos
 
 /-- The rewrite rules of CPC whose left-hand sides telos can match:
-88 of the signature's 610 rules. -/
+91 of the signature's 613 rules. -/
 def generatedRules : List RuleSpec := [
   { name := "arith-div-total-zero-real", rule := .arith_div_total_zero_real, numVars := 1,
     args := [0],
@@ -48,6 +48,10 @@ def generatedRules : List RuleSpec := [
     args := [0, 1],
     lhs := .app .INTS_MODULUS_TOTAL [.var 0, .var 1],
     premises := [.app .LT [.var 1, .const (.integer (0))]] },
+  { name := "arith-int-div-total-over-mod", rule := .arith_int_div_total_over_mod, numVars := 2,
+    args := [0, 1],
+    lhs := .app .INTS_DIVISION_TOTAL [.app .INTS_MODULUS_TOTAL [.var 0, .var 1], .var 1],
+    premises := [] },
   { name := "arith-elim-gt", rule := .arith_elim_gt, numVars := 2,
     args := [0, 1],
     lhs := .app .GT [.var 0, .var 1],
@@ -95,6 +99,14 @@ def generatedRules : List RuleSpec := [
   { name := "arith-to-int-elim-to-real", rule := .arith_to_int_elim_to_real, numVars := 1,
     args := [0],
     lhs := .app .TO_INTEGER [.app .TO_REAL [.var 0]],
+    premises := [] },
+  { name := "arith-is-int-elim-to-real", rule := .arith_is_int_elim_to_real, numVars := 1,
+    args := [0],
+    lhs := .app .IS_INTEGER [.app .TO_REAL [.var 0]],
+    premises := [] },
+  { name := "arith-div-elim-to-real", rule := .arith_div_elim_to_real, numVars := 2,
+    args := [0, 1],
+    lhs := .app .DIVISION [.app .TO_REAL [.var 0], .app .TO_REAL [.var 1]],
     premises := [] },
   { name := "arith-mod-over-mod-1", rule := .arith_mod_over_mod_1, numVars := 2,
     args := [0, 1],

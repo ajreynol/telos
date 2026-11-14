@@ -422,7 +422,7 @@ tested:
    - Kinds `ADD`, `SUB`, `NEG`, `MULT`, `DIVISION`, `INTS_DIVISION`,
      `INTS_MODULUS`, their total versions, `ABS`, `LT`, `LEQ`, `GT`, `GEQ`,
      `TO_REAL`, `TO_INTEGER` and `IS_INTEGER`, with their congruence proof, and
-     33 more generated rules.
+     36 more generated rules.
    - `Telos/Theory/Arith.lean` ports the core of cvc5's `ArithRewriter`:
      polynomial normal forms of terms (certified by `arith_poly_norm`), the
      normalization of `>=`, `<=`, `>` and `<` to `(>= sum c)` or
@@ -430,8 +430,11 @@ tested:
      `arith-elim-*`, `arith-leq-norm`, `arith-int-geq-tighten`), and equalities
      (integer conflicts by `arith-int-eq-conflict`, orientation by `eq-symm`),
      `div`/`mod` by constants to their total versions and the total versions'
-     cases (by zero, one, a negative constant, constants, `mod` over `mod`),
-     and constant `abs`, `to_int` and `is_int`.
+     cases (by zero, one, a negative constant, constants, `mod` over `mod`,
+     `div` over `mod`), constant `abs`, `to_int` and `is_int`, `to_int` and
+     `is_int` of `to_real` (`arith-to-int-elim-to-real`,
+     `arith-is-int-elim-to-real`), and `to_real` removed from both sides of `/`
+     (`arith-div-elim-to-real`).
    - Fuzzing (`scripts/fuzz.py --arith`, 3000 terms of depth 4, including
      `div`, `mod`, `abs`, `to_int` and `is_int`): 83.5% identical to cvc5,
      92.7% up to the orientation of equalities, no semantic disagreements.
@@ -443,11 +446,8 @@ tested:
      has no mixed arithmetic (cvc5 prints its mixed sums the same way);
      non-variable leaves (products, `abs`, `div`, …) are ordered by telos's term
      order, where cvc5 uses node ids, which also decides the leading term of a
-     normalized inequality.
-   - Rewrites cvc5 performs that CPC has no rule for, so telos cannot certify
-     them: `(is_int (to_real x))` to `true` (the reduction rule for `is_int`
-     introduces a skolem `Node` cannot represent), `to_real` removed from both
-     sides of `/`, and `(div_total (mod_total x c) c)` to `0`.
+     normalized inequality. cvc5 also removes `to_real` from one side of `/`,
+     as in `(/ (to_real x) r)` to `(/ x r)`, a mixed division Logos rejects.
    - To do: the extended operators (`int.pow2`, `int.log2`, `iand`,
      transcendentals), then bit-vectors. Bit-vectors are where `bv_poly_norm`
      comes in.
