@@ -40,7 +40,7 @@ def isArithTerm (n : Node) : Bool :=
   | _ => false
 
 /-- The normal form of an arithmetic term. When `ArithNormOk` holds, the step is
-justified statically (`Certified.arithNorm`); otherwise it is checked by
+justified statically (`StaticProc.arithNorm`); otherwise it is checked by
 `arith_poly_norm`. -/
 def normalizeTerm (n : Node) : Option (Rw n) :=
   let p := Profile.time "strategy: arith normal form" (fun _ => "term") fun _ => polyOf n
@@ -48,7 +48,7 @@ def normalizeTerm (n : Node) : Option (Rw n) :=
   if m == n then none
   else if h : Profile.time "static: side conditions" (fun _ => "arith_poly_norm")
       (fun _ => decide (ArithNormOk n p m)) = true then
-    some ⟨m, .arithNorm (of_decide_eq_true h) (.refl m)⟩
+    some ⟨m, .static .arithNorm ⟨rfl, of_decide_eq_true h⟩ (.refl m)⟩
   else checkBy .arith_poly_norm n m
 
 /-- `(to_real c)` for a constant `c`: the real constant, by `evaluate`. -/
@@ -141,7 +141,7 @@ def polyNormRel (n : Node) (cx cy : Rat) (x y : Node) (target : Node) : Option (
   -- The premise `(= a b)` is justified statically when `ArithRelOk` holds.
   if h : Profile.time "static: side conditions" (fun _ => "arith_poly_norm_rel")
       (fun _ => decide (ArithRelOk n target a b)) = true then
-    some ⟨target, .arithRel a b (of_decide_eq_true h) (.refl _)⟩
+    some ⟨target, .static (.arithRel a b) (show ArithRelOk n target a b from of_decide_eq_true h) (.refl _)⟩
   else
     byRuleWithPremises .arith_poly_norm_rel [eqNode n target]
       [stepCmd .arith_poly_norm [scaledEq real cx cy x y]] n

@@ -1841,7 +1841,7 @@ run on `[arith_poly_norm (= n (arithNorm n))]` from the empty state, proves
 (`hty`) and derived from its SMT type in `ArithNorm.lean`. -/
 theorem arithNorm_provesEq_of_typeof {n : Node} (h : ArithNormOk n (polyOf n) (arithNorm n))
     (hty : __eo_typeof (eqFormula n (arithNorm n)) = .Bool) :
-    ProvesEq (Certified.arithNormCmds n) n (arithNorm n) := by
+    ProvesEq (StaticProc.arithNormCmds n) n (arithNorm n) := by
   obtain ⟨hns, hgn⟩ := arithNorm_get_norm h
   have hF : __eo_prog_arith_poly_norm (eqFormula n (arithNorm n)) = eqFormula n (arithNorm n) := by
     simp only [eqFormula, eoApp2, __eo_prog_arith_poly_norm, __eo_requires, native_ite, native_teq,
@@ -1853,7 +1853,7 @@ theorem arithNorm_provesEq_of_typeof {n : Node} (h : ArithNormOk n (polyOf n) (a
     split
     · next he => exact absurd he hne
     · rw [hty]; simp [__eo_eq, native_teq]
-  have hrun : runFromEmpty (Certified.arithNormCmds n) =
+  have hrun : runFromEmpty (StaticProc.arithNormCmds n) =
       CState.cons (CStateObj.proven (eqFormula n (arithNorm n))) CState.nil := by
     show __eo_invoke_cmd_list CState.nil
       (.cons (.step .arith_poly_norm (.cons (eqFormula n (arithNorm n)) .nil) .nil) .nil) = _
@@ -1914,12 +1914,12 @@ theorem prog_poly_norm_eq {a b : Node}
 types of the two equations (derived from their SMT types in `ArithNorm.lean`). -/
 theorem arithRel_provesEq_of_typeof {n m a b : Node} (h : ArithRelOk n m a b)
     (htyP : __eo_typeof (eqFormula a b) = .Bool) (htyF : __eo_typeof (eqFormula n m) = .Bool) :
-    ProvesEq (Certified.arithRelCmds n m a b) n m := by
+    ProvesEq (StaticProc.arithRelCmds n m a b) n m := by
   obtain ⟨hty, heq, hp, hF, hrel⟩ := h
   have hP := prog_poly_norm_eq (polyEq_get_norm hty heq hp)
   have hbP := is_bool_type_of_typeof (eqFormula_ne_stuck a b) htyP
   have hbF := is_bool_type_of_typeof (eqFormula_ne_stuck n m) htyF
-  have hrun : runFromEmpty (Certified.arithRelCmds n m a b) =
+  have hrun : runFromEmpty (StaticProc.arithRelCmds n m a b) =
       CState.cons (CStateObj.proven (eqFormula n m))
         (CState.cons (CStateObj.proven (eqFormula a b)) CState.nil) := by
     show __eo_invoke_cmd_list CState.nil

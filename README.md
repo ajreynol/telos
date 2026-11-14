@@ -45,6 +45,7 @@ prints only proofs that Logos's checker accepts. Check them with
 `python3 scripts/check-proofs.py --fuzz 500`.
 
 See [`docs/design.md`](docs/design.md) for the architecture and roadmap,
+[`docs/theory-rewriters.md`](docs/theory-rewriters.md) for how to port another theory,
 [`docs/solver-plan.md`](docs/solver-plan.md) for the original, broader plan for a
 verified solver, and [`TRUSTED.md`](TRUSTED.md) for what the theorem relies on.
 

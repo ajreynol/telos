@@ -8,6 +8,7 @@ import Telos.Node.Print
 import Telos.Node.ToEo
 import Telos.Node.OfEo
 import Telos.Node.FastType
+import Telos.Rewriter.Static
 import Telos.Rewriter.Certified
 import Telos.Rewriter.Rewriter
 import Telos.Rules.Rules

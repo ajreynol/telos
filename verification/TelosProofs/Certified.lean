@@ -1,6 +1,6 @@
 import TelosProofs.Congruence
 import Cpc.Proofs.ProvenFromEmpty
-import TelosProofs.ArithNorm
+import TelosProofs.Static
 import TelosProofs.ChildTyping
 
 /-!
@@ -61,11 +61,8 @@ theorem Certified.equiv {n m : Node} (h : Certified n m) (hn : n.WellTyped) : n.
       forall₂_of_getElem hsize fun i hi => ihc i hi (hwt _ (Array.getElem_mem_toList hi))
     have h₁ := Node.Equiv.congr hop hn hch
     exact h₁.trans (ih h₁.wellTyped_right)
-  | arithNorm h _ ih =>
-    have h₁ := ProvesEq.equiv (arithNorm_provesEq h)
-    exact h₁.trans (ih h₁.wellTyped_right)
-  | arithRel a b h _ ih =>
-    have h₁ := ProvesEq.equiv (arithRel_provesEq h)
+  | static p h _ ih =>
+    have h₁ := ProvesEq.equiv (StaticProc.provesEq p _ _ h)
     exact h₁.trans (ih h₁.wellTyped_right)
   | @congrBody k vs body body' m pats hk hb _ _ ihb ih =>
     have hk' : k = .FORALL ∨ k = .EXISTS := by cases k <;> simp_all [Kind.isQuantifier]

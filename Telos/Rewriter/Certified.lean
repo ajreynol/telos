@@ -3,7 +3,7 @@ import Telos.Node.DecEq
 import Cpc.TranslationChecks
 import Telos.Rules.RuleNames
 import Telos.Profile
-import Telos.Arith.PolyNorm
+import Telos.Rewriter.Static
 
 /-!
 # Certified rewrite steps
@@ -76,19 +76,10 @@ inductive Certified : Node → Node → Type
       (op.childrenTypedOfParent = true ∨ ∀ c ∈ cs.toList, c.WellTyped) →
       ((i : Nat) → (hi : i < cs.size) → Certified cs[i] (ds[i]'(hsize ▸ hi))) →
       Certified (.app op ds) m → Certified (.app op cs) m
-  /-- `n` to its arithmetic normal form, justified statically: under
-  `ArithNormOk n`, `(= n (arithNorm n))` is an `arith_poly_norm` step that Logos's
-  checker accepts (`verification/TelosProofs/ArithNorm.lean`), so it is not run.
-  The step is rebuilt when a proof is printed (`Certified.arithNormCmds`). -/
-  | arithNorm {n m : Node} :
-      Arith.ArithNormOk n (Arith.polyOf n) (Arith.arithNorm n) → Certified (Arith.arithNorm n) m →
-      Certified n m
-  /-- `n` to `m` by `arith_poly_norm_rel` from the premise `(= a b)`, whose
-  `arith_poly_norm` step is justified statically (`Arith.ArithRelOk`,
-  `verification/TelosProofs/ArithNorm.lean`). Only the cheap `arith_poly_norm_rel`
-  program is run, to decide the side condition. The steps are rebuilt when a
-  proof is printed (`Certified.arithRelCmds`). -/
-  | arithRel {n m k : Node} (a b : Node) : Arith.ArithRelOk n m a b → Certified m k → Certified n k
+  /-- A statically justified step: `p.Ok n k` holds, and the CPC commands
+  `p.cmds n k` are accepted by Logos's checker by a theorem
+  (`StaticProc.provesEq`), so they are not run (`Telos/Rewriter/Static.lean`). -/
+  | static {n k m : Node} (p : StaticProc) : p.Ok n k → Certified k m → Certified n m
   /-- A rewrite of the well-typed body of a quantifier
   (`Node.Equiv.congr_binder`). -/
   | congrBody {k : Kind} {vs body body' m : Node} {pats : List Node} :
@@ -102,17 +93,7 @@ def Certified.trans {a b c : Node} : Certified a b → Certified b c → Certifi
   | .congrArg i c' hi hop hwt hc r, h₂ => .congrArg i c' hi hop hwt hc (r.trans h₂)
   | .congr hsize hop hwt hc r, h₂ => .congr hsize hop hwt hc (r.trans h₂)
   | .congrBody hk hb hc r, h₂ => .congrBody hk hb hc (r.trans h₂)
-  | .arithNorm h r, h₂ => .arithNorm h (r.trans h₂)
-  | .arithRel a b h r, h₂ => .arithRel a b h (r.trans h₂)
-
-/-- The CPC steps a statically justified `arithRel` stands for. -/
-def Certified.arithRelCmds (n m a b : Node) : CCmdList :=
-  .cons (.step .arith_poly_norm (.cons (eqFormula a b) .nil) .nil)
-    (.cons (.step .arith_poly_norm_rel (.cons (eqFormula n m) .nil) (.cons 0 .nil)) .nil)
-
-/-- The CPC step a statically justified `arithNorm` stands for. -/
-def Certified.arithNormCmds (n : Node) : CCmdList :=
-  .cons (.step .arith_poly_norm (.cons (eqFormula n (Arith.arithNorm n)) .nil) .nil) .nil
+  | .static p h r, h₂ => .static p h (r.trans h₂)
 
 /-- A certified rewrite of `n`: the result, and how it was obtained. -/
 abbrev Rw (n : Node) := (m : Node) × Certified n m
