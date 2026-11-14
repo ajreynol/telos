@@ -136,8 +136,15 @@ with `cx, cy > 0`. `x` and `y` are `(- a b)` and `(- s c)`, either wrapped in
 `to_real` to give them the same type. -/
 def polyNormRel (n : Node) (cx cy : Rat) (x y : Node) (target : Node) : Option (Rw n) :=
   let real := isReal x
-  byRuleWithPremises .arith_poly_norm_rel [eqNode n target]
-    [stepCmd .arith_poly_norm [scaledEq real cx cy x y]] n
+  let a := mkNode .MULT #[constNode real cx, x]
+  let b := mkNode .MULT #[constNode real cy, y]
+  -- The premise `(= a b)` is justified statically when `ArithRelOk` holds.
+  if h : Profile.time "static: side conditions" (fun _ => "arith_poly_norm_rel")
+      (fun _ => decide (ArithRelOk n target a b)) = true then
+    some ⟨target, .arithRel a b (of_decide_eq_true h) (.refl _)⟩
+  else
+    byRuleWithPremises .arith_poly_norm_rel [eqNode n target]
+      [stepCmd .arith_poly_norm [scaledEq real cx cy x y]] n
 
 def toReal (t : Node) : Node := if isInt t then mkNode .TO_REAL #[t] else t
 

@@ -1871,3 +1871,79 @@ theorem arithNorm_provesEq_of_typeof {n : Node} (h : ArithNormOk n (polyOf n) (a
   · rw [hrun]; rfl
 
 end Telos.PolyNorm
+
+namespace Telos.PolyNorm
+open Telos.TermOrder Smtm Telos.Arith Telos.Node
+
+/-! ## Equations between terms with the same telos polynomial -/
+
+/-- If `a` and `b` have the same telos polynomial up to order (and `(= a b)` is
+well typed, `a` arithmetic), they have the same Logos normal form, not stuck. -/
+theorem polyEq_get_norm {a b : Node} (hty : a.smtType = .Int ∨ a.smtType = .Real)
+    (heq : __smtx_typeof (__eo_to_smt (eqFormula a b)) = .Bool) (hp : List.Perm (polyOf a) (polyOf b)) :
+    __get_arith_poly_norm a.toEo ≠ .Stuck ∧ __get_arith_poly_norm a.toEo = __get_arith_poly_norm b.toEo := by
+  have ha : ArithTy (smtty a.toEo) := hty
+  have hab : smtty a.toEo = smtty b.toEo := by
+    have : smtty (eqFormula a b) = .Bool := heq
+    rw [eqFormula, eoApp2, smtty_eq] at this
+    exact eq_types this
+  have hb : ArithTy (smtty b.toEo) := hab ▸ ha
+  have ns_a := get_norm_ne_stuck _ ha
+  have ns_b := get_norm_ne_stuck _ hb
+  refine ⟨ns_a, get_norm_eq_of_polyVal_eq ns_a ns_b ?_⟩
+  show V a.toEo = V b.toEo
+  rw [(polyOf_val a ns_a).2, (polyOf_val b ns_b).2, embedT_perm hp]
+
+theorem eqFormula_ne_stuck (a b : Node) : eqFormula a b ≠ .Stuck := by simp [eqFormula, eoApp2]
+
+theorem is_bool_type_of_typeof {F : Term} (hne : F ≠ .Stuck) (hty : __eo_typeof F = .Bool) :
+    __eo_is_bool_type F = .Boolean true := by
+  have e : __eo_is_bool_type F = __eo_eq (__eo_typeof F) .Bool := by
+    cases F <;> first | rfl | exact absurd rfl hne
+  rw [e, hty]; simp [__eo_eq, native_teq]
+
+theorem prog_poly_norm_eq {a b : Node}
+    (h : __get_arith_poly_norm a.toEo ≠ .Stuck ∧ __get_arith_poly_norm a.toEo = __get_arith_poly_norm b.toEo) :
+    __eo_prog_arith_poly_norm (eqFormula a b) = eqFormula a b := by
+  obtain ⟨hns, hgn⟩ := h
+  simp only [eqFormula, eoApp2, __eo_prog_arith_poly_norm, __eo_requires, native_ite, native_teq,
+    native_not, hgn]
+  simp [← hgn, hns]
+
+/-- **The static `arith_poly_norm_rel` steps are CPC steps**, given the Eunoia
+types of the two equations (derived from their SMT types in `ArithNorm.lean`). -/
+theorem arithRel_provesEq_of_typeof {n m a b : Node} (h : ArithRelOk n m a b)
+    (htyP : __eo_typeof (eqFormula a b) = .Bool) (htyF : __eo_typeof (eqFormula n m) = .Bool) :
+    ProvesEq (Certified.arithRelCmds n m a b) n m := by
+  obtain ⟨hty, heq, hp, hF, hrel⟩ := h
+  have hP := prog_poly_norm_eq (polyEq_get_norm hty heq hp)
+  have hbP := is_bool_type_of_typeof (eqFormula_ne_stuck a b) htyP
+  have hbF := is_bool_type_of_typeof (eqFormula_ne_stuck n m) htyF
+  have hrun : runFromEmpty (Certified.arithRelCmds n m a b) =
+      CState.cons (CStateObj.proven (eqFormula n m))
+        (CState.cons (CStateObj.proven (eqFormula a b)) CState.nil) := by
+    show __eo_invoke_cmd_list CState.nil
+      (.cons (.step .arith_poly_norm (.cons (eqFormula a b) .nil) .nil)
+        (.cons (.step .arith_poly_norm_rel (.cons (eqFormula n m) .nil) (.cons 0 .nil)) .nil)) = _
+    rw [__eo_invoke_cmd_list, __eo_invoke_cmd] <;> try simp
+    rw [show __eo_cmd_step_proven CState.nil CRule.arith_poly_norm (.cons (eqFormula a b) .nil) .nil =
+      __eo_prog_arith_poly_norm (eqFormula a b) from rfl, hP, __eo_push_proven, hbP, __eo_push_proven_check]
+    rw [__eo_invoke_cmd_list, __eo_invoke_cmd_list, __eo_invoke_cmd] <;> try simp
+    rw [show __eo_cmd_step_proven (CState.cons (CStateObj.proven (eqFormula a b)) CState.nil)
+        CRule.arith_poly_norm_rel (.cons (eqFormula n m) .nil) (.cons 0 .nil) =
+      __eo_prog_arith_poly_norm_rel (eqFormula n m) (Proof.pf (eqFormula a b)) from rfl, hrel,
+      __eo_push_proven, hbF, __eo_push_proven_check]
+  refine ⟨?_, ?_, ?_⟩
+  · refine CmdListTranslationOk.cons _ _ ?_ (CmdListTranslationOk.cons _ _ ?_ CmdListTranslationOk.nil)
+    · show cArgListTranslationOk (.cons (eqFormula a b) .nil)
+      refine ⟨?_, trivial⟩
+      show __smtx_typeof (__eo_to_smt (eqFormula a b)) ≠ .None
+      rw [heq]; simp
+    · show cArgListTranslationOk (.cons (eqFormula n m) .nil)
+      refine ⟨?_, trivial⟩
+      show __smtx_typeof (__eo_to_smt (eqFormula n m)) ≠ .None
+      rw [hF]; simp
+  · rw [hrun]; rfl
+  · rw [hrun]; rfl
+
+end Telos.PolyNorm

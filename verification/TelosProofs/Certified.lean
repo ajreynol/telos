@@ -61,6 +61,9 @@ theorem Certified.equiv {n m : Node} (h : Certified n m) (hn : n.WellTyped) : n.
   | arithNorm h _ ih =>
     have h₁ := ProvesEq.equiv (arithNorm_provesEq h)
     exact h₁.trans (ih h₁.wellTyped_right)
+  | arithRel a b h _ ih =>
+    have h₁ := ProvesEq.equiv (arithRel_provesEq h)
+    exact h₁.trans (ih h₁.wellTyped_right)
   | @congrBody k vs body body' m pats hk hb _ _ ihb ih =>
     have hk' : k = .FORALL ∨ k = .EXISTS := by cases k <;> simp_all [Kind.isQuantifier]
     have h₁ := Node.Equiv.congr_binder hk' rfl hn (ihb hb)

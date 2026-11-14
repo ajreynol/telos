@@ -196,4 +196,21 @@ def ArithNormOk (n : Node) (p : Poly) (m : Node) : Prop :=
 instance (n : Node) (p : Poly) (m : Node) : Decidable (ArithNormOk n p m) := by
   unfold ArithNormOk; infer_instance
 
+/-- The conditions under which `(= n m)` follows from the premise `(= a b)` by
+`arith_poly_norm_rel`, with the premise statically known to be an
+`arith_poly_norm` step: `a` has an arithmetic type, both equations are well
+typed, `a` and `b` have the same telos polynomial up to the order of its
+monomials (decided natively, without Logos's normalizer), and Logos's
+`arith_poly_norm_rel` program, which only checks the shapes and the signs of the
+constants, accepts the step. -/
+def ArithRelOk (n m a b : Node) : Prop :=
+  (a.smtType = .Int ∨ a.smtType = .Real) ∧
+    __smtx_typeof (__eo_to_smt (eqFormula a b)) = .Bool ∧
+    List.Perm (polyOf a) (polyOf b) ∧
+    __smtx_typeof (__eo_to_smt (eqFormula n m)) = .Bool ∧
+    __eo_prog_arith_poly_norm_rel (eqFormula n m) (Proof.pf (eqFormula a b)) = eqFormula n m
+
+instance (n m a b : Node) : Decidable (ArithRelOk n m a b) := by
+  unfold ArithRelOk; infer_instance
+
 end Telos.Arith

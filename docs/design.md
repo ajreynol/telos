@@ -470,9 +470,18 @@ tested:
      the equation's SMT type is `Bool`, `n` is `Int` or `Real`, and an integer
      normal form has integer coefficients. On the arithmetic benchmark this
      replaces 12,738 checker runs (about 5.6µs each) by 1.7µs of side
-     conditions: 1.14s to 1.06s. To do: `arith_poly_norm_rel` (the
-     inequality and equality normalizations, about a quarter of the time), and
-     proving the typing side condition statically.
+     conditions: 1.14s to 1.06s.
+   - Static `arith_poly_norm_rel`: done. The premise `(= (* cx x) (* cy y))` of
+     the inequality and equality normalizations is justified statically when
+     both sides have the same telos polynomial up to order (`ArithRelOk`,
+     decided natively); only Logos's cheap `arith_poly_norm_rel` program (shapes
+     and signs) runs, as a side condition (`Certified.arithRel`,
+     `arithRel_provesEq`). Arithmetic benchmark: 1.06s to 0.89s, 15,290 more
+     checker runs removed. Versus cvc5 on the same 3000-query script: telos
+     1.15s, cvc5 0.30s (Booleans: 0.42s, 0.14s). Now the largest costs are
+     translations and type queries (`types` 15%, checker read back and compare
+     15%) rather than checking. To do: prove the typing side conditions
+     statically, cache types and translations, template lemmas for RARE rules.
    - Profiling: `--profile` on `telos` and `telos-fuzz` prints where the time
      went (`Telos/Profile.lean`: probes on the checker's phases, per rule, on
      type queries, the RARE matcher and the arithmetic normal form);

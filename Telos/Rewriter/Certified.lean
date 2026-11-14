@@ -68,6 +68,12 @@ inductive Certified : Node → Node → Type
   | arithNorm {n m : Node} :
       Arith.ArithNormOk n (Arith.polyOf n) (Arith.arithNorm n) → Certified (Arith.arithNorm n) m →
       Certified n m
+  /-- `n` to `m` by `arith_poly_norm_rel` from the premise `(= a b)`, whose
+  `arith_poly_norm` step is justified statically (`Arith.ArithRelOk`,
+  `verification/TelosProofs/ArithNorm.lean`). Only the cheap `arith_poly_norm_rel`
+  program is run, to decide the side condition. The steps are rebuilt when a
+  proof is printed (`Certified.arithRelCmds`). -/
+  | arithRel {n m k : Node} (a b : Node) : Arith.ArithRelOk n m a b → Certified m k → Certified n k
   /-- A rewrite of the well-typed body of a quantifier
   (`Node.Equiv.congr_binder`). -/
   | congrBody {k : Kind} {vs body body' m : Node} {pats : List Node} :
@@ -82,6 +88,12 @@ def Certified.trans {a b c : Node} : Certified a b → Certified b c → Certifi
   | .congr hsize hop hwt hc r, h₂ => .congr hsize hop hwt hc (r.trans h₂)
   | .congrBody hk hb hc r, h₂ => .congrBody hk hb hc (r.trans h₂)
   | .arithNorm h r, h₂ => .arithNorm h (r.trans h₂)
+  | .arithRel a b h r, h₂ => .arithRel a b h (r.trans h₂)
+
+/-- The CPC steps a statically justified `arithRel` stands for. -/
+def Certified.arithRelCmds (n m a b : Node) : CCmdList :=
+  .cons (.step .arith_poly_norm (.cons (eqFormula a b) .nil) .nil)
+    (.cons (.step .arith_poly_norm_rel (.cons (eqFormula n m) .nil) (.cons 0 .nil)) .nil)
 
 /-- The CPC step a statically justified `arithNorm` stands for. -/
 def Certified.arithNormCmds (n : Node) : CCmdList :=
