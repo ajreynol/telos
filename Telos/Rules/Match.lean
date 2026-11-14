@@ -131,6 +131,9 @@ partial def Pat.instantiate (σ : Subst) (p : Pat) (sym : Bool := false) : Optio
     | .const (.integer v), .const (.integer w) =>
       if sym then some (.app (.indexed .INT_TO_BITVECTOR #[w]) #[.const (.integer v)])
       else some (.const (.bitVector w v))
+    -- A value that is a term, as in premises like `(@bv (- (@bvsize x) 1) w)`:
+    -- `((_ int_to_bv w) e)`, which `evaluate` reduces.
+    | e, .const (.integer w) => some (.app (.indexed .INT_TO_BITVECTOR #[w]) #[e])
     | _, _ => none
 
 /-- The children a list of patterns stands for; list variables are spliced in. -/
@@ -160,8 +163,14 @@ side must match its right-hand side. -/
 def bindPremises (σ : Subst) : List Premise → List Subst
   | [] => [σ]
   | p :: ps =>
-    match p.expr.instantiate σ >>= evalNode with
-    | some val => (matchPat σ p.value val).flatMap (bindPremises · ps)
+    match p.expr.instantiate σ (sym := true) >>= evalNode with
+    | some val =>
+      match p.other with
+      | some o =>
+        match o.instantiate σ (sym := true) >>= evalNode with
+        | some val' => if val == val' then bindPremises σ ps else []
+        | none => []
+      | none => (matchPat σ p.value val).flatMap (bindPremises · ps)
     | none => []
 
 /-- Whether a pattern has a bit-vector literal pattern `(@bv v w)`. -/
@@ -194,13 +203,16 @@ partial def hasIntToBv : Node → Bool
   | .app _ cs => cs.any hasIntToBv
   | _ => false
 
-/-- The variable-free `int_to_bv` applications of `n` evaluated to literals,
-under congruence. Logos writes the `(@bv v w)` of a rule's right-hand side this
-way; cvc5's rules produce the literal. -/
+/-- The `int_to_bv` applications of `n` evaluated to literals, under
+congruence: each maximal variable-free subterm that has one and evaluates to a
+constant, such as `(bvnot ((_ int_to_bv 4) 0))`. Logos writes the `(@bv v w)` of
+a rule's right-hand side this way; cvc5's rules produce the constant. -/
 partial def foldIntToBv (n : Node) : Rw n :=
   let cs := n.getChildren
-  if n.getKind == .INT_TO_BITVECTOR && cs.size == 1 && cs[0]!.vars.isEmpty then
-    (applyCmds (.cons (.step .evaluate (.cons n.toEo .nil) .nil) .nil) n).getD (Rw.id n)
+  let evaluated := if n.vars.isEmpty then
+      (applyCmds (.cons (.step .evaluate (.cons n.toEo .nil) .nil) .nil) n).filter (·.1.isConst)
+    else none
+  if let some r := evaluated then r
   else
     (List.range cs.size).foldl (init := Rw.id n) fun r i =>
       r.next fun m => Rw.congrArg m i fun c =>
@@ -222,14 +234,26 @@ def premiseIndices (k : Nat) : CIndexList :=
 
 /-- The steps proving one premise: an `evaluate` step, then `symm` for a
 premise written `(= value expr)`. -/
-def premiseSteps (p : Premise) (a : Term) : List CCmd :=
-  [CCmd.step .evaluate (.cons a .nil) .nil] ++
-    (if p.symm then [CCmd.step .symm .nil (.cons 0 .nil)] else [])
+def premiseSteps (p : Premise) (a : Term) (b : Option Term) : List CCmd :=
+  match b with
+  | some b =>
+    -- `(= a v)`, `(= b v)`, `(= v b)`, then `(= a b)`.
+    [CCmd.step .evaluate (.cons a .nil) .nil, CCmd.step .evaluate (.cons b .nil) .nil,
+      CCmd.step .symm .nil (.cons 0 .nil), CCmd.step .trans .nil (.cons 2 (.cons 0 .nil))]
+  | none =>
+    [CCmd.step .evaluate (.cons a .nil) .nil] ++
+      (if p.symm then [CCmd.step .symm .nil (.cons 0 .nil)] else [])
 
 /-- The CPC command list for applying the rule under the assignment `σ`. -/
 def cmds (r : RuleSpec) (σ : Subst) : Option CCmdList := do
   let args ← r.args.mapM fun i => do (← σ[i]?.join).toEo
-  let prems ← r.premises.mapM fun p => do return premiseSteps p (← p.expr.instantiate σ).toEo
+  -- Premises are written as the rule writes them: `(@bv v w)` as `((_ int_to_bv w) v)`.
+  let prems ← r.premises.mapM fun p => do
+    let b : Option Term ← match p.other with
+      | some o => (o.instantiate σ (sym := true)).map fun n => some n.toEo
+      | none => some none
+    let a ← p.expr.instantiate σ (sym := true)
+    return premiseSteps p a.toEo b
   let steps := prems.flatten
   -- The position of the last step of each premise, and its offset from the rule.
   let ends := (prems.scanl (fun n s => n + s.length) 0).tail

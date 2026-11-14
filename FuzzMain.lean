@@ -99,6 +99,7 @@ def bvAtoms : Array Node :=
     .const (.bitVector 4 0), .const (.bitVector 4 1), .const (.bitVector 4 15),
     .const (.bitVector 4 5)]
 
+mutual
 /-- A random term of sort `(_ BitVec 4)`. -/
 partial def genBv : Nat → GenM Node
   | 0 => return bvAtoms[← pick bvAtoms.size]!
@@ -107,10 +108,20 @@ partial def genBv : Nat → GenM Node
       .BITVECTOR_MULT, .BITVECTOR_SUB, .BITVECTOR_UDIV, .BITVECTOR_UREM, .BITVECTOR_SHL,
       .BITVECTOR_LSHR, .BITVECTOR_ASHR, .BITVECTOR_NAND, .BITVECTOR_NOR, .BITVECTOR_XNOR,
       .BITVECTOR_SDIV, .BITVECTOR_SREM, .BITVECTOR_SMOD]
-    match ← pick 8 with
+    match ← pick 12 with
     | 0 | 1 => genBv 0
     | 2 => return mkNode .BITVECTOR_NOT #[← genBv d]
     | 3 => return mkNode .BITVECTOR_NEG #[← genBv d]
+    | 8 =>
+      -- `zero_extend` or `sign_extend` of an extract of width 2, or `repeat` of it
+      let lo ← pick 3
+      let x := mkIndexedNode .BITVECTOR_EXTRACT #[lo + 1, lo] #[← genBv d]
+      let k := #[Kind.BITVECTOR_ZERO_EXTEND, .BITVECTOR_SIGN_EXTEND, .BITVECTOR_REPEAT][← pick 3]!
+      return mkIndexedNode k #[2] #[x]
+    | 9 => return mkNode .BITVECTOR_ITE #[← genBv1 d, ← genBv d, ← genBv d]
+    | 10 =>
+      -- a bit of width 1, extended to width 4
+      return mkIndexedNode .BITVECTOR_ZERO_EXTEND #[3] #[← genBv1 d]
     | 4 =>
       -- `concat` of two extracts of width 2
       let lo ← pick 3
@@ -121,8 +132,25 @@ partial def genBv : Nat → GenM Node
       return mkIndexedNode k #[(← pick 5 : Nat)] #[← genBv d]
     | _ => return mkNode bin[← pick bin.size]! #[← genBv d, ← genBv d]
 
+/-- A random term of sort `(_ BitVec 1)`. -/
+partial def genBv1 : Nat → GenM Node
+  | 0 => return #[Node.const (.bitVector 1 0), .const (.bitVector 1 1)][← pick 2]!
+  | d + 1 => do
+    match ← pick 5 with
+    | 0 => genBv1 0
+    | 1 => return mkNode .BITVECTOR_COMP #[← genBv d, ← genBv d]
+    | 2 => return mkNode .BITVECTOR_REDOR #[← genBv d]
+    | 3 => return mkNode .BITVECTOR_REDAND #[← genBv d]
+    | _ => let i ← pick 4; return mkIndexedNode .BITVECTOR_EXTRACT #[i, i] #[← genBv d]
+end
+
 /-- A random comparison of bit-vector terms. -/
 def genBvAtom (d : Nat) : GenM Node := do
+  if (← pick 8) == 0 then
+    let k := #[Kind.BITVECTOR_UADDO, .BITVECTOR_SADDO, .BITVECTOR_UMULO, .BITVECTOR_SMULO,
+      .BITVECTOR_USUBO, .BITVECTOR_SSUBO, .BITVECTOR_SDIVO][← pick 7]!
+    return mkNode k #[← genBv d, ← genBv d]
+  if (← pick 10) == 0 then return mkNode .BITVECTOR_NEGO #[← genBv d]
   let k := #[Kind.EQUAL, .BITVECTOR_ULT, .BITVECTOR_ULE, .BITVECTOR_UGT, .BITVECTOR_UGE,
     .BITVECTOR_SLT, .BITVECTOR_SLE, .BITVECTOR_SGT, .BITVECTOR_SGE][← pick 9]!
   return mkNode k #[← genBv d, ← genBv d]

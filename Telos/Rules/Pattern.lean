@@ -48,6 +48,10 @@ structure Premise where
   /-- Whether the premise is `(= value expr)`, proven by `symm` of the
   evaluation. -/
   symm : Bool := false
+  /-- For a premise `(= expr other)` between two terms: both are evaluated, and
+  their values must be equal (proven by `evaluate`, `evaluate`, `symm` and
+  `trans`). `value` is then unused. -/
+  other : Option Pat := none
   deriving Repr
 
 /-- One CPC rewrite rule, as far as finding its applications goes. -/

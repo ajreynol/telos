@@ -507,20 +507,34 @@ tested:
      The `(@bv v w)` of a rule's right-hand side, which Logos writes
      `((_ int_to_bv w) v)`, is evaluated back to a literal after each rule step
      (`foldIntToBv`).
+   - Also: constant `bvcomp` (by `bv-comp-eliminate`, as Logos's `evaluate`
+     does not reduce it), `bvumulo` and `bvsmulo` of constants (their
+     `:requires` programs are extracted from Logos's compiled code into
+     `Telos/Rules/Programs.lean` by `gen-rules.py`), and the comparisons of
+     `sign_extend`/`zero_extend` with constants, in cvc5's order. Premises may
+     equate two terms (both evaluated), and the `@bv` literals of premises are
+     written as the rule writes them, `((_ int_to_bv w) v)`.
    - Fuzzing (`scripts/fuzz.py --bv`, over three `(_ BitVec 4)` variables and
-     constants): at depth 3 (3000 terms), 76.8% identical to cvc5 and 94.8% up
-     to the orientation of equalities; at depth 4 (2000 terms), 64.4% and 90.3%.
-     No semantic disagreements. Ethos accepts all proofs (`check-proofs.py
-     --bv`, depths 3 and 4).
+     constants, with all operators including `zero_extend`, `sign_extend`,
+     `repeat`, `bvite`, `bvcomp`, `bvredor`, `bvredand` and the overflow
+     predicates): at depth 3 (3000 terms), 50.1% identical to cvc5 and 55.5% up
+     to the orientation of equalities; at depth 4 (2000 terms), 39.8% and
+     44.4%. No semantic disagreements. The fuzzer often builds `bvite` with a
+     constant condition, which CPC cannot simplify yet (below): of the 1335
+     differences at depth 3, 1295 are such a `bvite`, and the other 40 are the
+     order of children. Before `bvite` and the other operators were added to
+     the fuzzer, the rates were 76.8% and 94.8% at depth 3. Ethos accepts all
+     proofs (`check-proofs.py --bv`, depths 3 and 4).
    - Deviations: cvc5 orders the children of `bvand`, `bvor`, `bvxor` and
      `bvmul`, and the terms of a combined sum, by node id; telos uses its term
      order, which accounts for most of the remaining differences. A bitwise
      result for which the search finds no certificate is not used. cvc5's
      `NegMult` never applies (its `applies` tests the wrong child) and is not
      ported.
-   - Not ported: `UmuloEliminate` and `SmuloEliminate` (applied by cvc5 only to
-     constants), `BvIteConstCond` and the constant evaluation of `bvcomp`
-     (Logos's `evaluate` does not reduce them), `BvComp`, `IneqElimConversion`.
+   - Not ported: `BvIteConstCond`, which CPC cannot prove (no RARE rule, and
+     `evaluate` does not reduce `bvite`; requested in
+     `cpc-bv-ite-const-cond.md`, and used by telos once available), `BvComp`,
+     `IneqElimConversion`.
    - Performance (3000 terms of depth 3, `telos-fuzz ... bv`): 4.65s at first,
      3.73s after indexing rules by name (`ruleTable`), evaluating premises at
      match time with Logos's evaluator directly rather than a checker run, and

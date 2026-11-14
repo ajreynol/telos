@@ -56,3 +56,12 @@
 (simplify (bvult #b1111 x))
 (simplify ((_ repeat 2) x))
 (simplify (bvand x #b0011))
+; constant bvcomp, overflow predicates of constants, comparisons with extends
+(simplify (bvcomp #b0101 #b0101))
+(simplify (bvredand #b0101))
+(simplify (bvumulo #b1111 #b1111))
+(simplify (bvsmulo #b0001 #b0001))
+(simplify (bvult ((_ sign_extend 2) ((_ extract 3 2) x)) #b0101))
+(simplify (bvult #b0001 ((_ sign_extend 2) ((_ extract 3 2) x))))
+(simplify (bvult ((_ zero_extend 2) ((_ extract 3 2) x)) #b0010))
+(simplify (bvsaddo y (bvudiv x #b0000)))

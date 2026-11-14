@@ -1,5 +1,6 @@
 import Telos.Theory.Common
 import Telos.Theory.BVNorm
+import Telos.Rules.Programs
 import Telos.Rewriter.Rewriter
 
 /-!
@@ -19,8 +20,7 @@ The normalizations over whole n-ary terms are in `Telos/Theory/BVNorm.lean`.
 Not ported yet (the node is left as it is where cvc5 would apply them):
 
 * `NegMult` (see `BVNorm.lean`) and `BvComp`;
-* `UmuloEliminate` and `SmuloEliminate`, which cvc5 applies only to constant
-  arguments;
+* `BvIteConstCond`, which CPC cannot prove yet (`iteConstCond`);
 * `IneqElimConversion`, which only applies to `ubv_to_int` comparisons.
 -/
 
@@ -188,11 +188,10 @@ def extractFirst (pre : Bool) (n : Node) : Option (RewriteResponse n) :=
   if pre then none else tryRewrite n [rules ["bv-extract-extract"]]
 
 /-- cvc5's `BvIteConstCond`: `(bvite #b1 t e)` is `t` and `(bvite #b0 t e)` is
-`e`, by evaluation. -/
-def iteConstCond : Step := fun m =>
-  match m.getChildren with
-  | #[.const _, _, _] => byEvaluate m
-  | _ => none
+`e`. CPC has no rule for it yet (`evaluate` does not reduce `bvite`); this uses
+the RARE rules requested in `cpc-bv-ite-const-cond.md`, so it applies once the
+pinned Logos has them. -/
+def iteConstCond : Step := rules ["bv-ite-const-cond-1", "bv-ite-const-cond-2"]
 
 /-- cvc5's `RewriteITEBv`. -/
 def rewriteIte (n : Node) : RewriteResponse n :=
@@ -217,8 +216,9 @@ def rewriteNode (pre : Bool) (n : Node) : RewriteResponse n :=
   | .BITVECTOR_ULT =>
     respond (linear n [evalConst, rules ["bv-ult-self"], rules ["bv-ult-one"],
       rules ["bv-ult-ones"], ultOnesLeft, rules ["bv-ult-zero-1", "bv-ult-zero-2"],
-      rules ["bv-sign-extend-ult-const-1", "bv-sign-extend-ult-const-2",
-        "bv-sign-extend-ult-const-3", "bv-sign-extend-ult-const-4"],
+      -- cvc5 tries the most significant bit case first (`-2` and `-4`).
+      rules ["bv-sign-extend-ult-const-2", "bv-sign-extend-ult-const-1",
+        "bv-sign-extend-ult-const-4", "bv-sign-extend-ult-const-3"],
       rules ["bv-zero-extend-ult-const-1", "bv-zero-extend-ult-const-2"]]) .REWRITE_AGAIN_FULL
   | .BITVECTOR_ULTBV | .BITVECTOR_SLTBV => respond (linear n [evalConst]) .REWRITE_DONE
   | .BITVECTOR_SLT =>
@@ -261,7 +261,13 @@ def rewriteNode (pre : Bool) (n : Node) : RewriteResponse n :=
     respond (linear n [rules ["bv-nand-eliminate"]]) .REWRITE_AGAIN_FULL .REWRITE_AGAIN_FULL
   | .BITVECTOR_NOR =>
     respond (linear n [rules ["bv-nor-eliminate"]]) .REWRITE_AGAIN_FULL .REWRITE_AGAIN_FULL
-  | .BITVECTOR_COMP => respond (linear n [evalConst]) .REWRITE_DONE
+  | .BITVECTOR_COMP =>
+    -- cvc5's `EvalComp`: Logos's `evaluate` does not reduce `bvcomp`, so a
+    -- constant one is eliminated by `bv-comp-eliminate` to
+    -- `(ite (= a b) #b1 #b0)`, which the equality and Boolean rewriters reduce.
+    if n.getChildren.all (·.isConst) then
+      respond (linear n [rules ["bv-comp-eliminate"]]) .REWRITE_AGAIN_FULL
+    else .done n
   | .BITVECTOR_MULT =>
     orDone <| tryRewrite n ([polyStep flattenAssocCommut, polyStep multSimplify] ++
       if pre then [] else [rules ["bv-mult-pow2-1", "bv-mult-pow2-2", "bv-mult-pow2-2b"],
@@ -316,8 +322,14 @@ def rewriteNode (pre : Bool) (n : Node) : RewriteResponse n :=
   | .BITVECTOR_USUBO | .BITVECTOR_SSUBO =>
     -- cvc5's `RewriteOverflow`: eliminated only when all children are constants.
     if n.getChildren.all (·.isConst) then
-      orDone <| tryRewrite n [rules ["bv-uaddo-eliminate", "bv-saddo-eliminate", "bv-umulo-elim",
-        "bv-smulo-elim", "bv-usubo-eliminate", "bv-ssubo-eliminate"]]
+      orDone <| tryRewrite n [rules ["bv-uaddo-eliminate", "bv-saddo-eliminate",
+        "bv-usubo-eliminate", "bv-ssubo-eliminate"],
+        byProgram .bv_umulo_elim (fun
+          | .Apply (.Apply (.UOp .bvumulo) a) b => Programs.umuloElim a b
+          | _ => .Stuck),
+        byProgram .bv_smulo_elim (fun
+          | .Apply (.Apply (.UOp .bvsmulo) a) b => Programs.smuloElim a b
+          | _ => .Stuck)]
     else .done n
   | .BITVECTOR_SIZE => respond (linear n [byEvaluate]) .REWRITE_DONE
   | _ => .done n
