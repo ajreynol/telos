@@ -65,7 +65,7 @@ Two Lake projects, so the rewriter builds without Mathlib:
 ```sh
 lake build                              # rewriter
 lake -d verification exe cache get      # Mathlib binaries (once)
-lake -d verification build              # proofs (also builds part of Logos's proofs)
+lake -d verification build              # proofs (also builds part of Logos's proofs; not run in CI)
 bash scripts/check-hygiene.sh           # no sorry/axiom; trusted code is listed
 python3 scripts/gen-rules.py            # regenerate Telos/Rules/Generated.lean
 python3 scripts/gen-term-order.py       # regenerate the generated part of TelosProofs/TermOrder.lean

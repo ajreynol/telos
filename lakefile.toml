@@ -8,7 +8,7 @@ defaultTargets = ["Telos", "TelosTests", "telos"]
 [[require]]
 name = "Cpc"
 git = "https://github.com/ajreynol/logos"
-rev = "3821cf904c32125244526a1b4b17bd2f93af3f0a"
+rev = "b3f0b24b157dba91a10e35883393fd202d5f8da7"
 
 [[lean_lib]]
 name = "Telos"

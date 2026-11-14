@@ -184,7 +184,8 @@ too.
 
 The certificate depends on all of Logos's rule proofs, since the checker's
 soundness does. A cold build of `verification/` therefore compiles every rule
-proof in Logos (hours on CI; cached afterwards).
+proof in Logos (hours; cached afterwards). CI does not build it: run
+`lake -d verification build` locally after changing proved code or the Logos pin.
 
 The cost is speed. Every step translates to `Eo.Term` and runs a Logos program.
 That is acceptable to start. Later, generated lemmas of the form "for

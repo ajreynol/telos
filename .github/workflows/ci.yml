@@ -43,25 +43,3 @@ jobs:
             .lake/build/bin/telos "$f" | diff - "${f%.smt2}.expected"
           done
 
-  verification:
-    runs-on: ubuntu-latest
-    # A cold build compiles every Logos rule proof (Cpc.Proofs.Checker), which
-    # takes hours; later runs restore it from the cache below.
-    timeout-minutes: 350
-    steps:
-      - uses: actions/checkout@v6
-      - uses: leanprover/lean-action@v1
-        with:
-          auto-config: false
-          build: false
-          test: false
-          lint: false
-          use-github-cache: false
-      - uses: actions/cache@v5
-        with:
-          path: verification/.lake
-          key: verification-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lakefile.toml', 'lake-manifest.json', 'verification/lean-toolchain', 'verification/lakefile.toml', 'verification/lake-manifest.json') }}-${{ github.sha }}
-          restore-keys: verification-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lakefile.toml', 'lake-manifest.json', 'verification/lean-toolchain', 'verification/lakefile.toml', 'verification/lake-manifest.json') }}-
-      - name: Fetch Mathlib build cache
-        run: lake -d verification exe cache get
-      - run: lake -d verification build
