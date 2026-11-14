@@ -67,6 +67,7 @@ lake -d verification exe cache get      # Mathlib binaries (once)
 lake -d verification build              # proofs (also builds part of Logos's proofs)
 bash scripts/check-hygiene.sh           # no sorry/axiom; trusted code is listed
 python3 scripts/gen-rules.py            # regenerate Telos/Rules/Generated.lean
+python3 scripts/gen-term-order.py       # regenerate the generated part of TelosProofs/TermOrder.lean
 lake build telos-fuzz && python3 scripts/fuzz.py --cvc5 PATH   # compare with cvc5
 python3 scripts/check-proofs.py --fuzz 500                      # proofs, with Ethos
 python3 scripts/loc-summary.py                                  # lines: spec, rewriter, proofs

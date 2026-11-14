@@ -456,6 +456,18 @@ tested:
    program-equals-template lemmas for hot rules; normalizers (first
    `arith_poly_norm`) proven to produce steps the checker accepts, so that
    their steps need no run-time check.
+   - Static `arith_poly_norm`, in progress. The rule accepts `(= a b)` when
+     Logos's normal forms of `a` and `b` are the same term. Proved so far
+     (`verification/`, no `sorry`): Logos's term order `native_tcmp` is a strict
+     total order (`TelosProofs/TermOrder.lean`, per-constructor part generated
+     by `scripts/gen-term-order.py`), and Logos's normal form is canonical:
+     normal forms with the same value in `MvPolynomial Term ℚ` are equal
+     (`TelosProofs/PolyNorm.lean`, `get_norm_eq_of_polyVal_eq`). So a
+     normalizer, by any algorithm, need only preserve that value. To do: the
+     telos side (telos's normal form has the value of its input, through
+     `Node.toEo`), the typing side conditions of the step, a `Certified`
+     constructor for statically justified steps (with its case of
+     `Certified.equiv`, and proof output), then `arith_poly_norm_rel`.
    - Profiling: `--profile` on `telos` and `telos-fuzz` prints where the time
      went (`Telos/Profile.lean`: probes on the checker's phases, per rule, on
      type queries, the RARE matcher and the arithmetic normal form);

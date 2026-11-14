@@ -47,7 +47,7 @@ def headIndices : Term → List Term
 
 /-- The signature's operators, by head term. The first declaration of a head
 wins. -/
-def opTable : Std.TreeMap Term OpInfo compare :=
+def opTable : Std.TreeMap Term OpInfo termCmp :=
   parserConfig.ops.foldl (init := {}) fun m d =>
     match d.build (List.replicate d.indexArity dummyIndex) with
     | some h =>

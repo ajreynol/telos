@@ -17,7 +17,7 @@ rev = "v4.34.0"
 [[require]]
 name = "LogosVerification"
 git = "https://github.com/ajreynol/logos"
-rev = "a32321318164f241d266abc1c8c91b46619b2315"
+rev = "3821cf904c32125244526a1b4b17bd2f93af3f0a"
 subDir = "verification"
 
 [[require]]
