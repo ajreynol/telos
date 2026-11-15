@@ -57,3 +57,10 @@ false
 (= #b1 ((_ extract 3 3) x))
 (bvult ((_ extract 3 2) x) #b10)
 (bvsaddo y #b1111)
+(not (>= (mod_total n 16) 12))
+(not (>= (mod_total n 16) 4))
+(mod_total n 16)
+5
+x
+(concat #b00 x)
+((_ extract 1 0) x)

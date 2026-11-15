@@ -20,8 +20,7 @@ The normalizations over whole n-ary terms are in `Telos/Theory/BVNorm.lean`.
 Not ported yet (the node is left as it is where cvc5 would apply them):
 
 * `NegMult` (see `BVNorm.lean`) and `BvComp`;
-* `BvIteConstCond`, which CPC cannot prove yet (`iteConstCond`);
-* `IneqElimConversion`, which only applies to `ubv_to_int` comparisons.
+* `BvIteConstCond`, which CPC cannot prove yet (`iteConstCond`).
 -/
 
 namespace Telos
@@ -128,6 +127,16 @@ def bitwiseSlicing : Step := fun m =>
     else none
   | none => none
 
+/-- cvc5's `IneqElimConversion`: a comparison of `int_to_bv` terms and constants
+is a comparison of integers, by `uf-int2bv-bvult-equiv` (`bvule`: `-bvule-`).
+The UF rewriter then turns `(ubv_to_int ((_ int_to_bv w) t))` into
+`(mod_total t 2^w)`. -/
+def ineqElimConversion : Step := fun m =>
+  let cs := m.getChildren
+  if cs.all (fun c => c.getKind == .INT_TO_BITVECTOR || c.isConst) && !cs.all (·.isConst) then
+    rules (if m.getKind == .BITVECTOR_ULT then ["uf-int2bv-bvult-equiv"] else ["uf-int2bv-bvule-equiv"]) m
+  else none
+
 /-- cvc5's `UltOnes` with the all-ones constant on the left: `(bvult ones x)` is
 `false`. CPC has no rule for it, so it is derived: `bv-ule-max` gives
 `(= (bvule x ones) true)` and `bv-ule-eliminate` gives
@@ -219,14 +228,16 @@ def rewriteNode (pre : Bool) (n : Node) : RewriteResponse n :=
       -- cvc5 tries the most significant bit case first (`-2` and `-4`).
       rules ["bv-sign-extend-ult-const-2", "bv-sign-extend-ult-const-1",
         "bv-sign-extend-ult-const-4", "bv-sign-extend-ult-const-3"],
-      rules ["bv-zero-extend-ult-const-1", "bv-zero-extend-ult-const-2"]]) .REWRITE_AGAIN_FULL
+      rules ["bv-zero-extend-ult-const-1", "bv-zero-extend-ult-const-2"],
+      ineqElimConversion]) .REWRITE_AGAIN_FULL
   | .BITVECTOR_ULTBV | .BITVECTOR_SLTBV => respond (linear n [evalConst]) .REWRITE_DONE
   | .BITVECTOR_SLT =>
     respond (linear n [evalConst, rules ["bv-lt-self"],
       rules ["bv-mult-slt-mult-1", "bv-mult-slt-mult-2"]]) .REWRITE_DONE
   | .BITVECTOR_ULE =>
     respond (linear n [evalConst, rules ["bv-ule-max"], rules ["bv-zero-ule"],
-      rules ["bv-ule-zero"], rules ["bv-ule-self"], rules ["bv-ule-eliminate"]]) .REWRITE_AGAIN
+      ineqElimConversion, rules ["bv-ule-zero"], rules ["bv-ule-self"],
+      rules ["bv-ule-eliminate"]]) .REWRITE_AGAIN
   | .BITVECTOR_SLE =>
     respond (linear n [evalConst, rules ["bv-sle-eliminate"]]) .REWRITE_AGAIN
   | .BITVECTOR_UGT =>

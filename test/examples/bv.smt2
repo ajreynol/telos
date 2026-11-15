@@ -65,3 +65,12 @@
 (simplify (bvult #b0001 ((_ sign_extend 2) ((_ extract 3 2) x))))
 (simplify (bvult ((_ zero_extend 2) ((_ extract 3 2) x)) #b0010))
 (simplify (bvsaddo y (bvudiv x #b0000)))
+; conversions between integers and bit-vectors
+(declare-const n Int)
+(simplify (bvult ((_ int_to_bv 4) n) #b1100))
+(simplify (bvule ((_ int_to_bv 4) n) #b0011))
+(simplify (ubv_to_int ((_ int_to_bv 4) n)))
+(simplify (ubv_to_int #b0101))
+(simplify ((_ int_to_bv 4) (ubv_to_int x)))
+(simplify ((_ int_to_bv 6) (ubv_to_int x)))
+(simplify ((_ int_to_bv 2) (ubv_to_int x)))

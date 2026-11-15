@@ -13,7 +13,7 @@ cvc5 to rewrite the same terms with `(simplify t)`, and reports:
   cvc5's, which is a bug in one of them.
 
 Usage:
-  CVC5=PATH scripts/fuzz.py ...  or  scripts/fuzz.py [--cvc5 PATH] [--seed N] [--count N] [--depth N] [--show N] [--arith | --uf | --bv | --arrays]
+  CVC5=PATH scripts/fuzz.py ...  or  scripts/fuzz.py [--cvc5 PATH] [--seed N] [--count N] [--depth N] [--show N] [--arith | --uf | --bv | --arrays | --mixed]
 
 Build the fuzzer first: `lake build telos-fuzz`.
 """
@@ -45,6 +45,9 @@ PRELUDE = """(set-logic ALL)
 (declare-const bz (_ BitVec 4))
 (declare-const aa (Array Int Int))
 (declare-const ab (Array Int Int))
+(declare-const am (Array (_ BitVec 4) Int))
+(declare-const bm (Array U U))
+(declare-const cm (Array U U))
 """
 
 
@@ -102,11 +105,12 @@ def main():
     ap.add_argument("--uf", action="store_true", help="include equalities and distinct over an uninterpreted sort")
     ap.add_argument("--bv", action="store_true", help="include bit-vector comparisons")
     ap.add_argument("--arrays", action="store_true", help="include array equalities")
+    ap.add_argument("--mixed", action="store_true", help="include atoms mixing theories")
     a = ap.parse_args()
     if not FUZZ.exists():
         sys.exit("error: build the fuzzer first: lake build telos-fuzz")
 
-    lines = subprocess.run([str(FUZZ), str(a.seed), str(a.count), str(a.depth)] + (["arith"] if a.arith else ["uf"] if a.uf else ["bv"] if a.bv else ["arrays"] if a.arrays else []),
+    lines = subprocess.run([str(FUZZ), str(a.seed), str(a.count), str(a.depth)] + (["arith"] if a.arith else ["uf"] if a.uf else ["bv"] if a.bv else ["arrays"] if a.arrays else ["mixed"] if a.mixed else []),
                            capture_output=True, text=True, check=True).stdout.splitlines()
     cases = [tuple(line.split("\t")) for line in lines]
 

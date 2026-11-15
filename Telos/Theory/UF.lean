@@ -90,6 +90,23 @@ def rewriteIntToBV (n : Node) : Option (Rw n) :=
   | #[c] => if c.vars.isEmpty then byEvaluate n else none
   | _ => none
 
+/-- cvc5's `rewriteIntToBV` for `((_ int_to_bv w) (ubv_to_int t))`: `t`, or `t`
+extended or truncated to width `w`. -/
+def intToBvOfBvToInt (n : Node) : Option (Rw n) :=
+  firstOf [fun _ => byRule "uf-bv2nat-int2bv" n, fun _ => byRule "uf-bv2nat-int2bv-extend" n,
+    fun _ => byRule "uf-bv2nat-int2bv-extract" n]
+
+/-- cvc5's `rewriteBVToInt`: the value of a constant, and
+`(ubv_to_int ((_ int_to_bv w) t))` is `(mod_total t 2^w)`
+(`uf-int2bv-bv2nat`). -/
+def rewriteBVToInt (n : Node) : Option (Rw n) :=
+  match n.getChildren with
+  | #[c] =>
+    if c.isConst then byEvaluate n
+    else if c.getKind == .INT_TO_BITVECTOR then byRule "uf-int2bv-bv2nat" n
+    else none
+  | _ => none
+
 /-- cvc5's `TheoryUfRewriter::preRewrite`. -/
 def preRewrite (n : Node) : RewriteResponse n :=
   match rewriteCommon n with
@@ -105,11 +122,14 @@ def postRewrite (n : Node) : RewriteResponse n :=
   match r with
   | some ⟨m, h⟩ => ⟨.REWRITE_DONE, m, h⟩
   | none =>
+    let again := fun (r : Option (Rw n)) => match r with
+      | some ⟨m, h⟩ => (⟨.REWRITE_AGAIN_FULL, m, h⟩ : RewriteResponse n)
+      | none => .done n
     match n.getKind with
     | .INT_TO_BITVECTOR =>
-      match rewriteIntToBV n with
-      | some ⟨m, h⟩ => ⟨.REWRITE_AGAIN_FULL, m, h⟩
-      | none => .done n
+      again ((rewriteIntToBV n).orElse fun _ =>
+        if n.getChildren.any (·.getKind == .BITVECTOR_UBV_TO_INT) then intToBvOfBvToInt n else none)
+    | .BITVECTOR_UBV_TO_INT => again (rewriteBVToInt n)
     | _ => .done n
 
 end UfRewriter

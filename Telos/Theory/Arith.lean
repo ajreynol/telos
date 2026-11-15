@@ -111,6 +111,8 @@ constants; `(to_int (to_real x))` is `x` and `(is_int (to_real x))` is `true`
 def rewriteOther (n : Node) : Option (Rw n) :=
   match n.getKind, n.getChildren with
   | .ABS, #[.const _] | .TO_INTEGER, #[.const _] | .IS_INTEGER, #[.const _] => byEvaluate n
+  -- cvc5's `rewriteExtIntegerOp`, for constants (the rest is not ported).
+  | .POW2, #[.const _] | .INTS_LOG2, #[.const _] | .INTS_ISPOW2, #[.const _] => byEvaluate n
   | .TO_INTEGER, #[.app (.kind .TO_REAL) _] => byRule "arith-to-int-elim-to-real" n
   | .IS_INTEGER, #[.app (.kind .TO_REAL) _] => byRule "arith-is-int-elim-to-real" n
   | .DIVISION_TOTAL, #[_, .const (.rational 0)] => byRule "arith-div-total-zero-real" n

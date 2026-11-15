@@ -540,8 +540,12 @@ tested:
      ported.
    - Not ported: `BvIteConstCond`, which CPC cannot prove (no RARE rule, and
      `evaluate` does not reduce `bvite`; requested in
-     `cpc-bv-ite-const-cond.md`, and used by telos once available), `BvComp`,
-     `IneqElimConversion`.
+     `cpc-bv-ite-const-cond.md`, and used by telos once available), and
+     `BvComp`. `IneqElimConversion` (comparisons of `int_to_bv` terms and
+     constants as integer comparisons, `uf-int2bv-bvult-equiv`) is ported,
+     with the UF rewriter's `rewriteBVToInt` (`uf-int2bv-bv2nat`) and the
+     `int_to_bv` of `ubv_to_int` cases of `rewriteIntToBV`, and the evaluation
+     of `int.pow2`, `int.log2` and `int.ispow2` of constants.
    - Performance (3000 terms of depth 3, `telos-fuzz ... bv`): 4.65s at first,
      3.73s after indexing rules by name (`ruleTable`), evaluating premises at
      match time with Logos's evaluator directly rather than a checker run, and
@@ -576,6 +580,13 @@ tested:
      indices, and child typing for `select` and `store` (`Op.childrenTypedOfParent`:
      its proof needs well-formedness of array types, so the driver checks the
      children at run time).
+   - **Mixed theories** (`scripts/fuzz.py --mixed`, 3000 terms of depth 3):
+     atoms that mix theories (arrays from bit-vectors to integers and over an
+     uninterpreted sort, `ite` with branches of each theory, UF applied to
+     array reads, `distinct` of arrays, `int_to_bv` comparisons). 40.8%
+     identical to cvc5, 76.3% up to the orientation of equalities, no semantic
+     disagreements; of the 711 differences, 661 are a constant-condition
+     `bvite` (above) and 50 the order of `store`s. Ethos accepts all proofs.
 8. **Performance.** ~~Rewrite cache~~ (done: `Cache` in
    `Telos/Rewriter/Rewriter.lean`, for one call of `rewriteWith`, as cvc5 caches
    `rewriteTo`; children are rewritten in order and assembled by
