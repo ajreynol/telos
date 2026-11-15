@@ -1,0 +1,23 @@
+(str.++ s "abc")
+(+ 3 (str.len s))
+"bc"
+(str.substr s 0 1)
+12
+"12"
+"cba"
+true
+true
+(= s (str.++ s t))
+(= s (str.++ t s "a"))
+(= s (str.substr t 0 (str.len s)))
+(str.len s)
+""
+""
+""
+""
+(str.substr s 3 3)
+(str.replace (str.substr s 0 x) "a" "b")
+""
+((_ re.loop 2 2) (str.to_re "a"))
+(re.union (str.to_re "") (str.to_re "a"))
+re.none

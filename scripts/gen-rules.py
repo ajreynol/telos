@@ -312,8 +312,20 @@ def spec_of_rule(form, crules):
         raise Skip("left-hand side is not an application")
     lhs = pat(concl[1])
     args_form = attrs.get(":args", [])
-    if not isinstance(args_form, list) or not all(isinstance(a, str) and a in variables for a in args_form):
+    if not isinstance(args_form, list):
         raise Skip("arguments are not plain variables")
+    # A type argument such as `(Seq @T0)` is the declared type of a variable.
+    declared = {p[0]: p[1] for p in params}
+    type_args, plain = [], []
+    for pos, a in enumerate(args_form):
+        if isinstance(a, str) and a in variables:
+            plain.append(a)
+        else:
+            owner = next((v for v in variables if declared.get(v) == a), None)
+            if owner is None:
+                raise Skip("arguments are not plain variables")
+            type_args.append((pos, variables[owner]))
+    args_form = plain
     premises = []
     bound = set(re.findall(r"\.(?:listVar|var) (\d+)", lhs))
     for prem in attrs.get(":premises", []) or []:
@@ -340,7 +352,8 @@ def spec_of_rule(form, crules):
     return (
         f"  {{ name := {lean_string(name)}, rule := .{crule}, numVars := {len(variables)},\n"
         f"    args := [{args_str}],\n"
-        f"    lhs := {lhs},\n"
+        + (f"    typeArgs := [{', '.join(f'({p}, {i})' for p, i in type_args)}],\n" if type_args else "")
+        + f"    lhs := {lhs},\n"
         f"    premises := [{', '.join(premises)}],\n"
         f"    varTypes := [{', '.join('some .' + t if t else 'none' for t in var_types)}] }}"
     )

@@ -606,13 +606,32 @@ tested:
      (24.1% after the first step), no semantic disagreements; Ethos accepts all
      proofs. The largest gaps are `rewriteSubstr`, `rewriteMembership` and the
      regular expression rewrites, `rewriteReplace` and `rewriteContains`.
-   - Next: cvc5's `ArithEntail`, mimicked natively, with its results certified
-     as cvc5 elaborates `MACRO_ARITH_STRING_PRED_ENTAIL`: normalization to
-     `(>= n 0)` by `arith_poly_norm_rel`, approximation by
-     `arith-string-pred-safe-approx`, and `arith-string-pred-entail` (whose
-     `$str_arith_entail_simple` is cvc5's `checkSimple`). Then `rewriteSubstr`,
-     `rewriteContains`, `rewriteReplace` and `rewriteIndexof` on top of it, and
-     `StringsEntail`.
+   - **Arithmetic entailment** (`Telos/Strings/ArithEntail.lean`): cvc5's
+     `ArithEntail` as the strings rewriter uses it by default (no rewriter, no
+     recursive approximations, so `rewriteArith` is `rewriteLengthIntro` and
+     the polynomial normal form): `checkSimple`, `getArithApproximations`,
+     `findApprox`, `check`, `checkEq`, and `StringsEntail::checkLengthOne`. A
+     rule's arithmetic premises that evaluation does not discharge are proven
+     as cvc5 elaborates `MACRO_ARITH_STRING_PRED_ENTAIL`
+     (`ArithEntail.premiseProof`): `arith-elim-leq`, `arith-elim-int-gt` or
+     `arith-elim-int-lt` to `>=`, length introduction (`str-len-concat-rec`,
+     `evaluate`), `arith_poly_norm_rel` to `(>= n 0)`,
+     `arith-string-pred-safe-approx`, `arith_poly_norm_rel`, and
+     `arith-string-pred-entail` or `evaluate`; equalities of lengths
+     (`checkEq`) by length introduction, `arith_poly_norm` and `true_intro`.
+     The matcher takes such a premise prover (`RuleSpec.apply`,
+     `rewriteByWith`), and rules may have type arguments (`(Seq @T0)`, the
+     type of a variable; `typeArgs`).
+   - With it: `rewriteSubstr` (all cases but
+     `rewriteViaMacroSubstrStripSymLength`), the `SUF_PREFIX_EMPTY` and
+     `SUF_PREFIX_TO_EQS` cases of `rewritePrefixSuffix`, and `LEN_REPL_INV`.
+     Fuzzing: 34.0% identical to cvc5 (from 27.6%), no semantic disagreements;
+     Ethos accepts all proofs.
+   - Next: `StringsEntail` (`stripSymbolicLength` and the
+     `MACRO_SUBSTR_STRIP_SYM_LENGTH` elaboration, `checkContains`), then
+     `rewriteContains`, `rewriteReplace`, `rewriteIndexof`, `rewriteMembership`
+     and the regular expression rewrites (`rewriteAndOrRegExp`,
+     `rewriteConcatRegExp`, `rewriteStarRegExp`, `rewriteLoopRegExp`).
 9. **Performance.** ~~Rewrite cache~~ (done: `Cache` in
    `Telos/Rewriter/Rewriter.lean`, for one call of `rewriteWith`, as cvc5 caches
    `rewriteTo`; children are rewritten in order and assembled by

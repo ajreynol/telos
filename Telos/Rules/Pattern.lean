@@ -63,6 +63,10 @@ structure RuleSpec where
   numVars : Nat
   /-- The rule's `:args`, as pattern variables, in order. -/
   args : List Nat
+  /-- Type arguments: `(p, i)` inserts, at position `p` of the arguments, the
+  Eunoia type of pattern variable `i` (for rules like `str-substr-empty-range`,
+  whose argument `(Seq @T0)` is the type of `x1`). -/
+  typeArgs : List (Nat × Nat) := []
   /-- The rule's left-hand side. -/
   lhs : Pat
   /-- The premises, in order. Each is discharged by an `evaluate` step (and a

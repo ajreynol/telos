@@ -21,6 +21,7 @@ import Telos.Rules.Programs
 import Telos.Theory.BVNorm
 import Telos.Theory.BV
 import Telos.Theory.Arrays
+import Telos.Strings.ArithEntail
 import Telos.Theory.Strings
 import Telos.Rewrite
 import Telos.Rules.RuleNames
