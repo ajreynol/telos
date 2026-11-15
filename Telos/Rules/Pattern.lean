@@ -68,6 +68,9 @@ structure RuleSpec where
   /-- The premises, in order. Each is discharged by an `evaluate` step (and a
   `symm` step), and the rule applies when the values match. -/
   premises : List Premise
+  /-- The type the signature declares for each pattern variable, when it is a
+  fixed type telos has (for tests; matching does not use it). -/
+  varTypes : List (Option TypeNode) := []
   deriving Repr
 
 end Telos

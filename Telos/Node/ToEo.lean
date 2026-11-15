@@ -162,6 +162,44 @@ def Kind.eoShape : Kind → AppShape
   | .INTS_ISPOW2 => .spine (Term.UOp UserOp.int_ispow2) (.exactly 1)
   | .DISTINCT => .typedList UserOp.distinct
   | .SELECT => .spine (Term.UOp UserOp.select) (.exactly 2)
+  | .STRING_CONCAT => .rightAssocNil UserOp.str_concat .typed
+  | .REGEXP_CONCAT => .rightAssocNil UserOp.re_concat (.const (Term.Apply (Term.UOp UserOp.str_to_re) (Term.String [])))
+  | .REGEXP_INTER => .rightAssocNil UserOp.re_inter (.const (Term.UOp UserOp.re_all))
+  | .REGEXP_UNION => .rightAssocNil UserOp.re_union (.const (Term.UOp UserOp.re_none))
+  | .STRING_LENGTH => .spine (Term.UOp UserOp.str_len) (.exactly 1)
+  | .STRING_SUBSTR => .spine (Term.UOp UserOp.str_substr) (.exactly 3)
+  | .STRING_UPDATE => .spine (Term.UOp UserOp.str_update) (.exactly 3)
+  | .STRING_CHARAT => .spine (Term.UOp UserOp.str_at) (.exactly 2)
+  | .STRING_CONTAINS => .spine (Term.UOp UserOp.str_contains) (.exactly 2)
+  | .STRING_LT => .spine (Term.UOp UserOp.str_lt) (.exactly 2)
+  | .STRING_LEQ => .spine (Term.UOp UserOp.str_leq) (.exactly 2)
+  | .STRING_INDEXOF => .spine (Term.UOp UserOp.str_indexof) (.exactly 3)
+  | .STRING_INDEXOF_RE => .spine (Term.UOp UserOp.str_indexof_re) (.exactly 3)
+  | .STRING_REPLACE => .spine (Term.UOp UserOp.str_replace) (.exactly 3)
+  | .STRING_REPLACE_ALL => .spine (Term.UOp UserOp.str_replace_all) (.exactly 3)
+  | .STRING_REPLACE_RE => .spine (Term.UOp UserOp.str_replace_re) (.exactly 3)
+  | .STRING_REPLACE_RE_ALL => .spine (Term.UOp UserOp.str_replace_re_all) (.exactly 3)
+  | .STRING_PREFIX => .spine (Term.UOp UserOp.str_prefixof) (.exactly 2)
+  | .STRING_SUFFIX => .spine (Term.UOp UserOp.str_suffixof) (.exactly 2)
+  | .STRING_IS_DIGIT => .spine (Term.UOp UserOp.str_is_digit) (.exactly 1)
+  | .STRING_ITOS => .spine (Term.UOp UserOp.str_from_int) (.exactly 1)
+  | .STRING_STOI => .spine (Term.UOp UserOp.str_to_int) (.exactly 1)
+  | .STRING_TO_CODE => .spine (Term.UOp UserOp.str_to_code) (.exactly 1)
+  | .STRING_FROM_CODE => .spine (Term.UOp UserOp.str_from_code) (.exactly 1)
+  | .STRING_TO_LOWER => .spine (Term.UOp UserOp.str_to_lower) (.exactly 1)
+  | .STRING_TO_UPPER => .spine (Term.UOp UserOp.str_to_upper) (.exactly 1)
+  | .STRING_REV => .spine (Term.UOp UserOp.str_rev) (.exactly 1)
+  | .STRING_TO_REGEXP => .spine (Term.UOp UserOp.str_to_re) (.exactly 1)
+  | .STRING_IN_REGEXP => .spine (Term.UOp UserOp.str_in_re) (.exactly 2)
+  | .REGEXP_NONE => .spine (Term.UOp UserOp.re_none) (.exactly 0)
+  | .REGEXP_ALL => .spine (Term.UOp UserOp.re_all) (.exactly 0)
+  | .REGEXP_ALLCHAR => .spine (Term.UOp UserOp.re_allchar) (.exactly 0)
+  | .REGEXP_DIFF => .spine (Term.UOp UserOp.re_diff) (.exactly 2)
+  | .REGEXP_STAR => .spine (Term.UOp UserOp.re_mult) (.exactly 1)
+  | .REGEXP_PLUS => .spine (Term.UOp UserOp.re_plus) (.exactly 1)
+  | .REGEXP_OPT => .spine (Term.UOp UserOp.re_opt) (.exactly 1)
+  | .REGEXP_RANGE => .spine (Term.UOp UserOp.re_range) (.exactly 2)
+  | .REGEXP_COMPLEMENT => .spine (Term.UOp UserOp.re_comp) (.exactly 1)
   | .STORE => .spine (Term.UOp UserOp.store) (.exactly 3)
   | .BITVECTOR_UBV_TO_INT => .spine (Term.UOp UserOp.ubv_to_int) (.exactly 1)
   | .BITVECTOR_SBV_TO_INT => .spine (Term.UOp UserOp.sbv_to_int) (.exactly 1)
@@ -217,6 +255,9 @@ def Kind.eoShape : Kind → AppShape
 def indexedEoShape : Kind → List Int → AppShape
   | .BITVECTOR_EXTRACT, [i, j] =>
       .spine (Term.UOp2 UserOp2.extract (Term.Numeral i) (Term.Numeral j)) (.exactly 1)
+  | .REGEXP_REPEAT, [i] => .spine (Term.UOp1 UserOp1.re_exp (Term.Numeral i)) (.exactly 1)
+  | .REGEXP_LOOP, [i, j] =>
+      .spine (Term.UOp2 UserOp2.re_loop (Term.Numeral i) (Term.Numeral j)) (.exactly 1)
   | .INT_TO_BITVECTOR, [i] => .spine (Term.UOp1 UserOp1.int_to_bv (Term.Numeral i)) (.exactly 1)
   | .BITVECTOR_REPEAT, [i] => .spine (Term.UOp1 UserOp1.repeat (Term.Numeral i)) (.exactly 1)
   | .BITVECTOR_ZERO_EXTEND, [i] => .spine (Term.UOp1 UserOp1.zero_extend (Term.Numeral i)) (.exactly 1)
@@ -235,14 +276,23 @@ def _root_.Eo.UserOp.isBvNary (op : UserOp) : Bool :=
   op == UserOp.concat || op == UserOp.bvand || op == UserOp.bvor || op == UserOp.bvxor ||
     op == UserOp.bvadd || op == UserOp.bvmul
 
+/-- The `:right-assoc-nil` operators with a typed nil whose congruence is proved
+like that of the bit-vector ones: those and `str.++`. -/
+def _root_.Eo.UserOp.isTypedNary (op : UserOp) : Bool :=
+  op.isBvNary || op == UserOp.str_concat
+
+/-- The `:right-assoc-nil` regular expression operators, whose nil is constant. -/
+def _root_.Eo.UserOp.isReNary (op : UserOp) : Bool :=
+  op == UserOp.re_concat || op == UserOp.re_inter || op == UserOp.re_union
+
 /-- Shapes whose congruence is proven child by child: rewriting any child to an
 equivalent node gives an equivalent application. Binders are handled separately,
 since their variable list is not a term. Typed argument lists (`distinct`) are
 not yet: their children are not rewritten. -/
 def AppShape.isChildCongruent : AppShape → Bool
   | .spine _ _ => true
-  | .rightAssocNil op (.const _) => op == UserOp.and || op == UserOp.or
-  | .rightAssocNil op .typed => op == UserOp.plus || op == UserOp.mult || op.isBvNary
+  | .rightAssocNil op (.const _) => op == UserOp.and || op == UserOp.or || op.isReNary
+  | .rightAssocNil op .typed => op == UserOp.plus || op == UserOp.mult || op.isTypedNary
   | .none => true
   | .typedList _ | .binderList | .binder _ => false
 

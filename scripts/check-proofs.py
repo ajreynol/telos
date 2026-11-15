@@ -10,7 +10,7 @@ With `--fuzz N`, the queries are N random terms from `telos-fuzz` instead.
 
 Usage:
   scripts/check-proofs.py [--ethos PATH] FILE.smt2 ...
-  scripts/check-proofs.py [--ethos PATH] --fuzz N [--seed S] [--depth D] [--arith | --uf | --bv | --arrays | --mixed]
+  scripts/check-proofs.py [--ethos PATH] --fuzz N [--seed S] [--depth D] [--arith | --uf | --bv | --arrays | --mixed | --strings]
 
 Build first: `lake build telos telos-fuzz`.
 """
@@ -45,11 +45,13 @@ FUZZ_PRELUDE = """(declare-const a Bool)
 (declare-const am (Array (_ BitVec 4) Int))
 (declare-const bm (Array U U))
 (declare-const cm (Array U U))
+(declare-const su String)
+(declare-const sv String)
 """
 
 
-def fuzz_script(n, seed, depth, arith, uf=False, bv=False, arrays=False, mixed=False):
-    out = subprocess.run([str(BIN / "telos-fuzz"), str(seed), str(n), str(depth)] + (["arith"] if arith else ["uf"] if uf else ["bv"] if bv else ["arrays"] if arrays else ["mixed"] if mixed else []),
+def fuzz_script(n, seed, depth, arith, uf=False, bv=False, arrays=False, mixed=False, strings=False):
+    out = subprocess.run([str(BIN / "telos-fuzz"), str(seed), str(n), str(depth)] + (["arith"] if arith else ["uf"] if uf else ["bv"] if bv else ["arrays"] if arrays else ["mixed"] if mixed else ["strings"] if strings else []),
                          capture_output=True, text=True, check=True).stdout
     terms = [line.split("\t")[0] for line in out.splitlines()]
     return FUZZ_PRELUDE + "".join(f"(simplify {t})\n" for t in terms)
@@ -84,6 +86,7 @@ def main():
     ap.add_argument("--bv", action="store_true", help="include bit-vector comparisons")
     ap.add_argument("--arrays", action="store_true", help="include array equalities")
     ap.add_argument("--mixed", action="store_true", help="include atoms mixing theories")
+    ap.add_argument("--strings", action="store_true", help="include string predicates")
     a = ap.parse_args()
     if not (BIN / "telos").exists():
         sys.exit("error: build telos first: lake build telos telos-fuzz")
@@ -92,7 +95,7 @@ def main():
         files = list(a.files)
         if a.fuzz:
             f = Path(tmp) / "fuzz.smt2"
-            f.write_text(fuzz_script(a.fuzz, a.seed, a.depth, a.arith, a.uf, a.bv, a.arrays, a.mixed))
+            f.write_text(fuzz_script(a.fuzz, a.seed, a.depth, a.arith, a.uf, a.bv, a.arrays, a.mixed, a.strings))
             files.append(f)
         for f in files:
             n, failed, m = check(a.ethos, f, tmp)

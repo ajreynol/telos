@@ -3,7 +3,7 @@ import Telos
 /-!
 # `telos-fuzz`: random terms and their rewrites
 
-`telos-fuzz SEED COUNT DEPTH [arith|uf|bv|arrays|mixed] [--profile]` prints `COUNT` random Boolean terms over
+`telos-fuzz SEED COUNT DEPTH [arith|uf|bv|arrays|mixed|strings] [--profile]` prints `COUNT` random Boolean terms over
 `a`, `b`, `c` (and the integer `x`), each with its telos rewrite, as
 `input<TAB>output` lines. With `arith`, the terms also contain comparisons of
 integer and real terms over `x`, `y`, `r` and `s`. With `uf`, they also contain
@@ -187,6 +187,70 @@ def genArrAtom : GenM Node := do
   if (← pick 3) == 0 then return eqNode (← genArr 3) (← genArr 3)
   return eqNode (mkNode .SELECT #[← genArr 3, ← genIdx]) (← genElem 2)
 
+/-! ## Strings -/
+
+def strLit (w : String) : Node := .const (.string (w.toList.map Char.toNat))
+
+def strAtoms : Array Node :=
+  #[.var "su" .string, .var "sv" .string, strLit "", strLit "a", strLit "ab", strLit "b"]
+
+def smallInts : Array Node :=
+  #[.const (.integer 0), .const (.integer 1), .const (.integer 2), .var "x" .integer]
+
+mutual
+/-- A random string term over `s`, `t` and a few constants. -/
+partial def genStr : Nat → GenM Node
+  | 0 => return strAtoms[← pick strAtoms.size]!
+  | d + 1 => do
+    match ← pick 9 with
+    | 0 | 1 => genStr 0
+    | 2 => return mkNode .STRING_CONCAT (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genStr d)
+    | 3 => return mkNode .STRING_SUBSTR #[← genStr d, smallInts[← pick 4]!, smallInts[← pick 4]!]
+    | 4 => return mkNode .STRING_CHARAT #[← genStr d, smallInts[← pick 4]!]
+    | 5 => return mkNode .STRING_REPLACE #[← genStr d, ← genStr 0, ← genStr 0]
+    | 6 => return mkNode .STRING_REV #[← genStr d]
+    | 7 => return mkNode .STRING_ITOS #[← genStrInt d]
+    | _ => return mkNode .STRING_REPLACE_ALL #[← genStr d, ← genStr 0, ← genStr 0]
+
+/-- A random integer term about strings. -/
+partial def genStrInt : Nat → GenM Node
+  | 0 => return smallInts[← pick 4]!
+  | d + 1 => do
+    match ← pick 4 with
+    | 0 => return mkNode .STRING_LENGTH #[← genStr d]
+    | 1 => return mkNode .STRING_INDEXOF #[← genStr d, ← genStr 0, smallInts[← pick 4]!]
+    | 2 => return mkNode .STRING_STOI #[← genStr d]
+    | _ => genStrInt 0
+end
+
+/-- A random regular expression. -/
+partial def genRe : Nat → GenM Node
+  | 0 => do
+    match ← pick 4 with
+    | 0 => return mkNode .STRING_TO_REGEXP #[← genStr 0]
+    | 1 => return mkNode .REGEXP_ALLCHAR #[]
+    | 2 => return mkNode .REGEXP_RANGE #[strLit "a", strLit "c"]
+    | _ => return mkNode .REGEXP_ALL #[]
+  | d + 1 => do
+    match ← pick 6 with
+    | 0 => return mkNode .REGEXP_STAR #[← genRe d]
+    | 1 => return mkNode .REGEXP_CONCAT #[← genRe d, ← genRe d]
+    | 2 => return mkNode .REGEXP_UNION #[← genRe d, ← genRe d]
+    | 3 => return mkNode .REGEXP_INTER #[← genRe d, ← genRe d]
+    | 4 => return mkNode .REGEXP_OPT #[← genRe d]
+    | _ => genRe 0
+
+/-- A random string predicate. -/
+def genStrAtom : GenM Node := do
+  match ← pick 7 with
+  | 0 => return eqNode (← genStr 2) (← genStr 2)
+  | 1 => return mkNode .STRING_CONTAINS #[← genStr 2, ← genStr 1]
+  | 2 => return mkNode .STRING_PREFIX #[← genStr 1, ← genStr 2]
+  | 3 => return mkNode .STRING_SUFFIX #[← genStr 1, ← genStr 2]
+  | 4 => return eqNode (← genStrInt 2) (← genStrInt 1)
+  | 5 => return mkNode .STRING_IN_REGEXP #[← genStr 1, ← genRe 2]
+  | _ => return mkNode .STRING_LEQ #[← genStr 1, ← genStr 1]
+
 /-! ## Mixed theories -/
 
 def bvArrT : TypeNode := .array (.bitVector 4) .integer
@@ -235,7 +299,7 @@ def genCmp (d : Nat) : GenM Node := do
   return mkNode k #[← genArith real d, ← genArith real d]
 
 def genBool (arith : Bool) (uf : Bool := false) (bv : Bool := false) (arr : Bool := false)
-    (mixed : Bool := false) : Nat → GenM Node
+    (mixed : Bool := false) (str : Bool := false) : Nat → GenM Node
   | 0 => do
     if arith && (← pick 2) == 0 then return ← genCmp 1
     if uf then
@@ -246,18 +310,20 @@ def genBool (arith : Bool) (uf : Bool := false) (bv : Bool := false) (arr : Bool
       if (← pick 3) != 0 then return ← genArrAtom
     if mixed then
       if (← pick 4) != 0 then return ← genMixedAtom atoms[← pick atoms.size]!
+    if str then
+      if (← pick 4) != 0 then return ← genStrAtom
     return atoms[← pick atoms.size]!
   | d + 1 => do
     match ← pick 11 with
-    | 0 | 1 => genBool arith uf bv arr mixed 0
-    | 2 => return notNode (← genBool arith uf bv arr mixed d)
-    | 3 => return mkNode .AND (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf bv arr mixed d)
-    | 4 => return mkNode .OR (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf bv arr mixed d)
-    | 5 => return mkNode .IMPLIES #[← genBool arith uf bv arr mixed d, ← genBool arith uf bv arr mixed d]
-    | 6 => return mkNode .XOR #[← genBool arith uf bv arr mixed d, ← genBool arith uf bv arr mixed d]
-    | 7 => return eqNode (← genBool arith uf bv arr mixed d) (← genBool arith uf bv arr mixed d)
-    | 8 => if arith then genCmp d else genBool arith uf bv arr mixed d
-    | _ => return iteNode (← genBool arith uf bv arr mixed d) (← genBool arith uf bv arr mixed d) (← genBool arith uf bv arr mixed d)
+    | 0 | 1 => genBool arith uf bv arr mixed str 0
+    | 2 => return notNode (← genBool arith uf bv arr mixed str d)
+    | 3 => return mkNode .AND (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf bv arr mixed str d)
+    | 4 => return mkNode .OR (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf bv arr mixed str d)
+    | 5 => return mkNode .IMPLIES #[← genBool arith uf bv arr mixed str d, ← genBool arith uf bv arr mixed str d]
+    | 6 => return mkNode .XOR #[← genBool arith uf bv arr mixed str d, ← genBool arith uf bv arr mixed str d]
+    | 7 => return eqNode (← genBool arith uf bv arr mixed str d) (← genBool arith uf bv arr mixed str d)
+    | 8 => if arith then genCmp d else genBool arith uf bv arr mixed str d
+    | _ => return iteNode (← genBool arith uf bv arr mixed str d) (← genBool arith uf bv arr mixed str d) (← genBool arith uf bv arr mixed str d)
 
 def main (args : List String) : IO Unit := do
   let profile := args.contains "--profile"
@@ -271,9 +337,10 @@ def main (args : List String) : IO Unit := do
   let bv := args[3]? == some "bv"
   let arr := args[3]? == some "arrays"
   let mixed := args[3]? == some "mixed"
+  let str := args[3]? == some "strings"
   let mut rng : Rng := ⟨seed.toUInt64⟩
   for _ in [0:count] do
-    let (t, r) := (genBool arith uf bv arr mixed depth).run rng
+    let (t, r) := (genBool arith uf bv arr mixed str depth).run rng
     rng := r
     let r ← Profile.measure "total" "rewrite" fun _ => rewrite t
     IO.println s!"{t.toSmtLib}\t{r.toSmtLib}"

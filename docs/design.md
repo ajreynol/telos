@@ -587,7 +587,33 @@ tested:
      identical to cvc5, 76.3% up to the orientation of equalities, no semantic
      disagreements; of the 711 differences, 661 are a constant-condition
      `bvite` (above) and 50 the order of `store`s. Ethos accepts all proofs.
-8. **Performance.** ~~Rewrite cache~~ (done: `Cache` in
+8. **Strings (stage 1).** Kinds for the string and regular expression
+   operators (not sequences yet), with their CPC shapes: `str.++` with a typed
+   nil (its congruence is proved like that of the bit-vector operators, with
+   Logos's well-formedness of `Seq` types), `re.++`, `re.inter` and `re.union`
+   with constant nils (`translation_rest_re`). The rule generator reads the
+   signature's `seq.*` aliases, nullary regular expressions and string
+   literals: 168 of the 203 string rules. The rule self-test gives variables
+   their declared types and accepts rules whose left-hand side matches but
+   whose premises do not hold on fresh variables. `Telos/Theory/Strings.lean`
+   ports cvc5's `rewriteConcat` (by `aci_norm` and `evaluate`), parts of
+   `rewriteLength`, `rewriteEquality`, `rewriteCharAt`, `rewritePrefixSuffix`
+   (without arithmetic entailment), the eliminations of `re.opt`, `re.+`,
+   `re.diff` and `re.^`, `rewriteRangeRegExp`, and the evaluation of
+   operators on constants.
+   - Fuzzing (`scripts/fuzz.py --strings`, 3000 terms of depth 3 over two
+     string constants `su`, `sv` and small literals): 27.6% identical to cvc5
+     (24.1% after the first step), no semantic disagreements; Ethos accepts all
+     proofs. The largest gaps are `rewriteSubstr`, `rewriteMembership` and the
+     regular expression rewrites, `rewriteReplace` and `rewriteContains`.
+   - Next: cvc5's `ArithEntail`, mimicked natively, with its results certified
+     as cvc5 elaborates `MACRO_ARITH_STRING_PRED_ENTAIL`: normalization to
+     `(>= n 0)` by `arith_poly_norm_rel`, approximation by
+     `arith-string-pred-safe-approx`, and `arith-string-pred-entail` (whose
+     `$str_arith_entail_simple` is cvc5's `checkSimple`). Then `rewriteSubstr`,
+     `rewriteContains`, `rewriteReplace` and `rewriteIndexof` on top of it, and
+     `StringsEntail`.
+9. **Performance.** ~~Rewrite cache~~ (done: `Cache` in
    `Telos/Rewriter/Rewriter.lean`, for one call of `rewriteWith`, as cvc5 caches
    `rewriteTo`; children are rewritten in order and assembled by
    `Rw.congrList`). Sharing, cached hashes; a proof that children
@@ -645,7 +671,7 @@ tested:
      equation 9% and reading it back 7%; type queries 12% (260k, uncached);
      telos's polynomial normal form 4%; matching 1%; unprobed strategy and
      driver code most of the rest. No check is rejected.
-9. ~~Proof output.~~ Done: `telos --proof` prints a CPC proof of
+10. ~~Proof output.~~ Done: `telos --proof` prints a CPC proof of
    `(= t (rewrite t))`, checked by Logos's checker before printing, and accepted
    by Ethos (`scripts/check-proofs.py`: 2000 of 2000 fuzzed terms). Open:
    proofs are not compacted (one `cong` per rewrite below an operator).

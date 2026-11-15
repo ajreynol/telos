@@ -3,6 +3,7 @@ import Telos.Theory.Arith
 import Telos.Theory.UF
 import Telos.Theory.BV
 import Telos.Theory.Arrays
+import Telos.Theory.Strings
 
 /-!
 # The rewriter
@@ -20,6 +21,7 @@ def baseTheoryRewriter : TheoryId → TheoryRewriter
   | .THEORY_ARITH => .arith
   | .THEORY_UF => .uf
   | .THEORY_BV => .bv
+  | .THEORY_STRINGS => .strings
   | _ => .trivial
 
 /-- The fuel for rewriting the equality of two array indices. -/

@@ -102,15 +102,69 @@ KINDS = {
     "bvsdivo": "BITVECTOR_SDIVO",
     "bvite": "BITVECTOR_ITE",
     "select": "SELECT",
+    "str.++": "STRING_CONCAT",
+    "re.++": "REGEXP_CONCAT",
+    "re.inter": "REGEXP_INTER",
+    "re.union": "REGEXP_UNION",
+    "str.len": "STRING_LENGTH",
+    "str.substr": "STRING_SUBSTR",
+    "str.update": "STRING_UPDATE",
+    "str.at": "STRING_CHARAT",
+    "str.contains": "STRING_CONTAINS",
+    "str.<": "STRING_LT",
+    "str.<=": "STRING_LEQ",
+    "str.indexof": "STRING_INDEXOF",
+    "str.indexof_re": "STRING_INDEXOF_RE",
+    "str.replace": "STRING_REPLACE",
+    "str.replace_all": "STRING_REPLACE_ALL",
+    "str.replace_re": "STRING_REPLACE_RE",
+    "str.replace_re_all": "STRING_REPLACE_RE_ALL",
+    "str.prefixof": "STRING_PREFIX",
+    "str.suffixof": "STRING_SUFFIX",
+    "str.is_digit": "STRING_IS_DIGIT",
+    "str.from_int": "STRING_ITOS",
+    "str.to_int": "STRING_STOI",
+    "str.to_code": "STRING_TO_CODE",
+    "str.from_code": "STRING_FROM_CODE",
+    "str.to_lower": "STRING_TO_LOWER",
+    "str.to_upper": "STRING_TO_UPPER",
+    "str.rev": "STRING_REV",
+    "str.to_re": "STRING_TO_REGEXP",
+    "str.in_re": "STRING_IN_REGEXP",
+    "re.none": "REGEXP_NONE",
+    "re.all": "REGEXP_ALL",
+    "re.allchar": "REGEXP_ALLCHAR",
+    "re.diff": "REGEXP_DIFF",
+    "re.*": "REGEXP_STAR",
+    "re.+": "REGEXP_PLUS",
+    "re.opt": "REGEXP_OPT",
+    "re.range": "REGEXP_RANGE",
+    "re.comp": "REGEXP_COMPLEMENT",
     "store": "STORE",
     "ubv_to_int": "BITVECTOR_UBV_TO_INT",
     "sbv_to_int": "BITVECTOR_SBV_TO_INT",
 }
+# The signature's sequence names for the string operators (`(define seq.extract
+# () str.substr)`, ...).
+SEQ_ALIASES = {
+    "seq.len": "str.len", "seq.++": "str.++", "seq.extract": "str.substr",
+    "seq.contains": "str.contains", "seq.replace": "str.replace",
+    "seq.replace_all": "str.replace_all", "seq.indexof": "str.indexof",
+    "seq.prefixof": "str.prefixof", "seq.suffixof": "str.suffixof", "seq.rev": "str.rev",
+    "seq.update": "str.update", "seq.at": "str.at",
+}
+# Fixed types of rule parameters, as `TypeNode` constructors.
+VAR_TYPES = {"String": "string", "Int": "integer", "Real": "real", "Bool": "boolean",
+             "RegLan": "regExp"}
+# Nullary operators, written as symbols.
+NULLARY = {"re.allchar": "REGEXP_ALLCHAR", "re.none": "REGEXP_NONE", "re.all": "REGEXP_ALL"}
 # Indexed operators: kind and number of indices. In the signature the indices
 # come first, as in `(extract i j x)`.
 INDEXED = {
     "extract": ("BITVECTOR_EXTRACT", 2),
     "int_to_bv": ("INT_TO_BITVECTOR", 1),
+    "re.^": ("REGEXP_REPEAT", 1),
+    "re.loop": ("REGEXP_LOOP", 2),
     "repeat": ("BITVECTOR_REPEAT", 1),
     "zero_extend": ("BITVECTOR_ZERO_EXTEND", 1),
     "sign_extend": ("BITVECTOR_SIGN_EXTEND", 1),
@@ -122,7 +176,8 @@ KINDS_BY_ARITY = {("-", 1): "NEG", ("-", 2): "SUB"}
 # Kinds whose applications are `:right-assoc-nil`, where `:list` variables match
 # a run of children.
 NARY = {"AND", "OR", "ADD", "MULT", "BITVECTOR_CONCAT", "BITVECTOR_AND", "BITVECTOR_OR",
-        "BITVECTOR_XOR", "BITVECTOR_ADD", "BITVECTOR_MULT"}
+        "BITVECTOR_XOR", "BITVECTOR_ADD", "BITVECTOR_MULT",
+        "STRING_CONCAT", "REGEXP_CONCAT", "REGEXP_INTER", "REGEXP_UNION"}
 CONSTS = {"true": ".const (.boolean true)", "false": ".const (.boolean false)"}
 
 
@@ -205,13 +260,14 @@ def spec_of_rule(form, crules):
     if crule not in crules:
         raise Skip(f"no CRule.{crule}")
 
-    variables, is_list = {}, {}
+    variables, is_list, var_types = {}, {}, []
     for p in params:
         vname, attrs_p = p[0], p[2:]
         if vname.startswith("@"):
             continue  # implicit parameter, inferred by Logos from the arguments
         variables[vname] = len(variables)
         is_list[vname] = ":list" in attrs_p
+        var_types.append(VAR_TYPES.get(p[1]) if isinstance(p[1], str) else None)
 
     def pat(t, parent_kind=None):
         if isinstance(t, str):
@@ -223,6 +279,12 @@ def spec_of_rule(form, crules):
                 return f".var {variables[t]}"
             if t in CONSTS:
                 return CONSTS[t]
+            if t in NULLARY:
+                return f".app .{NULLARY[t]} []"
+            m = re.fullmatch(r'"((?:[^"]|"")*)"', t)
+            if m:
+                codes = [ord(c) for c in m.group(1).replace('""', '"')]
+                return f".const (.string [{', '.join(map(str, codes))}])"
             if re.fullmatch(r"-?[0-9]+", t):
                 return f".const (.integer ({t}))"
             m = re.fullmatch(r"(-?[0-9]+)/([0-9]+)", t)
@@ -230,6 +292,7 @@ def spec_of_rule(form, crules):
                 return f".const (.rational (mkRat ({m.group(1)}) {m.group(2)}))"
             raise Skip(f"symbol {t}")
         head = t[0] if t and isinstance(t[0], str) else None
+        head = SEQ_ALIASES.get(head, head)
         if head == "@bv" and len(t) == 3:
             return f".bvLit ({pat(t[1])}) ({pat(t[2])})"
         if head in INDEXED:
@@ -278,7 +341,8 @@ def spec_of_rule(form, crules):
         f"  {{ name := {lean_string(name)}, rule := .{crule}, numVars := {len(variables)},\n"
         f"    args := [{args_str}],\n"
         f"    lhs := {lhs},\n"
-        f"    premises := [{', '.join(premises)}] }}"
+        f"    premises := [{', '.join(premises)}],\n"
+        f"    varTypes := [{', '.join('some .' + t if t else 'none' for t in var_types)}] }}"
     )
 
 

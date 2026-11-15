@@ -5,6 +5,7 @@ import Cpc.Proofs.Translation.Inversions
 import Cpc.Proofs.Translation.EoTypeof
 import Cpc.Proofs.TypePreservation.BitVecPrep
 import Cpc.Proofs.RuleSupport.SubstituteTypeSupport
+import Cpc.Proofs.TypePreservation.Full
 
 /-!
 # Congruence
@@ -201,6 +202,66 @@ theorem typedNil_congr_bv {op : UserOp} (hop : op.isBvNary = true) {x y r : Term
   unfold typedNil
   rw [hy]
 
+/-! ## Strings and regular expressions -/
+
+theorem typeof_str_concat' (a b : SmtTerm) : __smtx_typeof (SmtTerm.str_concat a b) =
+    __smtx_typeof_seq_op_2 (__smtx_typeof a) (__smtx_typeof b) := by
+  rw [__smtx_typeof.eq_def]
+
+theorem seq_op_2_args {T U : SmtType} (h : __smtx_typeof_seq_op_2 T U ≠ SmtType.None) :
+    (∃ A, T = SmtType.Seq A) ∧ U ≠ SmtType.None := by
+  cases T <;> cases U <;> simp_all [__smtx_typeof_seq_op_2]
+
+/-- A well-typed application of a typed-nil operator (`isTypedNary`) has a first
+argument of a well-formed type, and a well-typed tail. -/
+theorem typed_nary_args {op : UserOp} (hop : op.isTypedNary = true) {x r : Term}
+    (h : eo_has_smt_translation (eoApp2 op x r)) :
+    __smtx_type_wf (__smtx_typeof (__eo_to_smt x)) = true ∧ eo_has_smt_translation r := by
+  simp only [UserOp.isTypedNary, Bool.or_eq_true, beq_iff_eq] at hop
+  rcases hop with hbv | rfl
+  · obtain ⟨⟨w, hw⟩, hr⟩ := bv_nary_args hbv h
+    refine ⟨?_, hr⟩
+    rw [hw]; simp [__smtx_type_wf, __smtx_type_wf_component, __smtx_type_wf_rec, SmtEval.native_and]
+  · unfold eo_has_smt_translation at h ⊢
+    change __smtx_typeof (SmtTerm.str_concat _ _) ≠ _ at h
+    rw [typeof_str_concat'] at h
+    obtain ⟨⟨A, hA⟩, hU⟩ := seq_op_2_args h
+    refine ⟨?_, hU⟩
+    rw [hA]
+    exact smt_term_seq_type_wf_of_non_none _ (by unfold term_has_non_none_type; rw [hA]; simp) hA
+
+/-- Equivalent first elements of a well-typed typed-nil application give the same
+nil: equivalent terms of a well-formed type have the same Eunoia type. -/
+theorem typedNil_congr_typed {op : UserOp} (hop : op.isTypedNary = true) {x y r : Term}
+    (h : TermEquiv x y) (ht : eo_has_smt_translation (eoApp2 op x r)) :
+    typedNil op x = typedNil op y := by
+  obtain ⟨⟨hne, heq⟩, _⟩ := (termEquiv_iff x y).1 h
+  have hwf := (typed_nary_args hop ht).1
+  have hx := TranslationProofs.eo_to_smt_type_typeof_of_smt_type x rfl hne
+  have hy : __eo_typeof y = __eo_typeof x := by
+    apply SubstituteSupport.eo_typeof_eq_of_smt_type_eq _ _
+    · show __smtx_typeof (__eo_to_smt y) ≠ SmtType.None
+      rw [← heq]; exact hne
+    · rw [hx]; exact hwf
+    · rw [hx, ← heq]
+  unfold typedNil
+  rw [hy]
+
+/-- The tail of a well-typed `re.++`, `re.inter` or `re.union` is well typed. -/
+theorem translation_rest_re {op : UserOp} (hop : op.isReNary = true) {x r : Term}
+    (h : eo_has_smt_translation (eoApp2 op x r)) : eo_has_smt_translation r := by
+  unfold eo_has_smt_translation at h ⊢
+  simp only [UserOp.isReNary, Bool.or_eq_true, beq_iff_eq] at hop
+  intro hr
+  apply h
+  rcases hop with (rfl | rfl) | rfl
+  · change __smtx_typeof (SmtTerm.re_concat _ _) = _
+    rw [__smtx_typeof.eq_def]; simp only; rw [hr]; simp [native_ite, native_Teq]
+  · change __smtx_typeof (SmtTerm.re_inter _ _) = _
+    rw [__smtx_typeof.eq_def]; simp only; rw [hr]; simp [native_ite, native_Teq]
+  · change __smtx_typeof (SmtTerm.re_union _ _) = _
+    rw [__smtx_typeof.eq_def]; simp only; rw [hr]; simp [native_ite, native_Teq]
+
 theorem termEquiv_rightAssocNil (op : UserOp) (nil : Term)
     (hrest : ∀ {x r : Term}, eo_has_smt_translation (eoApp2 op x r) → eo_has_smt_translation r)
     {xs ys : List Term} (h : List.Forall₂ TermEquiv xs ys)
@@ -249,19 +310,21 @@ theorem shape_congr (sh : AppShape) (hsh : sh.isChildCongruent = true) {xs ys : 
             | nil => simp at hle
             | cons hxy _ =>
               simp only [eoRightAssocNil] at ht
-              exact (typedNil_congr_bv hbv hxy ht).symm
+              exact (typedNil_congr_typed hbv hxy ht).symm
       rw [hnil]
       have hrest : ∀ {x r : Term}, eo_has_smt_translation (eoApp2 op x r) →
           eo_has_smt_translation r := by
         cases nil with
         | const _ =>
           simp only [AppShape.isChildCongruent, Bool.or_eq_true, beq_iff_eq] at hsh
-          exact translation_rest hsh
+          rcases hsh with hsh | hre
+          · exact translation_rest hsh
+          · exact translation_rest_re hre
         | typed =>
           simp only [AppShape.isChildCongruent, Bool.or_eq_true, beq_iff_eq] at hsh
           rcases hsh with hsh | hbv
           · exact translation_rest_arith hsh
-          · exact fun h => (bv_nary_args hbv h).2
+          · exact fun h => (typed_nary_args hbv h).2
       exact termEquiv_rightAssocNil _ _ hrest h ht
     · rw [AppShape.toEo, ite_eq_right hle] at ht
       exact absurd ht not_translation_stuck

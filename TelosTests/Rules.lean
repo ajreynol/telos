@@ -21,18 +21,26 @@ partial def listKind? : Pat → Nat → Option Kind
     else ps.findSome? (listKind? · i)
   | _, _ => none
 
+/-- Fresh variables for the rule's variables: of their declared type, or else of
+type `T`. -/
 def freshSubst (r : RuleSpec) (T : TypeNode) (listLen : Nat) : Subst :=
   (Array.range r.numVars).map fun i =>
+    let Ti := ((r.varTypes[i]?).join).getD T
     some <| match listKind? r.lhs i with
-      | some k => .list k ((List.range listLen).map fun j => .var s!"l{i}_{j}" T)
-      | none => .node (.var s!"v{i}" T)
+      | some k => .list k ((List.range listLen).map fun j => .var s!"l{i}_{j}" Ti)
+      | none => .node (.var s!"v{i}" Ti)
 
 /-- Whether the rule fires on its fresh left-hand side, with variables of some
 type (all of the same type). -/
 def firesOnFresh (r : RuleSpec) (listLen : Nat) : Bool :=
-  [TypeNode.boolean, .integer, .real, .bitVector 4].any fun T =>
+  [TypeNode.boolean, .integer, .real, .bitVector 4, .string, .regExp].any fun T =>
     match r.lhs.instantiate (freshSubst r T listLen) with
-    | some n => (r.apply n).isSome
+    | some n =>
+      -- It fires, or its left-hand side matches and only a premise does not hold
+      -- on fresh variables.
+      (r.apply n).isSome ||
+        (!(matchPat (Array.replicate r.numVars none) r.lhs n).isEmpty && (r.allMatches n).isEmpty &&
+          !r.premises.isEmpty)
     | none => false
 
 /-- Rules that do not fire on fresh variables of one type: their premises do not
@@ -64,6 +72,13 @@ def expectedToFail : List String :=
    "array-read-over-write", "array-read-over-write2", "array-store-overwrite",
    "array-store-self", "array-read-over-write-split", "array-store-swap"]
 
+/-- Rules that fail on fresh variables with empty lists only: the left-hand side
+is then an n-ary application with one child, which is not a term. -/
+def expectedToFailEmptyLists : List String :=
+  ["str-replace-prefix-concat", "str-replace-find-pre", "str-indexof-prefix-concat",
+   "str-leq-concat-false", "str-leq-concat-true", "re-union-all", "re-inter-all",
+   "re-star-union-char", "re-star-union-drop-emp"]
+
 /-- Whether a pattern has integer parameters (indices, widths, bit-vector
 literals), which fresh variables cannot instantiate. Such rules are tested on
 concrete terms (`test/examples/bv.smt2`) and by fuzzing. -/
@@ -74,13 +89,14 @@ partial def patHasIntParams : Pat → Bool
 
 def selfTestFailures (listLen : Nat) : List String :=
   generatedRules.filterMap fun r =>
-    if expectedToFail.contains r.name || patHasIntParams r.lhs || firesOnFresh r listLen then none
+    if expectedToFail.contains r.name || patHasIntParams r.lhs || firesOnFresh r listLen ||
+        (listLen == 0 && expectedToFailEmptyLists.contains r.name) then none
     else some r.name
 
 #guard selfTestFailures 0 == []
 #guard selfTestFailures 2 == []
 -- Every rule listed as an exception exists.
-#guard expectedToFail.all fun n => (findRule? n).isSome
+#guard (expectedToFail ++ expectedToFailEmptyLists).all fun n => (findRule? n).isSome
 
 /-- The result of rewriting `n` by a rule. -/
 def rw? (name : String) (n : Node) : Option Node :=

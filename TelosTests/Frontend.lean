@@ -49,10 +49,10 @@ def results : Option (List (Except String String × Bool)) := do
   some "(forall ((y Int)) (= x y))",  -- cvc5: false (quantifier rewriting is not ported)
   some "true",  -- by the UF rewriter (`eq-refl`)
   some "a",
-  none]
+  some "(str.len s)"]
 
 -- Every supported query has a proof that Logos accepts.
-#guard (results.map fun rs => rs.map (·.2)) == some [true, true, true, true, true, true, true, true, false]
+#guard (results.map fun rs => rs.map (·.2)) == some [true, true, true, true, true, true, true, true, true]
 
 /-- A proof, as printed. -/
 def proofText : Option String := do
