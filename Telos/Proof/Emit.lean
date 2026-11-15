@@ -90,13 +90,14 @@ partial def emitChain : {n m : Node} → Certified n m → EmitM (Array Nat)
     return #[p] ++ (← emitChain rest)
   | _, _, @Certified.congrArg op cs _ i _ hi _ _ hc rest => do
     let ch ← emitChain hc
+    -- No step for a child that does not change (no `refl` facts either).
+    if ch.isEmpty then return ← emitChain rest
     let mut eqs := #[]
     for h : j in [0:cs.size] do
       if j == i then eqs := eqs.push (← closeChain cs[i] ch)
       else eqs := eqs.push (← closeChain cs[j] #[])
-    let p ← if ch.isEmpty then pure none
-      else some <$> congStep (.app op cs) op eqs.toList
-    return p.toArray ++ (← emitChain rest)
+    let p ← congStep (.app op cs) op eqs.toList
+    return #[p] ++ (← emitChain rest)
   | _, _, @Certified.congr op cs _ _ _ _ _ hc rest => do
     let chains ← (List.range cs.size).attach.mapM fun ⟨j, hj⟩ =>
       emitChain (hc j (List.mem_range.1 hj))
@@ -125,6 +126,24 @@ def emitProof {t : Node} (r : Rw t) : Except String (Array Step) := do
 /-- The checker command for step `i`, whose premises are relative to it. -/
 def Step.toCmd (i : Nat) (s : Step) : CCmd :=
   .step s.rule (toArgList s.args) (s.premises.foldr (fun p acc => .cons (Int.ofNat (i - 1 - p)) acc) .nil)
+
+/-- The checker commands of the CPC proof of `(= t s)` for a certified rewrite
+of `t` to `s`. Its last fact is `(= t s)`. -/
+def cmdsOf {t : Node} (r : Rw t) : Option (List CCmd) :=
+  match emitProof r with
+  | .ok steps => some (steps.toList.zipIdx.map fun (st, k) => st.toCmd k)
+  | .error _ => none
+
+/-- A certified rewrite of `a` to `b`, from one of `b` to `a`: its proof, then
+`symm`. -/
+def reverse (a : Node) {b : Node} (r : Rw b) : Option (Rw a) :=
+  if r.1 != a then none else
+  let run : EmitM Nat := do
+    let p ← closeChain b (← emitChain r.2)
+    push ⟨.symm, [], [p]⟩
+  match run.run #[] with
+  | .ok (_, steps) => applyCmds ((steps.toList.zipIdx.map fun (st, k) => st.toCmd k).foldr .cons .nil) a
+  | .error _ => none
 
 /-- Run the steps through Logos's checker from the empty state. Return the fact
 each step proves; fail unless the last one is `goal`. -/

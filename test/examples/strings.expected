@@ -49,3 +49,32 @@ s
 (str.++ s (str.substr t 0 1))
 (str.substr (str.++ s t) 0 x)
 (str.substr (str.++ s t) 1 (str.len s))
+true
+true
+(or (str.contains s "a") (str.contains t "a") (str.contains s "a"))
+(or (str.contains s "z") (str.contains t "z"))
+false
+(str.contains s (str.++ "cd" t))
+(= t (str.substr s x (str.len t)))
+(str.contains s t)
+false
+(str.contains s (str.++ "a" (str.replace s "b" "c")))
+(str.++ "a" t "c" s)
+(str.++ t "b")
+(str.++ (str.replace (str.++ s "a") "a" t) "b")
+(str.++ "b" (str.replace s "a" t) "b")
+(str.++ (str.replace (str.++ s t) "a" t) s)
+s
+(str.++ "a" s "a" s)
+s
+1
+-1
+(str.indexof (str.++ s t) t 0)
+(str.indexof s "b" 0)
+-1
+(str.++ (str.rev t) "ba" (str.rev s))
+(str.++ (str.to_lower s) "ab" (str.to_lower t))
+-1
+true
+false
+(and (not (= s t)) (str.<= s t))

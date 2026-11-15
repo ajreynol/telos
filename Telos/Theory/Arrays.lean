@@ -62,9 +62,9 @@ def indexRel (eqRw : (m : Node) → Rw m) (i j : Node) : IndexRel :=
   else
     let r := eqRw (eqNode i j)
     if r.1 == .const (.boolean false) then
-      match Proof.emitProof r with
-      | .ok steps => .distinctBy (steps.toList.zipIdx.map fun (st, k) => st.toCmd k)
-      | .error _ => .unknown
+      match Proof.cmdsOf r with
+      | some cmds => .distinctBy cmds
+      | none => .unknown
     else .unknown
 
 /-- Apply `rule` with `args` to `n`, its premise `(= (= i j) false)` proven by

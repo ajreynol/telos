@@ -639,11 +639,46 @@ tested:
    - Fuzzing: 43.9% identical to cvc5 (from 27.6%), no semantic
      disagreements; Ethos accepts all proofs. (`fuzz.py` now gives each of
      cvc5's equivalence checks 2 seconds; 2 string checks time out.)
-   - Next: `StringsEntail` (`checkContains`, which rewrites `str.contains` with
-     the full rewriter, so the strings rewriter needs one, as the arrays
-     rewriter does; component containment, strip endpoints), then
-     `rewriteContains`, `rewriteReplace`, `rewriteIndexof`, the rest of
-     `rewriteMembership`, `rewriteConcatRegExp` and `rewriteLoopRegExp`.
+   - **String entailment** (`Telos/Strings/StringsEntail.lean`): cvc5's
+     `componentContains` (with remainders), `stripConstantEndpoints`,
+     `getMultisetApproximation` and `checkMultisetSubset`, over words as lists
+     of code points (`find`, `rfind`, `overlap`, `hasOverlap`).
+     `checkContains` rewrites `(str.contains a b)` with the full rewriter, as
+     cvc5 does, so the strings rewriter is given one
+     (`TheoryRewriter.strings rw`). The recursion is cut by depth
+     (`theoryRewriterAt`, `stringsDepth = 3`: at depth 0 the strings rewriter
+     has none). A premise that evaluation, `str-in-re-eval` and `ArithEntail`
+     do not discharge, such as `(not (str.contains t s))`, is proven by the
+     CPC proof of its rewrite to its value (`premiseProver`).
+   - With it: `rewriteContains` (all cases but `CTN_NCONST_CTN_CONCAT`),
+     `rewriteReplace`, `rewriteReplaceAll`, `rewriteIndexof` (without
+     `IDOF_STRIP_SYM_LEN` and `IDOF_NORM_PREFIX`), `rewriteStrReverse`,
+     `rewriteStrConvert`, `rewriteStrToInt`, `rewriteStringLeq`, and the
+     eliminations of `str.<` and `str.is_digit`. The macros are certified as
+     cvc5 elaborates them: `MACRO_STR_COMPONENT_CTN` by regrouping and
+     `str-contains-concat-find`, `MACRO_STR_STRIP_ENDPOINTS` by regrouping into
+     three components and `str-overlap-endpoints-ctn` (`-replace`,
+     `-indexof`), `MACRO_STR_SPLIT_CTN` by `str-overlap-split-ctn`.
+     Regrouping that splits a constant (`regroup`) is proven by rewriting the
+     regrouped term back (`rewriteConcat`) and reversing that proof
+     (`Proof.reverse`, `symm`). Cases that cvc5 itself leaves as proof holes
+     (a trusted step) are left unchanged: `CTN_SPLIT` for a constant first
+     argument, `REPL_SUBST_IDX`, `IDOF_STRIP_CNST_ENDPTS`, `STR_LEQ_ID`; so is
+     `CTN_LEN_INEQ` unless `str-ctn-multiset-subset` proves it (cvc5 goes
+     through `str-eq-len-false`, whose premise needs a proof by contradiction).
+   - Two fixes found on the way: the matcher compared the bindings of a list
+     variable that occurs twice with the seed of each occurrence, so rules
+     such as `str-leq-concat-true` never matched with an empty list
+     (`Binding.same`); and `Proof.emitChain` emitted unused `refl` steps for a
+     congruence whose child did not change, so that the proof's last fact was
+     not the rewrite.
+   - Fuzzing: 65.4% identical to cvc5 (from 43.9%), 83.0% up to the
+     orientation of equalities, no semantic disagreements; Ethos accepts all
+     proofs. The other modes are unchanged.
+   - Next: the largest gaps are `str.substr` (the parts of
+     `rewriteSubstr` and `stripSymbolicLength` that split constants),
+     `rewriteConcatRegExp`, the rest of `rewriteMembership` (consumption,
+     inclusion, stars of constants), `rewriteLoopRegExp`, and `CTN_LEN_INEQ`.
 9. **Performance.** ~~Rewrite cache~~ (done: `Cache` in
    `Telos/Rewriter/Rewriter.lean`, for one call of `rewriteWith`, as cvc5 caches
    `rewriteTo`; children are rewritten in order and assembled by

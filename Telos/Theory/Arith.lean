@@ -121,7 +121,9 @@ def rewriteOther (n : Node) : Option (Rw n) :=
 
 /-- cvc5's `rewriteDiv` removes `to_real` from the sides of a division by a
 non-constant: `(/ (to_real x) (to_real y))` is `(/ x y)`. Removing it from one
-side only would give a mixed division, which Logos's typing rejects. -/
+side only would give a mixed division, which Logos's typing rejects. cvc5
+does the same for `/_total`, which has no RARE rule yet
+(`cpc-arith-div-total-elim-to-real.md`), so telos leaves it unchanged. -/
 def rewriteDivToReal (n : Node) : Option (Rw n) :=
   match n.getChildren with
   | #[.app (.kind .TO_REAL) #[_], .app (.kind .TO_REAL) #[_]] => byRule "arith-div-elim-to-real" n

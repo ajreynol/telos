@@ -315,9 +315,7 @@ def premiseProof (p : Node) (v : Node) : Option (List Eo.CCmd) := do
   if v != .const (.boolean true) then none
   let r ← if p.getKind == .EQUAL then proveEq p else proveGeq p
   if r.1 != .const (.boolean true) then none
-  match Proof.emitProof r with
-  | .ok steps => some (steps.toList.zipIdx.map fun (st, k) => st.toCmd k)
-  | .error _ => none
+  Proof.cmdsOf r
 
 end ArithEntail
 

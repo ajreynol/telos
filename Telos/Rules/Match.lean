@@ -56,11 +56,18 @@ inductive Binding where
 /-- A partial assignment of pattern variables. -/
 abbrev Subst := Array (Option Binding)
 
+/-- Whether two bindings are the same run of children or node. The seed of a
+list only gives the type of its nil, so it is not compared: the first binding
+is kept, and a nil of the wrong type would be rejected by the checker. -/
+def Binding.same : Binding → Binding → Bool
+  | .list k es _, .list k' es' _ => k == k' && es == es'
+  | b, b' => b == b'
+
 /-- Bind variable `i` to `b`, or check that it is already bound to `b`. -/
 def Subst.bind (σ : Subst) (i : Nat) (b : Binding) : List Subst :=
   match σ[i]? with
   | some none => [σ.set! i (some b)]
-  | some (some b') => if b' == b then [σ] else []
+  | some (some b') => if b'.same b then [σ] else []
   | none => []
 
 mutual
