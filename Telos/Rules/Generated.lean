@@ -6,7 +6,7 @@ import Telos.Rules.Pattern
 namespace Telos
 
 /-- The rewrite rules of CPC whose left-hand sides telos can match:
-418 of the signature's 613 rules. -/
+421 of the signature's 615 rules. -/
 def generatedRules : List RuleSpec := [
   { name := "arith-div-total-zero-real", rule := .arith_div_total_zero_real, numVars := 1,
     args := [0],
@@ -801,6 +801,16 @@ def generatedRules : List RuleSpec := [
   { name := "bv-ite-equal-children", rule := .bv_ite_equal_children, numVars := 2,
     args := [0, 1],
     lhs := .app .BITVECTOR_ITE [.var 0, .var 1, .var 1],
+    premises := [],
+    varTypes := [none, none] },
+  { name := "bv-ite-const-cond-1", rule := .bv_ite_const_cond_1, numVars := 2,
+    args := [0, 1],
+    lhs := .app .BITVECTOR_ITE [.bvLit (.const (.integer (1))) (.const (.integer (1))), .var 0, .var 1],
+    premises := [],
+    varTypes := [none, none] },
+  { name := "bv-ite-const-cond-2", rule := .bv_ite_const_cond_2, numVars := 2,
+    args := [0, 1],
+    lhs := .app .BITVECTOR_ITE [.bvLit (.const (.integer (0))) (.const (.integer (1))), .var 0, .var 1],
     premises := [],
     varTypes := [none, none] },
   { name := "bv-ite-const-children-1", rule := .bv_ite_const_children_1, numVars := 1,
@@ -1804,6 +1814,11 @@ def generatedRules : List RuleSpec := [
     lhs := .app .STRING_REPLACE [.app .STRING_REPLACE [.var 0, .var 2, .var 0], .var 0, .var 1],
     premises := [{ expr := .app .EQUAL [.var 2, .var 1], value := .const (.boolean false), symm := false }, { expr := .app .GEQ [.app .STRING_LENGTH [.var 2], .app .STRING_LENGTH [.var 1]], value := .const (.boolean true), symm := false }],
     varTypes := [none, none, none] },
+  { name := "re-all-elim", rule := .re_all_elim, numVars := 0,
+    args := [],
+    lhs := .app .REGEXP_ALL [],
+    premises := [],
+    varTypes := [] },
   { name := "re-opt-elim", rule := .re_opt_elim, numVars := 1,
     args := [0],
     lhs := .app .REGEXP_OPT [.var 0],

@@ -159,16 +159,17 @@ def evalNode (a : Node) : Option Node :=
     | v => Node.ofEo [] v
 
 /-- A prover for premises that evaluation does not discharge: for a predicate
-`p`, the CPC commands proving `(= p true)` (their last fact). It is used for
-premises `(= p true)`, and for premises `(= a b)` between two terms, followed by
-`true_elim`. -/
-abbrev PremiseProver := Node → Option (List CCmd)
+`p` and a Boolean constant `v`, the CPC commands proving `(= p v)` (their last
+fact). It is used for premises `(= p true)` and `(= p false)`, and for premises
+`(= a b)` between two terms, as `(= (= a b) true)` followed by `true_elim`. -/
+abbrev PremiseProver := Node → Node → Option (List CCmd)
 
-/-- Whether the premise is `(= p true)`. -/
-def Premise.isTrue (p : Premise) : Bool :=
-  p.other.isNone && !p.symm && match p.value with
-    | .const (.boolean true) => true
-    | _ => false
+/-- The Boolean constant of a premise `(= p true)` or `(= p false)`. -/
+def Premise.boolValue? (p : Premise) : Option Node :=
+  if p.other.isSome || p.symm then none else
+  match p.value with
+  | .const (.boolean b) => some (.const (.boolean b))
+  | _ => none
 
 /-- The prover's proof of the premise, when evaluation does not give `true`. -/
 def proverSteps (prove : Option PremiseProver) (σ : Subst) (p : Premise) (a : Node) :
@@ -176,13 +177,14 @@ def proverSteps (prove : Option PremiseProver) (σ : Subst) (p : Premise) (a : N
   match prove with
   | none => none
   | some f =>
-    if p.isTrue then
-      if evalNode a == some (.const (.boolean true)) then none else f a
-    else match p.other with
+    match p.boolValue? with
+    | some v => if evalNode a == some v then none else f a v
+    | none => match p.other with
       | some o => do
         let b ← o.instantiate σ (sym := true)
         if (evalNode a).isSome && evalNode a == evalNode b then none
-        else return (← f (Node.mkNode .EQUAL #[a, b])) ++ [CCmd.step .true_elim .nil (.cons 0 .nil)]
+        else return (← f (Node.mkNode .EQUAL #[a, b]) (.const (.boolean true))) ++
+          [CCmd.step .true_elim .nil (.cons 0 .nil)]
       | none => none
 
 /-- Extend `σ` by the premises, in order: the value of each premise's left-hand

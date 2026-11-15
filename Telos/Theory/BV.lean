@@ -19,8 +19,7 @@ The normalizations over whole n-ary terms are in `Telos/Theory/BVNorm.lean`.
 
 Not ported yet (the node is left as it is where cvc5 would apply them):
 
-* `NegMult` (see `BVNorm.lean`) and `BvComp`;
-* `BvIteConstCond`, which CPC cannot prove yet (`iteConstCond`).
+* `NegMult` (see `BVNorm.lean`) and `BvComp`.
 -/
 
 namespace Telos
@@ -197,9 +196,7 @@ def extractFirst (pre : Bool) (n : Node) : Option (RewriteResponse n) :=
   if pre then none else tryRewrite n [rules ["bv-extract-extract"]]
 
 /-- cvc5's `BvIteConstCond`: `(bvite #b1 t e)` is `t` and `(bvite #b0 t e)` is
-`e`. CPC has no rule for it yet (`evaluate` does not reduce `bvite`); this uses
-the RARE rules requested in `cpc-bv-ite-const-cond.md`, so it applies once the
-pinned Logos has them. -/
+`e` (`bv-ite-const-cond-1/2`; cvc5 itself proves this step with a trust step). -/
 def iteConstCond : Step := rules ["bv-ite-const-cond-1", "bv-ite-const-cond-2"]
 
 /-- cvc5's `RewriteITEBv`. -/

@@ -218,6 +218,22 @@ def check2 (a b : Node) (strict : Bool := false) : Bool :=
 /-- cvc5's `checkEq`. -/
 def checkEq (a b : Node) : Bool := a == b || rewriteArith a == rewriteArith b
 
+/-- cvc5's `getConstantBound` for a lower bound of a normalized term: constants,
+lengths (at least 0), and sums and products of terms with bounds. -/
+partial def lowerBound? (a : Node) : Option Int :=
+  match a with
+  | .const (.integer i) => some i
+  | _ =>
+    match a.getKind with
+    | .STRING_LENGTH => some 0
+    | .ADD => a.getChildren.foldlM (fun acc c => (lowerBound? c).map (acc + ·)) 0
+    | .MULT =>
+      -- A product is bounded below by the product of positive bounds.
+      a.getChildren.foldlM (init := (1 : Int)) fun acc c => do
+        let b ← lowerBound? c
+        if b > 0 then some (acc * b) else none
+    | _ => none
+
 /-- cvc5's `StringsEntail::checkLengthOne`: the length of `s` is at most one
 (exactly one if `strict`). -/
 def checkLengthOne (s : Node) (strict : Bool := false) : Bool :=
@@ -295,7 +311,8 @@ def proveEq (p : Node) : Option (Rw p) := do
 
 /-- The CPC commands proving `(= p true)`, for an arithmetic predicate `p`
 entailed by `ArithEntail` (`>=`, `<=`, or an equality by `checkEq`). -/
-def premiseProof (p : Node) : Option (List Eo.CCmd) := do
+def premiseProof (p : Node) (v : Node) : Option (List Eo.CCmd) := do
+  if v != .const (.boolean true) then none
   let r ← if p.getKind == .EQUAL then proveEq p else proveGeq p
   if r.1 != .const (.boolean true) then none
   match Proof.emitProof r with

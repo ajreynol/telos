@@ -21,3 +21,31 @@ true
 ((_ re.loop 2 2) (str.to_re "a"))
 (re.union (str.to_re "") (str.to_re "a"))
 re.none
+(re.* re.allchar)
+r
+(re.union r (str.to_re "a"))
+re.none
+(re.* r)
+(str.to_re "")
+(str.to_re "")
+(re.* re.allchar)
+(re.* r)
+(re.* re.allchar)
+(re.* re.allchar)
+true
+false
+(= (str.len s) 1)
+true
+(str.contains s "ab")
+(or (str.in_re s r) (= "a" s))
+(and (str.in_re s r) (= "a" s) (str.in_re s (re.* r)))
+(= "a" s)
+(and (>= (str.to_code s) 97) (not (>= (str.to_code s) 100)))
+(not (str.in_re s r))
+s
+s
+(str.substr t 0 x)
+(str.substr t 0 x)
+(str.++ s (str.substr t 0 1))
+(str.substr (str.++ s t) 0 x)
+(str.substr (str.++ s t) 1 (str.len s))

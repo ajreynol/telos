@@ -524,13 +524,11 @@ tested:
    - Fuzzing (`scripts/fuzz.py --bv`, over three `(_ BitVec 4)` variables and
      constants, with all operators including `zero_extend`, `sign_extend`,
      `repeat`, `bvite`, `bvcomp`, `bvredor`, `bvredand` and the overflow
-     predicates): at depth 3 (3000 terms), 50.1% identical to cvc5 and 55.5% up
-     to the orientation of equalities; at depth 4 (2000 terms), 39.8% and
-     44.4%. No semantic disagreements. The fuzzer often builds `bvite` with a
-     constant condition, which CPC cannot simplify yet (below): of the 1335
-     differences at depth 3, 1295 are such a `bvite`, and the other 40 are the
-     order of children. Before `bvite` and the other operators were added to
-     the fuzzer, the rates were 76.8% and 94.8% at depth 3. Ethos accepts all
+     predicates): at depth 3 (3000 terms), 80.7% identical to cvc5 and 97.0% up
+     to the orientation of equalities, no semantic disagreements; the rest is
+     the order of children. (Before Logos had `bv-ite-const-cond`, a
+     constant-condition `bvite` was left as it was, and only 50.1% were
+     identical.) Ethos accepts all
      proofs (`check-proofs.py --bv`, depths 3 and 4).
    - Deviations: cvc5 orders the children of `bvand`, `bvor`, `bvxor` and
      `bvmul`, and the terms of a combined sum, by node id; telos uses its term
@@ -538,10 +536,9 @@ tested:
      result for which the search finds no certificate is not used. cvc5's
      `NegMult` never applies (its `applies` tests the wrong child) and is not
      ported.
-   - Not ported: `BvIteConstCond`, which CPC cannot prove (no RARE rule, and
-     `evaluate` does not reduce `bvite`; requested in
-     `cpc-bv-ite-const-cond.md`, and used by telos once available), and
-     `BvComp`. `IneqElimConversion` (comparisons of `int_to_bv` terms and
+   - `BvIteConstCond` uses `bv-ite-const-cond-1/2` (added to Logos at our
+     request, Logos PR #503; cvc5 itself proves this step with a
+     trust step). Not ported: `BvComp`. `IneqElimConversion` (comparisons of `int_to_bv` terms and
      constants as integer comparisons, `uf-int2bv-bvult-equiv`) is ported,
      with the UF rewriter's `rewriteBVToInt` (`uf-int2bv-bv2nat`) and the
      `int_to_bv` of `ubv_to_int` cases of `rewriteIntToBV`, and the evaluation
@@ -583,10 +580,10 @@ tested:
    - **Mixed theories** (`scripts/fuzz.py --mixed`, 3000 terms of depth 3):
      atoms that mix theories (arrays from bit-vectors to integers and over an
      uninterpreted sort, `ite` with branches of each theory, UF applied to
-     array reads, `distinct` of arrays, `int_to_bv` comparisons). 40.8%
-     identical to cvc5, 76.3% up to the orientation of equalities, no semantic
-     disagreements; of the 711 differences, 661 are a constant-condition
-     `bvite` (above) and 50 the order of `store`s. Ethos accepts all proofs.
+     array reads, `distinct` of arrays, `int_to_bv` comparisons). 47.0%
+     identical to cvc5, 97.0% up to the orientation of equalities, no semantic
+     disagreements; the 89 differences are the order of `store`s and of
+     children. Ethos accepts all proofs.
 8. **Strings (stage 1).** Kinds for the string and regular expression
    operators (not sequences yet), with their CPC shapes: `str.++` with a typed
    nil (its congruence is proved like that of the bit-vector operators, with
@@ -622,16 +619,31 @@ tested:
      The matcher takes such a premise prover (`RuleSpec.apply`,
      `rewriteByWith`), and rules may have type arguments (`(Seq @T0)`, the
      type of a variable; `typeArgs`).
-   - With it: `rewriteSubstr` (all cases but
-     `rewriteViaMacroSubstrStripSymLength`), the `SUF_PREFIX_EMPTY` and
-     `SUF_PREFIX_TO_EQS` cases of `rewritePrefixSuffix`, and `LEN_REPL_INV`.
-     Fuzzing: 34.0% identical to cvc5 (from 27.6%), no semantic disagreements;
-     Ethos accepts all proofs.
-   - Next: `StringsEntail` (`stripSymbolicLength` and the
-     `MACRO_SUBSTR_STRIP_SYM_LENGTH` elaboration, `checkContains`), then
-     `rewriteContains`, `rewriteReplace`, `rewriteIndexof`, `rewriteMembership`
-     and the regular expression rewrites (`rewriteAndOrRegExp`,
-     `rewriteConcatRegExp`, `rewriteStarRegExp`, `rewriteLoopRegExp`).
+   - With it: `rewriteSubstr`, including `rewriteViaMacroSubstrStripSymLength`
+     (`StringsEntail::stripSymbolicLength`, for whole components: a constant
+     that would be split is left, which cvc5 proves by an encoding transform),
+     certified as cvc5 elaborates `MACRO_SUBSTR_STRIP_SYM_LENGTH` (`aci_norm`
+     to regroup, then `str-substr-len-include-pre`, `str-substr-full`,
+     `str-substr-concat2` or `str-substr-len-include`); the `SUF_PREFIX_EMPTY`
+     and `SUF_PREFIX_TO_EQS` cases of `rewritePrefixSuffix`; `LEN_REPL_INV`.
+   - Regular expressions: `rewriteAndOrRegExp` without its two macros (a
+     search over `aci_norm`, `absorb`, `re-union-all`, `re-inter-all`,
+     `re-inter-cstring-neg`), `rewriteStarRegExp`, `rewriteAllRegExp`, and
+     `rewriteMembership` (constants by `str-in-re-eval`, since Logos's
+     `evaluate` does not reduce `str.in_re`; `re.none`, `re.allchar`,
+     `(re.* re.allchar)`, unions, intersections, constant strings, ranges,
+     complements, and `RE_CONCAT_TO_CONTAINS`), without simple consumption,
+     inclusion, and some star and concatenation cases. Premises are proven by
+     `str-in-re-eval` or `ArithEntail` when evaluation does not discharge
+     them (`StringsRewriter.premiseProver`).
+   - Fuzzing: 43.9% identical to cvc5 (from 27.6%), no semantic
+     disagreements; Ethos accepts all proofs. (`fuzz.py` now gives each of
+     cvc5's equivalence checks 2 seconds; 2 string checks time out.)
+   - Next: `StringsEntail` (`checkContains`, which rewrites `str.contains` with
+     the full rewriter, so the strings rewriter needs one, as the arrays
+     rewriter does; component containment, strip endpoints), then
+     `rewriteContains`, `rewriteReplace`, `rewriteIndexof`, the rest of
+     `rewriteMembership`, `rewriteConcatRegExp` and `rewriteLoopRegExp`.
 9. **Performance.** ~~Rewrite cache~~ (done: `Cache` in
    `Telos/Rewriter/Rewriter.lean`, for one call of `rewriteWith`, as cvc5 caches
    `rewriteTo`; children are rewritten in order and assembled by

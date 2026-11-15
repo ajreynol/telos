@@ -327,6 +327,8 @@ def ruleName : Eo.CRule → String
   | .bv_ssubo_eliminate => "bv-ssubo-eliminate"
   | .bv_nego_eliminate => "bv-nego-eliminate"
   | .bv_ite_equal_children => "bv-ite-equal-children"
+  | .bv_ite_const_cond_1 => "bv-ite-const-cond-1"
+  | .bv_ite_const_cond_2 => "bv-ite-const-cond-2"
   | .bv_ite_const_children_1 => "bv-ite-const-children-1"
   | .bv_ite_const_children_2 => "bv-ite-const-children-2"
   | .bv_ite_equal_cond_1 => "bv-ite-equal-cond-1"

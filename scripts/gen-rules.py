@@ -308,7 +308,7 @@ def spec_of_rule(form, crules):
         args = [pat(a, kind) for a in t[1:]]
         return f".app .{kind} [{', '.join(args)}]"
 
-    if not isinstance(concl[1], list):
+    if not isinstance(concl[1], list) and concl[1] not in NULLARY:
         raise Skip("left-hand side is not an application")
     lhs = pat(concl[1])
     args_form = attrs.get(":args", [])

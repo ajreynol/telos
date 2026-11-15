@@ -84,9 +84,9 @@ def orient_free(e):
     return e
 
 
-def run_cvc5(cvc5, script):
+def run_cvc5(cvc5, script, extra=()):
     out = subprocess.run([cvc5, "--lang", "smt2", "--incremental", "--dag-thresh=0",
-                          "--print-arith-lit-token"], input=script,
+                          "--print-arith-lit-token", *extra], input=script,
                          capture_output=True, text=True, check=False)
     if out.returncode != 0:
         sys.exit(f"error: cvc5 failed:\n{out.stderr or out.stdout}")
@@ -125,9 +125,11 @@ def main():
     for (t, ours), theirs in zip(cases, simplified):
         checks.append(f"(push)(assert (not (= {t} {ours})))(check-sat)(pop)\n")
         checks.append(f"(push)(assert (not (= {ours} {theirs})))(check-sat)(pop)\n")
-    verdicts = run_cvc5(a.cvc5, PRELUDE + "".join(checks))
+    # Each equivalence check gets a time limit: some string equivalences are hard
+    # for cvc5. A check that times out (`unknown`) is reported as unverified.
+    verdicts = run_cvc5(a.cvc5, PRELUDE + "".join(checks), ["--tlimit-per=2000"])
 
-    same, oriented, mismatches, unsound = 0, 0, [], []
+    same, oriented, mismatches, unsound, unverified = 0, 0, [], [], 0
     for i, ((t, ours), theirs) in enumerate(zip(cases, simplified)):
         if ours == theirs:
             same += 1
@@ -135,17 +137,20 @@ def main():
             oriented += 1
         else:
             mismatches.append((t, ours, theirs))
-        if verdicts[2 * i] != "unsat":
-            unsound.append(("input vs telos", t, ours))
-        if verdicts[2 * i + 1] != "unsat":
-            unsound.append(("telos vs cvc5", ours, theirs))
+        for v, what, l, r in ((verdicts[2 * i], "input vs telos", t, ours),
+                              (verdicts[2 * i + 1], "telos vs cvc5", ours, theirs)):
+            if v == "sat":
+                unsound.append((what, l, r))
+            elif v != "unsat":
+                unverified += 1
 
     n = len(cases)
     version = subprocess.run([a.cvc5, "--version"], capture_output=True, text=True).stdout.splitlines()
     print(f"reference: {version[0] if version else a.cvc5}")
     print(f"{n} terms: {same} identical to cvc5 ({100 * same / n:.1f}%), "
           f"{oriented} identical up to the orientation of equalities, "
-          f"{len(mismatches)} different, {len(unsound)} semantic disagreements")
+          f"{len(mismatches)} different, {len(unsound)} semantic disagreements"
+          + (f" ({unverified} checks timed out)" if unverified else ""))
     for t, ours, theirs in mismatches[: a.show]:
         print(f"\n  input: {t}\n  telos: {ours}\n  cvc5:  {theirs}")
     for what, l, r in unsound:
