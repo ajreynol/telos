@@ -451,6 +451,10 @@ tested:
    terms of depth 4: about 94% identical to cvc5, every other result identical up
    to (or caused by) the orientation of equalities, and no semantic
    disagreements. To do: `define-fun`, and fuzzing in CI.
+   - The reference is a recent build of cvc5's main branch (the rates in this
+     document are against `bab27e4f17`, 2026-10-06), passed as `--cvc5 PATH`
+     or `CVC5=PATH`; `fuzz.py` prints the version it used. A release is not
+     enough: cvc5's rewriter changes, and telos ports the current one.
 6. **Arithmetic, then bit-vectors.** Arithmetic is started.
    - Kinds `ADD`, `SUB`, `NEG`, `MULT`, `DIVISION`, `INTS_DIVISION`,
      `INTS_MODULUS`, their total versions, `ABS`, `LT`, `LEQ`, `GT`, `GEQ`,
@@ -469,8 +473,11 @@ tested:
      `arith-is-int-elim-to-real`), and `to_real` removed from both sides of `/`
      (`arith-div-elim-to-real`).
    - Fuzzing (`scripts/fuzz.py --arith`, 3000 terms of depth 4, including
-     `div`, `mod`, `abs`, `to_int` and `is_int`): 83.5% identical to cvc5,
-     92.7% up to the orientation of equalities, no semantic disagreements.
+     `div`, `mod`, `abs`, `to_int` and `is_int`): 86.5% identical to cvc5,
+     96.4% up to the orientation of equalities, no semantic disagreements.
+     Equalities are only oriented, not solved, as in cvc5 since PR #12833
+     (against an older build that solves them, `97b00835f`, only 73.0% are
+     identical).
      Ethos accepts all proofs (`scripts/check-proofs.py --arith`).
    - Arithmetic literals are printed as single tokens (`-3`, `1/2`, `3/1`), as
      Eunoia writes them and as cvc5 prints them with `--print-arith-lit-token`,

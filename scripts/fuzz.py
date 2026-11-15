@@ -13,12 +13,13 @@ cvc5 to rewrite the same terms with `(simplify t)`, and reports:
   cvc5's, which is a bug in one of them.
 
 Usage:
-  scripts/fuzz.py [--cvc5 PATH] [--seed N] [--count N] [--depth N] [--show N] [--arith | --uf | --bv]
+  CVC5=PATH scripts/fuzz.py ...  or  scripts/fuzz.py [--cvc5 PATH] [--seed N] [--count N] [--depth N] [--show N] [--arith | --uf | --bv]
 
 Build the fuzzer first: `lake build telos-fuzz`.
 """
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -87,7 +88,10 @@ def run_cvc5(cvc5, script):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--cvc5", default=shutil.which("cvc5") or "cvc5")
+    # The reference cvc5: `--cvc5`, else `$CVC5`, else `cvc5` on the path. Use a
+    # recent build of cvc5's main branch: the rewriter changes (for example,
+    # arithmetic equalities are not solved since cvc5 PR #12833).
+    ap.add_argument("--cvc5", default=os.environ.get("CVC5") or shutil.which("cvc5") or "cvc5")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--count", type=int, default=500)
     ap.add_argument("--depth", type=int, default=3)
@@ -127,6 +131,8 @@ def main():
             unsound.append(("telos vs cvc5", ours, theirs))
 
     n = len(cases)
+    version = subprocess.run([a.cvc5, "--version"], capture_output=True, text=True).stdout.splitlines()
+    print(f"reference: {version[0] if version else a.cvc5}")
     print(f"{n} terms: {same} identical to cvc5 ({100 * same / n:.1f}%), "
           f"{oriented} identical up to the orientation of equalities, "
           f"{len(mismatches)} different, {len(unsound)} semantic disagreements")

@@ -110,9 +110,13 @@ Rules of thumb:
 
 - `test/examples/<theory>.smt2` with `.expected`: examples, run in CI. Use
   `(simplify t)` queries.
+- Compare with a recent build of cvc5's main branch, not a release: cvc5's
+  rewriter changes, and telos ports the current one. `fuzz.py` prints the
+  version it compared with.
 - `FuzzMain.lean` generates random terms. Add the theory's operators to it, and
   to the declarations in `scripts/fuzz.py`. Then
-  `python3 scripts/fuzz.py --cvc5 PATH` reports the agreement with cvc5 and any
+  `python3 scripts/fuzz.py --cvc5 PATH` (or `CVC5=PATH`) reports the agreement
+  with cvc5 and any
   semantic disagreement (which would be a bug in Logos or cvc5). Run it with a
   few thousand terms before and after each change; report the rates in
   `docs/design.md`.

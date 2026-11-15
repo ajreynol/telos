@@ -255,7 +255,11 @@ def rewriteEq (n : Node) : Option (Rw n) :=
   | _ => none
 where
   /-- cvc5's `normalizeEquality`, of which the arithmetic rewriter keeps only a
-  constant result, or else the orientation. -/
+  constant result, or else the orientation: since cvc5 PR #12833, the rewritten
+  form of `(= a b)` is one of `true`, `false`, `(= a b)` and `(= b a)`, so that
+  rewriting preserves the terms of an equality (for theory combination). The
+  full normalization (solving for a term) is cvc5's `ppStaticRewrite` and
+  extended rewriter, not its rewriter. -/
   normalizeEq (n a b : Node) : Option (Rw n) := do
     let sum := Profile.time "strategy: arith normal form" (fun _ => "equality") fun _ =>
       (polyOf a).add ((polyOf b).scale (-1))
