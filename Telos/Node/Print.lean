@@ -79,6 +79,7 @@ def Kind.smtLibName : Kind → String
   | .BITVECTOR_SSUBO => "bvssubo"
   | .BITVECTOR_SDIVO => "bvsdivo"
   | .BITVECTOR_ITE => "bvite"
+  | .SELECT => "select" | .STORE => "store"
   | .POW2 => "int.pow2" | .INTS_LOG2 => "int.log2" | .INTS_ISPOW2 => "int.ispow2"
   | .INT_TO_BITVECTOR => "int_to_bv"
   | .BITVECTOR_UBV_TO_INT => "ubv_to_int"

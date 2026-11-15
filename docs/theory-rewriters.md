@@ -90,6 +90,11 @@ rejects it:
 - For a rule whose `:requires` computes the right-hand side with a Logos
   program (`bv-bitwise-slicing`, `bv-repeat-elim`), call that program from Lean
   to get the result, read it back, and `checkBy` the rule (`BvRewriter.byProgram`).
+- A premise that cvc5 decides by rewriting (like `mkEqNode` for array
+  indices) can be proven the same way: give the theory rewriter a rewriter
+  (`TheoryRewriter.arrays` takes one), rewrite the premise's term, and put the
+  CPC proof of that rewrite (`Proof.emitProof`, `Step.toCmd`) before the rule
+  step, which cites its last fact (`ArraysRewriter.byRuleAfter`).
 - A macro rewrite of cvc5 (a normalization proven by several CPC steps) can be
   certified by a short search over the steps its elaborator uses, from the input
   towards cvc5's result (`BvNorm.reach`). If none is found, keep the input.

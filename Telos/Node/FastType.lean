@@ -30,6 +30,11 @@ def typeHint : Node → Option TypeNode
   | .app (.kind .ADD) ⟨c :: _⟩ | .app (.kind .MULT) ⟨c :: _⟩ | .app (.kind .SUB) ⟨c :: _⟩
   | .app (.kind .NEG) ⟨c :: _⟩ | .app (.kind .ABS) ⟨c :: _⟩ => typeHint c
   | .app (.kind .ITE) ⟨[_, t, _]⟩ | .app (.kind .BITVECTOR_ITE) ⟨[_, t, _]⟩ => typeHint t
+  | .app (.kind .SELECT) ⟨a :: _⟩ =>
+    match typeHint a with
+    | some (.array _ e) => some e
+    | _ => none
+  | .app (.kind .STORE) ⟨a :: _⟩ => typeHint a
   | .app (.kind .BITVECTOR_CONCAT) cs => do
     let ws ← cs.attach.toList.mapM fun ⟨c, _⟩ => bvWidth? (typeHint c)
     return .bitVector ws.sum

@@ -101,6 +101,8 @@ KINDS = {
     "bvssubo": "BITVECTOR_SSUBO",
     "bvsdivo": "BITVECTOR_SDIVO",
     "bvite": "BITVECTOR_ITE",
+    "select": "SELECT",
+    "store": "STORE",
     "ubv_to_int": "BITVECTOR_UBV_TO_INT",
     "sbv_to_int": "BITVECTOR_SBV_TO_INT",
 }

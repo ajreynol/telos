@@ -6,7 +6,7 @@ import Telos.Rules.Pattern
 namespace Telos
 
 /-- The rewrite rules of CPC whose left-hand sides telos can match:
-233 of the signature's 613 rules. -/
+239 of the signature's 613 rules. -/
 def generatedRules : List RuleSpec := [
   { name := "arith-div-total-zero-real", rule := .arith_div_total_zero_real, numVars := 1,
     args := [0],
@@ -164,6 +164,30 @@ def generatedRules : List RuleSpec := [
     args := [0, 1],
     lhs := .app .GEQ [.app .ITE [.app .GEQ [.var 0, .var 1], .var 0, .var 1], .var 1],
     premises := [] },
+  { name := "array-read-over-write", rule := .array_read_over_write, numVars := 3,
+    args := [0, 1, 2],
+    lhs := .app .SELECT [.app .STORE [.var 0, .var 1, .var 2], .var 1],
+    premises := [] },
+  { name := "array-read-over-write2", rule := .array_read_over_write2, numVars := 4,
+    args := [0, 1, 2, 3],
+    lhs := .app .SELECT [.app .STORE [.var 0, .var 1, .var 3], .var 2],
+    premises := [{ expr := .app .EQUAL [.var 1, .var 2], value := .const (.boolean false), symm := false }] },
+  { name := "array-store-overwrite", rule := .array_store_overwrite, numVars := 4,
+    args := [0, 1, 2, 3],
+    lhs := .app .STORE [.app .STORE [.var 0, .var 1, .var 2], .var 1, .var 3],
+    premises := [] },
+  { name := "array-store-self", rule := .array_store_self, numVars := 2,
+    args := [0, 1],
+    lhs := .app .STORE [.var 0, .var 1, .app .SELECT [.var 0, .var 1]],
+    premises := [] },
+  { name := "array-read-over-write-split", rule := .array_read_over_write_split, numVars := 4,
+    args := [0, 1, 2, 3],
+    lhs := .app .SELECT [.app .STORE [.var 0, .var 3, .var 2], .var 1],
+    premises := [] },
+  { name := "array-store-swap", rule := .array_store_swap, numVars := 5,
+    args := [0, 1, 2, 3, 4],
+    lhs := .app .STORE [.app .STORE [.var 0, .var 1, .var 3], .var 2, .var 4],
+    premises := [{ expr := .app .EQUAL [.var 1, .var 2], value := .const (.boolean false), symm := false }] },
   { name := "bool-double-not-elim", rule := .bool_double_not_elim, numVars := 1,
     args := [0],
     lhs := .app .NOT [.app .NOT [.var 0]],

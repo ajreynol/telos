@@ -551,7 +551,32 @@ tested:
      comparisons and read-backs about 35%, RARE matching 18%.
    - cvc5 bug found while porting: `RewriteRule<NegMult>::applies` never holds
      (`cvc5-negmult-bug.md`).
-7. **Performance.** ~~Rewrite cache~~ (done: `Cache` in
+7. **Arrays.** `TheoryArraysRewriter` is ported (`Telos/Theory/Arrays.lean`,
+   `test/examples/arrays.smt2`) for `select`, `store` and array equalities,
+   with the six RARE rules for arrays (`array-read-over-write`,
+   `array-read-over-write2`, `array-store-overwrite`, `array-store-self`,
+   `array-store-swap`, and `array-read-over-write-split`, generated but not
+   used by cvc5's rewriter).
+   - cvc5 decides whether two indices are distinct by rewriting their equality
+     (`mkEqNode`). telos does the same: the arrays rewriter is given the
+     rewriter of the other theories (`theoryRewriter`, `indexFuel`), and the
+     premise `(= (= i j) false)` of `array-read-over-write2` and
+     `array-store-swap` is proven by the CPC proof of that rewrite
+     (`Proof.emitProof`), followed by the rule step; `applyCmds` checks all of
+     it. Distinct constant indices are decided by `evaluate`.
+   - cvc5 moves a `store` down a chain of `store`s at once; telos swaps once
+     and rewrites again (`REWRITE_AGAIN_FULL`), to the same normal form.
+   - Fuzzing (`scripts/fuzz.py --arrays`, 3000 terms of depth 3 over two
+     `(Array Int Int)` constants, with indices `x`, `y`, `0`, `1`, `2` and
+     `(+ x 1)`): 69.0% identical to cvc5, all others identical up to the
+     orientation of equalities, no semantic disagreements. Ethos accepts all
+     proofs (`check-proofs.py --arrays`).
+   - Not ported: constant arrays (`store_all`, which has no counterpart in
+     Logos), `eqrange`, an index equality that rewrites to `true` for distinct
+     indices, and child typing for `select` and `store` (`Op.childrenTypedOfParent`:
+     its proof needs well-formedness of array types, so the driver checks the
+     children at run time).
+8. **Performance.** ~~Rewrite cache~~ (done: `Cache` in
    `Telos/Rewriter/Rewriter.lean`, for one call of `rewriteWith`, as cvc5 caches
    `rewriteTo`; children are rewritten in order and assembled by
    `Rw.congrList`). Sharing, cached hashes; a proof that children
@@ -609,7 +634,7 @@ tested:
      equation 9% and reading it back 7%; type queries 12% (260k, uncached);
      telos's polynomial normal form 4%; matching 1%; unprobed strategy and
      driver code most of the rest. No check is rejected.
-8. ~~Proof output.~~ Done: `telos --proof` prints a CPC proof of
+9. ~~Proof output.~~ Done: `telos --proof` prints a CPC proof of
    `(= t (rewrite t))`, checked by Logos's checker before printing, and accepted
    by Ethos (`scripts/check-proofs.py`: 2000 of 2000 fuzzed terms). Open:
    proofs are not compacted (one `cong` per rewrite below an operator).

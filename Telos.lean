@@ -20,6 +20,7 @@ import Telos.Theory.UF
 import Telos.Rules.Programs
 import Telos.Theory.BVNorm
 import Telos.Theory.BV
+import Telos.Theory.Arrays
 import Telos.Rewrite
 import Telos.Rules.RuleNames
 import Telos.Proof.Eunoia

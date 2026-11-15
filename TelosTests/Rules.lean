@@ -59,7 +59,10 @@ def expectedToFail : List String :=
    "bv-and-concat-pullup3", "bv-or-concat-pullup3", "bv-xor-concat-pullup3",
    "bv-ult-add-one",
    -- integers and bit-vectors
-   "uf-bv2nat-geq-elim"]
+   "uf-bv2nat-geq-elim",
+   -- arrays, with indices and elements of other types (tested below)
+   "array-read-over-write", "array-read-over-write2", "array-store-overwrite",
+   "array-store-self", "array-read-over-write-split", "array-store-swap"]
 
 /-- Whether a pattern has integer parameters (indices, widths, bit-vector
 literals), which fresh variables cannot instantiate. Such rules are tested on
@@ -86,6 +89,17 @@ def rw? (name : String) (n : Node) : Option Node :=
 def c : Node := .var "c" .boolean
 def t : Node := .var "t" .integer
 def int (i : Int) : Node := .const (.integer i)
+
+-- Arrays.
+def arr : Node := .var "A" (.array .integer .integer)
+def sel (a i : Node) : Node := mkNode .SELECT #[a, i]
+def sto (a i e : Node) : Node := mkNode .STORE #[a, i, e]
+#guard rw? "array-read-over-write" (sel (sto arr t (int 1)) t) == some (int 1)
+#guard rw? "array-read-over-write2" (sel (sto arr (int 0) (int 1)) (int 2)) == some (sel arr (int 2))
+#guard rw? "array-read-over-write2" (sel (sto arr t (int 1)) (int 2)) == none
+#guard rw? "array-store-overwrite" (sto (sto arr t (int 1)) t (int 2)) == some (sto arr t (int 2))
+#guard rw? "array-store-self" (sto arr t (sel arr t)) == some arr
+#guard rw? "array-store-swap" (sto (sto arr (int 1) t) (int 0) t) == some (sto (sto arr (int 0) t) (int 1) t)
 
 -- Premises discharged by evaluation; `(= cc (+ (to_int c) 1))` defines `cc`.
 #guard rw? "arith-int-geq-tighten" (mkNode .GEQ #[mkNode .TO_REAL #[t], .const (.rational (mkRat 1 2))]) ==

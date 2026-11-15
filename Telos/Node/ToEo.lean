@@ -161,6 +161,8 @@ def Kind.eoShape : Kind → AppShape
   | .INTS_LOG2 => .spine (Term.UOp UserOp.int_log2) (.exactly 1)
   | .INTS_ISPOW2 => .spine (Term.UOp UserOp.int_ispow2) (.exactly 1)
   | .DISTINCT => .typedList UserOp.distinct
+  | .SELECT => .spine (Term.UOp UserOp.select) (.exactly 2)
+  | .STORE => .spine (Term.UOp UserOp.store) (.exactly 3)
   | .BITVECTOR_UBV_TO_INT => .spine (Term.UOp UserOp.ubv_to_int) (.exactly 1)
   | .BITVECTOR_SBV_TO_INT => .spine (Term.UOp UserOp.sbv_to_int) (.exactly 1)
   | .BITVECTOR_CONCAT => .rightAssocNil UserOp.concat .typed

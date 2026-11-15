@@ -110,6 +110,9 @@ inductive Kind where
   | INT_TO_BITVECTOR
   | BITVECTOR_UBV_TO_INT
   | BITVECTOR_SBV_TO_INT
+  -- theory/arrays
+  | SELECT
+  | STORE
   -- theory/quantifiers
   | FORALL
   | EXISTS
@@ -195,6 +198,7 @@ def Kind.theoryId : Kind → TheoryId
   | .BITVECTOR_ROTATE_RIGHT => .THEORY_BV
   | .APPLY_UF | .DISTINCT | .INT_TO_BITVECTOR | .BITVECTOR_UBV_TO_INT | .BITVECTOR_SBV_TO_INT =>
     .THEORY_UF
+  | .SELECT | .STORE => .THEORY_ARRAYS
   | .FORALL | .EXISTS | .BOUND_VAR_LIST | .INST_PATTERN_LIST => .THEORY_QUANTIFIERS
 
 /-- The quantifier kinds, whose congruence is in their body only. -/
