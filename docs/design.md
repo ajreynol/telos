@@ -306,8 +306,10 @@ accepts. `Eunoia.print` prints terms by inverting the operator table of Logos's
 parser, and `ruleName` (generated) names the rules.
 
 The proof is a refutation: the declarations, `(assume @goal (not (= t
-result)))`, the steps, and `false` by `contra`. It checks with
-`ethos --include=Cpc.cached.eo` and with Logos. A bound variable outside its
+result)))`, the steps, and `false` by `contra`, printed in parentheses as
+cvc5's `get-proof` prints a proof. Without the parentheses it checks with
+`ethos --include=Cpc.cached.eo` and with Logos (telos reads it back with
+Logos's parser before printing it). A bound variable outside its
 binder (in a step about a quantifier's body) is printed `(@var "x" T)`, the
 signature's macro for `eo::var`. `scripts/check-proofs.py` checks proofs with
 Ethos, on example scripts or on fuzzed terms.
@@ -451,8 +453,10 @@ tested:
    terms of depth 4: about 94% identical to cvc5, every other result identical up
    to (or caused by) the orientation of equalities, and no semantic
    disagreements. To do: `define-fun`, and fuzzing in CI.
-   - The reference is a recent build of cvc5's main branch (the rates in this
-     document are against `bab27e4f17`, 2026-10-06), passed as `--cvc5 PATH`
+   - The reference is a recent build of cvc5 (the rates in this document are
+     against `bab27e4f17`, 2026-10-06, and, where they say so, against the
+     branch of cvc5 PR #13167, `f155e68cee`, which fills the proof holes of
+     `test/cvc5-holes/`), passed as `--cvc5 PATH`
      or `CVC5=PATH`; `fuzz.py` prints the version it used. A release is not
      enough: cvc5's rewriter changes, and telos ports the current one.
 6. **Arithmetic, then bit-vectors.** Arithmetic is started.
@@ -470,13 +474,20 @@ tested:
      cases (by zero, one, a negative constant, constants, `mod` over `mod`,
      `div` over `mod`), constant `abs`, `to_int` and `is_int`, `to_int` and
      `is_int` of `to_real` (`arith-to-int-elim-to-real`,
-     `arith-is-int-elim-to-real`), and `to_real` removed from both sides of `/`
-     and `/_total` (`arith-div-int-to-real` and `arith-div-total-int-to-real`,
-     read right to left), and an integer constant numerator made real over an
-     integer denominator (the same rules, then `evaluate`).
+     `arith-is-int-elim-to-real`), and the sides of `/` and `/_total` as cvc5
+     PR #13167 has them: made real for a non-constant denominator (`(/ x y)` is
+     `(/ (to_real x) (to_real y))`, by `arith-div-int-to-real` and
+     `arith-div-total-int-to-real`, then `evaluate` for a constant numerator),
+     and `to_real` removed from both for a constant one (the same rules read
+     right to left), also before the children are rewritten (`preRewrite`), so
+     `(/ (to_real 0) (to_real 0))` is `(/ 0 0)`.
    - Fuzzing (`scripts/fuzz.py --arith`, 3000 terms of depth 4, including
-     `div`, `mod`, `abs`, `to_int` and `is_int`): 86.5% identical to cvc5,
-     96.4% up to the orientation of equalities, no semantic disagreements.
+     `div`, `mod`, `abs`, `to_int` and `is_int`): 86.9% identical to cvc5,
+     96.9% up to the orientation of equalities, 98.4% also up to the order of
+     commutative arguments, no semantic disagreements. Against PR #13167:
+     87.5%, 97.2% and 98.4%. The other 47 differ in
+     which monomial leads a normalized inequality, which cvc5 decides by node
+     id (`LeafNodeComparator`), and so in its sign and scaling.
      Equalities are only oriented, not solved, as in cvc5 since PR #12833
      (against an older build that solves them, `97b00835f`, only 73.0% are
      identical).
@@ -701,23 +712,40 @@ tested:
      at a time (`re-inter-const-elim`, `re-union-const-elim`), and
      `RE_INTER_CONST_CONST_CONFLICT` (`re-inter-const-const-conflict`);
      `RE_CHAR_IN_STR_STAR` (`re-char-in-str-star`); `STR_LEQ_ID`
-     (`str-leq-id`); `CTN_SPLIT` for a constant first argument (the constant
-     split into its characters, then `str-contains-cnst-split-leq-one` for each
-     and `str-contains-char` for the last); `CTN_REPL_LEN_ONE_TO_CTN` for
+     (`str-leq-id`); `CTN_SPLIT` for a constant first argument, one character
+     at a time as in PR #13167 (`str-contains-cnst-split-leq-one`, and
+     `str-contains-char` for the last); `CTN_REPL_LEN_ONE_TO_CTN` for
      `|z| <= 1` (`str-contains-repl-self-tgt-leq-one`); `CTN_STRIP_ENDPT` past a
      `str.from_int` (`str-contains-strip-from-int-pre/post`, the premise by
      `str-is-digit-elim`); `IDOF_LEN` (`str-indexof-len`);
-     `IDOF_STRIP_CNST_ENDPTS` (one character at a time by
-     `str-indexof-strip-char-pre`, then `arith_poly_norm` to cvc5's
-     `(+ (str.len c) …)`); and `IDOF_STRIP_SYM_LEN`
-     (`str-indexof-strip-prefix-len`, or `str-indexof-strip-sym-len` with
-     cvc5's remaining index as its `m`). `IDOF_NORM_PREFIX` still has no rule.
+     `IDOF_STRIP_CNST_ENDPTS` (one character at a time, as in PR #13167, by
+     `str-indexof-strip-char-pre`); and `IDOF_STRIP_SYM_LEN`
+     (`MACRO_STR_INDEXOF_STRIP_SYM_LENGTH` in PR #13167:
+     `str-indexof-strip-prefix-len`, or `str-indexof-strip-sym-len` with cvc5's
+     remaining index as its `m`). PR #13167 moves `IDOF_NORM_PREFIX`, which has
+     no rule, to the extended rewriter.
    - Fuzzing: 73.3% identical to cvc5 (3000 terms of depth 3), 96.1% up to the
-     orientation of equalities, no semantic disagreements; Ethos accepts all
-     proofs. The other modes are unchanged. Of the 15 reproducers in
+     orientation of equalities, 97.3% also up to the order of commutative
+     arguments, no semantic disagreements (against `bab27e4f17`, where 48 of
+     the other 82 are `IDOF_NORM_PREFIX`); Ethos accepts all proofs. The other modes are unchanged. Of the 15 reproducers in
      `test/cvc5-holes/`, telos now matches cvc5 on all but `idof-norm-prefix`
      (up to the orientation of equalities).
-   - Next: `CTN_LEN_INEQ`, `rewriteLoopRegExp`, inclusion
+   - Then: `CTN_LEN_INEQ` certified as cvc5 proves it, by `str-eq-len-false`
+     and `str-contains-leq-len-eq`, except for the premise
+     `(= (= (str.len a) (str.len b)) false)`. cvc5 proves that by
+     contradiction, in a scope; Logos's checker pushes only closed assumptions,
+     and telos's terms have free variables (`Term.Var`), so telos uses
+     `arith-eq-elim-int` and shows one conjunct false (`ctnLenIneq`). The
+     rewrites that use it through `checkContains` follow (`RPL_NCTN`,
+     `IDOF_NCTN`, …).
+   - Fuzzing against PR #13167: 73.8% identical to cvc5 (3000 terms of depth
+     3), 98.1% up to the orientation of equalities, 99.3% also up to the order
+     of commutative arguments, no semantic disagreements; Ethos accepts all
+     proofs. The other 20: regular expressions (`RE_IN_DIST_CHAR_STAR`, stars
+     of `re.allchar` concatenations, nullable concatenations, about 10),
+     `str.prefixof` to `=` (a length bound for `str.from_int`), and a few
+     `str.contains`/`str.replace` component cases.
+   - Next: `rewriteLoopRegExp`, inclusion
      (`rewriteViaMacroStrInReInclusion`, `rewriteViaMacroReInterUnionInclusion`),
      `RE_IN_DIST_CHAR_STAR`, and `CTN_NCONST_CTN_CONCAT`.
 9. **Performance.** ~~Rewrite cache~~ (done: `Cache` in

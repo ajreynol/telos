@@ -6,7 +6,9 @@ cvc5 to rewrite the same terms with `(simplify t)`, and reports:
 
 * the rate at which telos and cvc5 reach the same term, and the same term up to
   the orientation of equalities (cvc5 orients them by node id, which telos
-  replaces by a structural order), with the remaining mismatches;
+  replaces by a structural order), and up to the order of the arguments of
+  commutative operators and of `store`s at distinct literal indices (also by
+  node id in cvc5), with the remaining mismatches;
 * semantic checks, by cvc5: the telos output is equivalent to the input, and to
   cvc5's output. telos's output is *proved* equivalent to its input in Logos's
   semantics, so a failure here is a disagreement between Logos's semantics and
@@ -84,6 +86,38 @@ def orient_free(e):
     return e
 
 
+COMMUTATIVE = {"and", "or", "xor", "+", "*", "distinct", "bvand", "bvor", "bvxor",
+               "bvadd", "bvmul", "re.union", "re.inter"}
+
+
+def is_literal(e):
+    return isinstance(e, str) and (e[0] in '#"-' or e[0].isdigit())
+
+
+def order_free(e):
+    """`orient_free(e)`, also with the arguments of commutative operators
+    sorted, and runs of `store` at distinct literal indices sorted: equal for
+    terms that differ only in orders that cvc5 takes from node ids, where telos
+    uses a structural order."""
+    if isinstance(e, str):
+        return e
+    e = [order_free(x) for x in e]
+    head = e[0] if e and isinstance(e[0], str) else None
+    if head == "=" and len(e) == 3 or head in COMMUTATIVE:
+        e = [e[0]] + sorted(e[1:], key=repr)
+    if head == "store" and len(e) == 4:
+        writes, base = [], e
+        while isinstance(base, list) and base and base[0] == "store" and len(base) == 4 \
+                and is_literal(base[2]):
+            writes.append((base[2], base[3]))
+            base = base[1]
+        if len(writes) > 1 and len({i for i, _ in writes}) == len(writes):
+            for i, v in sorted(writes, key=repr):
+                base = ["store", base, i, v]
+            e = base
+    return e
+
+
 def run_cvc5(cvc5, script, extra=()):
     out = subprocess.run([cvc5, "--lang", "smt2", "--incremental", "--dag-thresh=0",
                           "--print-arith-lit-token", *extra], input=script,
@@ -129,12 +163,14 @@ def main():
     # for cvc5. A check that times out (`unknown`) is reported as unverified.
     verdicts = run_cvc5(a.cvc5, PRELUDE + "".join(checks), ["--tlimit-per=2000"])
 
-    same, oriented, mismatches, unsound, unverified = 0, 0, [], [], 0
+    same, oriented, ordered, mismatches, unsound, unverified = 0, 0, 0, [], [], 0
     for i, ((t, ours), theirs) in enumerate(zip(cases, simplified)):
         if ours == theirs:
             same += 1
         elif orient_free(parse_sexpr(ours)) == orient_free(parse_sexpr(theirs)):
             oriented += 1
+        elif order_free(parse_sexpr(ours)) == order_free(parse_sexpr(theirs)):
+            ordered += 1
         else:
             mismatches.append((t, ours, theirs))
         for v, what, l, r in ((verdicts[2 * i], "input vs telos", t, ours),
@@ -149,6 +185,7 @@ def main():
     print(f"reference: {version[0] if version else a.cvc5}")
     print(f"{n} terms: {same} identical to cvc5 ({100 * same / n:.1f}%), "
           f"{oriented} identical up to the orientation of equalities, "
+          f"{ordered} up to the order of commutative arguments, "
           f"{len(mismatches)} different, {len(unsound)} semantic disagreements"
           + (f" ({unverified} checks timed out)" if unverified else ""))
     for t, ours, theirs in mismatches[: a.show]:

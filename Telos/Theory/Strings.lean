@@ -443,18 +443,44 @@ partial def splitChar (rw : (m : Node) → Rw m) (m : Node) : Option (Rw m) :=
     else some (Rw.id m)
   | _ => none
 
-/-- `(str.contains (str.++ c₁ … cₖ) t)`, for characters `cᵢ` and `t` of length
-at most one, as `(or (= c₁ t) … (or (= "" t) (= cₖ t)))`: by
-`str-contains-cnst-split-leq-one` for each character but the last, and
-`str-contains-char` for the last. -/
-partial def cnstSplit (rw : (m : Node) → Rw m) (m : Node) : Option (Rw m) :=
-  match m.getChildren with
-  | #[a, _] =>
-    if a.getKind == .STRING_CONCAT && a.getChildren.size ≥ 2 then
-      (byRuleE rw "str-contains-cnst-split-leq-one" m).bind fun r =>
-        r.next? fun k => Rw.congrArg k 1 (cnstSplit rw)
-    else byRuleE rw "str-contains-char" m
-  | _ => none
+/-- `CTN_LEN_INEQ`: `(str.contains a b)` is `false` when `|b| > |a|`, as
+cvc5 proves it, through `(= a b)` being false (`str-eq-len-false`) and
+`(str.contains a b)` being `(= a b)` (`str-contains-leq-len-eq`). cvc5 proves
+the premise `(= (= (str.len a) (str.len b)) false)` by contradiction, in a
+scope; Logos's checker takes only closed assumptions, and telos's terms have
+free variables, so here it is `arith-eq-elim-int`, with the conjunct
+`(>= (str.len a) (str.len b))` false by `(< (str.len a) (str.len b))`
+(`ArithEntail`, `arith-elim-lt`) and `absorb`. -/
+def ctnLenIneqCmds (n : Node) : Option (List Eo.CCmd) := do
+  let #[a, b] := n.getChildren | none
+  let la := len a
+  let lb := len b
+  let ltCmds ← ArithEntail.premiseProof (mkNode .LT #[la, lb]) tt
+  let geqCmds ← ArithEntail.premiseProof (mkNode .GEQ #[lb, la]) tt
+  let ge := mkNode .GEQ #[la, lb]
+  let le := mkNode .LEQ #[la, lb]
+  let ff := Node.const (.boolean false)
+  let st := fun (r : Eo.CRule) (args : List Node) (prems : List Int) =>
+    Eo.CCmd.step r (toArgList (args.map Node.toEo)) (prems.foldr .cons .nil)
+  return ltCmds ++ [                                   -- (= (< la lb) true)
+    st .arith_elim_lt [la, lb] [],                     -- (= (< la lb) (not (>= la lb)))
+    st .symm [] [0],
+    st .trans [] [0, 2],                               -- (= (not (>= la lb)) true)
+    st .true_elim [] [0],
+    st .false_intro [] [0],                            -- (= (>= la lb) false)
+    st .arith_eq_elim_int [la, lb] [],                 -- (= (= la lb) (and (>= la lb) (<= la lb)))
+    st .refl [le] [],
+    st .nary_cong [mkNode .AND #[ge, le]] [2, 0],      -- (= (and …) (and false (<= la lb)))
+    st .absorb [eqNode (mkNode .AND #[ff, le]) ff] [],
+    st .trans [] [3, 1, 0],                            -- (= (= la lb) false)
+    st .str_eq_len_false [a, b] [0]] ++                -- (= (= a b) false)
+    geqCmds ++ [
+    st .str_contains_leq_len_eq [a, b] [0],            -- (= (str.contains a b) (= a b))
+    st .trans [] [0, Int.ofNat geqCmds.length + 1]]
+
+@[inherit_doc ctnLenIneqCmds]
+def ctnLenIneq (n : Node) : Option (Rw n) := do
+  applyCmds ((← ctnLenIneqCmds n).foldr .cons .nil) n
 
 /-- cvc5's `rewriteContains`. Each case is `some r` when cvc5 rewrites, with
 `r` the certificate (`none` when telos cannot certify it, and leaves the node
@@ -485,15 +511,15 @@ def rewriteContains (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
         else if word? a == some [] then
           -- `CTN_LHS_EMPTYSTR`, certified as cvc5 does, by the multiset rule
           if ArithEntail.check lenB true then some (checkBy .str_ctn_multiset_subset n ff) else none
-        -- `CTN_SPLIT` for a constant first argument: `b` is empty or one of
-        -- the characters of `a`
+        -- `CTN_SPLIT` for a constant first argument, one character at a time:
+        -- `(or (= c b) (str.contains rest b))`, or `(or (= "" b) (= c b))` for
+        -- the last (`str-contains-cnst-split-leq-one`, `str-contains-char`)
         else if ArithEntail.checkLengthOne b then
-          let chars := (word? a).getD [] |>.map fun c => mkWord [c]
-          let target := mkNode .OR ((eqNode (mkWord []) b :: chars.map (eqNode · b)).toArray)
-          some do
-            let r ← Rw.congrArg n 0 fun c => regroup c (mkConcat chars)
-            let r ← r.next? (cnstSplit rw)
-            r.next? fun m => aci m target
+          match word? a with
+          | some (c :: cs@(_ :: _)) => some do
+            let r ← Rw.congrArg n 0 fun t => regroup t (mkNode .STRING_CONCAT #[mkWord [c], mkWord cs])
+            r.next? (byRuleE rw "str-contains-cnst-split-leq-one")
+          | _ => some (byRuleE rw "str-contains-char" n)
         else none,
       fun _ => match word? b with
         -- `CTN_RHS_EMPTYSTR`
@@ -528,9 +554,9 @@ def rewriteContains (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
                 else byRuleE rw "str-contains-concat-find-contra" n)
             else none
           | _, _ => none,
-      -- `CTN_LEN_INEQ`: certified when the multiset rule applies (cvc5 goes
-      -- through `str-eq-len-false`, whose premise telos cannot prove yet)
-      fun _ => if ArithEntail.check2 lenB lenA true then some (checkBy .str_ctn_multiset_subset n ff) else none,
+      -- `CTN_LEN_INEQ`
+      fun _ => if ArithEntail.check2 lenB lenA true then
+          some ((ctnLenIneq n).orElse fun _ => checkBy .str_ctn_multiset_subset n ff) else none,
       -- `CTN_MSET_NSS`
       fun _ => if checkMultisetSubset a b then some (checkBy .str_ctn_multiset_subset n ff) else none,
       -- `CTN_LEN_INEQ_NSTRICT`
@@ -780,13 +806,6 @@ def rewriteReplaceAll (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
 
 def negOne : Node := .const (.integer (-1))
 
-/-- `a` rewritten to `b`, for integer terms with the same polynomial after
-length introduction (`ArithEntail.proveEq`, then `true_elim`). -/
-def arithEqRw (a b : Node) : Option (Rw a) :=
-  if a == b then some (Rw.id a) else do
-  let cmds ← ArithEntail.premiseProof (eqNode a b) tt
-  applyCmds ((cmds ++ [Eo.CCmd.step .true_elim .nil (.cons 0 .nil)]).foldr .cons .nil) a
-
 /-- The rule `r` with the given arguments, its premises `(= p true)` proven by
 `premiseProver`, or for a premise `(p, true)` the equality `p` itself (as
 `(= p true)`, then `true_elim`). -/
@@ -801,13 +820,6 @@ def byRuleProving (rw : (m : Node) → Rw m) (r : Eo.CRule) (args : List Node)
   let ruleStep := Eo.CCmd.step r (toArgList (args.map Node.toEo)) indices
   applyCmds ((steps ++ [ruleStep]).foldr .cons .nil) n
 
-/-- `(str.indexof (str.++ c₁ … cₖ t …) s 0)` as `(+ 1 … (+ 1 (str.indexof
-(str.++ t …) s 0)))`, for `k` characters `cᵢ`, by `str-indexof-strip-char-pre`. -/
-def idofStripChars (rw : (m : Node) → Rw m) : Nat → (m : Node) → Option (Rw m)
-  | 0, m => some (Rw.id m)
-  | k + 1, m => (byRuleE rw "str-indexof-strip-char-pre" m).bind fun r =>
-      r.next? fun t => Rw.congrArg t 1 (idofStripChars rw k)
-
 /-- cvc5's `rewriteIndexof`. Each case is `some r` when cvc5 rewrites, with `r`
 the certificate (`none` when telos cannot certify it). -/
 def rewriteIndexof (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
@@ -819,27 +831,34 @@ def rewriteIndexof (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
     let children1 := getConcat b
     let zNeg : Bool := match z with | .const (.integer i) => decide (i < 0) | _ => false
     let len0 := len a
-    -- `IDOF_STRIP_CNST_ENDPTS`: the characters stripped one at a time
+    -- `IDOF_STRIP_CNST_ENDPTS`: a constant first component loses its first
+    -- character, `(+ 1 (str.indexof …))` (`str-indexof-strip-char-pre`);
+    -- otherwise what is stripped goes at once (cvc5's
+    -- `(+ (str.len nb) (str.indexof …))`, not ported: it has no rule)
     let stripCnst : Option (Option (Rw n)) :=
       match stripConstantEndpoints children0 children1 1 with
-      | some (nb, rest, _) =>
-        some do
-          let ws ← nb.mapM word?
-          let chars := ws.flatten.map fun c => mkWord [c]
-          let target := mkNode .ADD #[len (mkConcat nb), mkNode .STRING_INDEXOF #[mkConcat rest, b, z]]
-          let r ← Rw.congrArg n 0 fun c => regroup c (mkConcat (chars ++ rest))
-          let r ← r.next? (idofStripChars rw chars.length)
-          r.next? fun m => arithEqRw m target
+      | some _ =>
+        match children0 with
+        | first :: rest =>
+          match word? first with
+          | some (c :: cs) =>
+            if rest.isEmpty && cs.isEmpty then some none else
+            let g := mkNode .STRING_CONCAT ((mkWord [c] :: (if cs.isEmpty then [] else [mkWord cs]) ++ rest).toArray)
+            some do
+              let r ← Rw.congrArg n 0 fun t => regroup t g
+              r.next? (byRuleE rw "str-indexof-strip-char-pre")
+          | _ => some none
+        | [] => none
       | none => none
-    -- `IDOF_STRIP_SYM_LEN`: `str-indexof-strip-prefix-len` when nothing is
-    -- left of the index, otherwise `str-indexof-strip-sym-len`
+    -- `IDOF_STRIP_SYM_LEN` (`MACRO_STR_INDEXOF_STRIP_SYM_LENGTH`):
+    -- `(+ (str.len s1) (str.indexof s2 b m))`, by `str-indexof-strip-prefix-len`
+    -- when nothing is left of the index, otherwise `str-indexof-strip-sym-len`
     let stripSym : Option (Option (Rw n)) :=
       if !(ArithEntail.check z && ArithEntail.check2 len0 z) then none else
       match stripSymbolicLength children0 true z with
       | some (stripped, rest@(_ :: _), newLen) =>
         let s1 := mkConcat stripped
         let s2 := mkConcat rest
-        let target := mkNode .ADD #[mkNode .SUB #[z, newLen], mkNode .STRING_INDEXOF #[s2, b, newLen]]
         some do
           let r ← Rw.congrArg n 0 fun c => regroup c (mkNode .STRING_CONCAT #[s1, s2])
           let r ← r.next? fun m =>
@@ -848,7 +867,7 @@ def rewriteIndexof (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
               [(eqNode newLen (mkNode .SUB #[z, len s1]), true), (mkNode .GEQ #[newLen, zero], false),
                (mkNode .GEQ #[len s2, newLen], false),
                (ctnNode (mkNode .STRING_SUBSTR #[s2, newLen, len s2]) b, false)] m
-          r.next? fun m => arithEqRw m target
+          return r
       | _ => none
     let cases : List (Unit → Option (Option (Rw n))) := [
       -- `IDOF_NEG`

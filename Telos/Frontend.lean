@@ -117,7 +117,8 @@ structure Result where
   source : String
   /-- The rewritten term, in SMT-LIB syntax, or an error. -/
   output : Except String String
-  /-- The CPC proof of the rewrite, in Eunoia syntax, if requested. -/
+  /-- The CPC proof of the rewrite, if requested: Eunoia commands in parentheses,
+as cvc5's `get-proof` prints a proof. -/
   proof : Option (Except String String) := none
 
 /-- Rewrite `t`; with `withProof`, also print its CPC proof, checked by Logos. -/
@@ -135,7 +136,8 @@ def simplify (sc : Script) (q : Query) (withProof : Bool) : Result :=
           let text := p.render sc.names sc.decls t r.1
           -- Check that Logos reads the printed proof back and accepts it.
           match logos_check_proof text with
-          | .ok .correct => pure text
+          -- In parentheses, as cvc5's `get-proof` prints a proof.
+          | .ok .correct => pure ("(\n" ++ text ++ ")\n")
           | .ok _ => throw "internal error: Logos does not accept the printed proof"
           | .error e => throw s!"internal error: Logos cannot parse the printed proof: {e}")
         else none

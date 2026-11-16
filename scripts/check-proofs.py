@@ -68,7 +68,15 @@ def check(ethos, script_path, tmp):
     missing = sum(1 for line in run.stderr.splitlines() if "no proof for" in line)
     failed = []
     for p in proofs:
-        r = subprocess.run([ethos, f"--include={SIGNATURE}", str(p)], capture_output=True, text=True)
+        # telos prints a proof in parentheses, as cvc5's `get-proof` does; Ethos
+        # reads the commands inside.
+        text = p.read_text().strip()
+        if not (text.startswith("(\n") and text.endswith("\n)")):
+            failed.append((p, "not a parenthesized list of commands"))
+            continue
+        eo = p.with_suffix(".cmds.eo")
+        eo.write_text(text[2:-2] + "\n")
+        r = subprocess.run([ethos, f"--include={SIGNATURE}", str(eo)], capture_output=True, text=True)
         if r.returncode != 0 or r.stdout.strip().splitlines()[-1:] != ["correct"]:
             failed.append((p, (r.stdout + r.stderr).strip()))
     return len(proofs), failed, missing

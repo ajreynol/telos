@@ -11,8 +11,9 @@ Reads an SMT-LIB script of declarations and `(simplify t)` commands (`-` for
 standard input) and prints the rewrite of each `t`, as cvc5 does. With `--proof`,
 each result is followed by a CPC proof of `(= t result)` in Eunoia syntax; with
 `--proof-dir DIR`, the proof of the `i`-th query is written to `DIR/proof-i.eo`
-instead. A proof is a refutation of `(not (= t result))`, which Ethos and the
-`logos` executable check. telos prints only proofs that Logos's checker accepts.
+instead. A proof is a refutation of `(not (= t result))`, in parentheses as
+cvc5's `get-proof` prints it; without the outer parentheses it is a Eunoia
+file, which Ethos and the `logos` executable check. telos prints only proofs that Logos's checker accepts.
 With `--profile`, a table of where the time went is printed to standard error
 (`Telos/Profile.lean`).
 

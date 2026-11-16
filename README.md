@@ -41,10 +41,11 @@ with other operators are reported as unsupported, and rewriting of the supported
 ones is incomplete.
 
 With `--proof` (or `--proof-dir DIR`, one file per query), each result comes with
-a CPC proof of `(= t result)`, as a refutation of `(not (= t result))`. telos
-prints only proofs that Logos's checker accepts. Check them with
-`ethos --include=.lake/packages/Cpc/install/defs/Cpc.cached.eo FILE`, or run
-`python3 scripts/check-proofs.py --fuzz 500`.
+a CPC proof of `(= t result)`, as a refutation of `(not (= t result))`, in
+parentheses as cvc5's `get-proof` prints it. telos prints only proofs that
+Logos's checker accepts. To check one with Ethos, drop the outer parentheses and
+run `ethos --include=.lake/packages/Cpc/install/defs/Cpc.cached.eo FILE`, or run
+`python3 scripts/check-proofs.py --fuzz 500`, which does both.
 
 See [`docs/design.md`](docs/design.md) for the architecture and roadmap,
 [`docs/theory-rewriters.md`](docs/theory-rewriters.md) for how to port another theory,

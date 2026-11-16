@@ -23,9 +23,9 @@ Differences from cvc5:
   (`(+ r (to_real x))`, which is also how cvc5 prints that sum).
 * Monomials are ordered by telos's structural term order where cvc5 uses node ids
   (`LeafNodeComparator`'s last case).
-* `to_real` is removed from the sides of a division only when both have it, and
-  an integer constant numerator is made real only when the denominator is an
-  integer (`(/ 1 x)` is `(/ 1.0 (to_real x))`).
+* The sides of a division are made real only when both are integers
+  (`(/ x y)` is `(/ (to_real x) (to_real y))`), and `to_real` is removed from
+  them, for a constant denominator, only when both have it.
 -/
 
 open Eo
@@ -121,29 +121,26 @@ def rewriteOther (n : Node) : Option (Rw n) :=
   | .DIVISION_TOTAL, #[_, .const (.integer 0)] => byRule "arith-div-total-zero-int" n
   | _, _ => none
 
-/-- cvc5's `rewriteDiv` removes `to_real` from the sides of a division by a
-non-constant: `(/ (to_real x) (to_real y))` is `(/ x y)`, and likewise for
-`/_total`, by `arith-div-int-to-real` (resp. `arith-div-total-int-to-real`)
-read right to left. Removing it from one side only would give a mixed
-division, which Logos's typing rejects. -/
+/-- cvc5's `rewriteDiv`, for the sides of a division (and of `/_total`). By a
+constant, `to_real` is removed from both: `(/ (to_real x) (to_real 0))` is
+`(/ x 0)`, by `arith-div-int-to-real` (resp. `arith-div-total-int-to-real`)
+read right to left. By a non-constant, both sides are made real: `(/ x y)` is
+`(/ (to_real x) (to_real y))` for integers, by the same rules, and an integer
+constant numerator is then evaluated, `(/ 1 y)` being `(/ 1.0 (to_real y))`.
+A division with one real and one integer side is not well typed in Logos. -/
 def rewriteDivToReal (n : Node) : Option (Rw n) :=
-  match n.getKind, n.getChildren with
-  | .DIVISION, #[.app (.kind .TO_REAL) #[x], .app (.kind .TO_REAL) #[y]] =>
-    symmRule .arith_div_int_to_real x y
-  | .DIVISION_TOTAL, #[.app (.kind .TO_REAL) #[x], .app (.kind .TO_REAL) #[y]] =>
-    symmRule .arith_div_total_int_to_real x y
-  -- An integer constant numerator becomes real, e.g. (/ 1 x) is (/ 1.0 x); for
-  -- an integer `x`, Logos's typing needs `(to_real x)`.
-  | .DIVISION, #[c@(.const (.integer _)), y] | .DIVISION_TOTAL, #[c@(.const (.integer _)), y] =>
-    if isInt y && !y.isConst then
-      let r := if n.getKind == .DIVISION then CRule.arith_div_int_to_real else .arith_div_total_int_to_real
-      (applyCmds (.cons (stepCmd r [c, y]) .nil) n).bind fun r =>
-        r.next? fun t => Rw.congrArg t 0 byEvaluate
+  let rule := if n.getKind == .DIVISION then CRule.arith_div_int_to_real else .arith_div_total_int_to_real
+  match n.getChildren with
+  | #[.app (.kind .TO_REAL) #[x], .app (.kind .TO_REAL) #[y]] =>
+    if y.isConst then
+      applyCmds (.cons (stepCmd rule [x, y]) (.cons (.step .symm .nil (.cons 0 .nil)) .nil)) n
     else none
-  | _, _ => none
-where
-  symmRule (r : CRule) (x y : Node) : Option (Rw n) :=
-    applyCmds (.cons (stepCmd r [x, y]) (.cons (.step .symm .nil (.cons 0 .nil)) .nil)) n
+  | #[x, y] =>
+    if isInt x && isInt y && !y.isConst then
+      (applyCmds (.cons (stepCmd rule [x, y]) .nil) n).bind fun r =>
+        if x.isConst then r.next? fun t => Rw.congrArg t 0 byEvaluate else some r
+    else none
+  | _ => none
 
 /-! ## Inequalities -/
 
@@ -347,6 +344,12 @@ def preRewrite (n : Node) : RewriteResponse n :=
   let r : Option (Rw n) := match n.getKind with
     | .GT => byRule "arith-elim-gt" n
     | .LT => byRule "arith-elim-lt" n
+    -- cvc5's `rewriteDiv` also runs before the children are rewritten, so
+    -- `(/ (to_real 0) (to_real 0))` is `(/ 0 0)`, not `(/ 0.0 0.0)`.
+    | .DIVISION | .DIVISION_TOTAL =>
+      match n.getChildren with
+      | #[.app (.kind .TO_REAL) #[_], .app (.kind .TO_REAL) #[_]] => rewriteDivToReal n
+      | _ => none
     | _ => none
   match r with
   | some ⟨m, h⟩ => ⟨.REWRITE_DONE, m, h⟩

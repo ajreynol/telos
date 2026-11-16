@@ -60,7 +60,8 @@ def proofText : Option String := do
   let q ← sc.queries[2]?
   (← (simplify sc q true).proof).toOption
 
-#guard proofText == some "(declare-const a Bool)
+#guard proofText == some "(
+(declare-const a Bool)
 (declare-const b Bool)
 (declare-const x Int)
 (declare-const f (-> Int Bool))
@@ -72,6 +73,7 @@ def proofText : Option String := do
 (step @p1 (= (ite a false b) (and (not a) b)) :rule ite-then-false :args (a b))
 (step @p2 (= (ite (not a) b false) (and (not a) b)) :rule trans :premises (@p0 @p1))
 (step @false false :rule contra :premises (@p2 @goal))
+)
 "
 
 end TelosTests.Frontend
