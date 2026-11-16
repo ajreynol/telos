@@ -15,20 +15,21 @@ identity), and every change is `REWRITE_AGAIN_FULL`.
 Ported so far: `rewriteConcat`, `rewriteLength`, `rewriteEquality`,
 `rewriteCharAt`, `rewriteSubstr`, `rewritePrefixSuffix`, `rewriteContains`,
 `rewriteReplace`, `rewriteReplaceAll`, `rewriteIndexof`, `rewriteStrReverse`,
-the regular expression eliminations, `rewriteRangeRegExp`,
-`rewriteAndOrRegExp` (without its macros), `rewriteStarRegExp`, most of
-`rewriteMembership`, and from `StringsRewriter` the conversions, `str.<`,
+the regular expression eliminations, `rewriteConcatRegExp`,
+`rewriteRangeRegExp`, `rewriteAndOrRegExp` (without the inclusion macro),
+`rewriteStarRegExp`, most of `rewriteMembership`, and from `StringsRewriter` the conversions, `str.<`,
 `str.<=` and `str.is_digit`; with the entailments they use (`ArithEntail`,
 `StringsEntail`). Each case is certified by CPC rules, as cvc5 elaborates its
 macros (see `docs/design.md`, roadmap item 8). Cases that are proof holes in
-cvc5 are left unchanged.
+cvc5 and still have no CPC rule (`IDOF_NORM_PREFIX`, `REPL_SUBST_IDX`) are
+left unchanged.
 
 The strings rewriter is given the full rewriter (`rw`), which cvc5's
 `StringsEntail::checkContains` uses, and which proves premises that evaluation
 does not (`premiseProver`).
 
-Not ported yet: `rewriteConcatRegExp`, `rewriteLoopRegExp`, parts of
-`rewriteMembership` and `rewriteIndexof`, the length of `str.to_lower` and
+Not ported yet: `rewriteLoopRegExp`, inclusion and `RE_IN_DIST_CHAR_STAR` in
+`rewriteMembership`, `IDOF_NORM_PREFIX`, the length of `str.to_lower` and
 `str.to_upper` (CPC has no rule), and sequences.
 -/
 
@@ -199,71 +200,91 @@ def rewriteRange (n : Node) : Option (Rw n) :=
     | none, none => none
   | _ => none
 
-/-- cvc5's `StringsEntail::stripSymbolicLength`, for whole components: strip
-components of `cs` from the front (`front`) or the back while `curr` stays
-entailed non-negative after subtracting their lengths. Returns the stripped
-components, the rest, and what is left of `curr`. cvc5 also strips part of a
-constant; telos stops there (cvc5 proves that case by an encoding transform). -/
+/-- `s` regrouped as the concatenation `g` of the same components, where `g`
+may split a constant of `s` or add empty constants: by `aci_norm`, or by
+rewriting `g` back to `s` (cvc5's `rewriteConcat`), reversed. -/
+def regroup (s g : Node) : Option (Rw s) :=
+  if s == g then some (Rw.id s) else
+  (aci s g).orElse fun _ =>
+    if g.getKind == .STRING_CONCAT then rewriteConcat g >>= Proof.reverse s else none
+
+/-- cvc5's `StringsEntail::stripSymbolicLength`: strip components of `cs` from
+the front (`front`) or the back while `curr` stays entailed non-negative after
+subtracting their lengths. A constant is stripped whole when the constant lower
+bound of `curr` is at least its length, and otherwise by that bound, which ends
+the stripping. Returns the stripped components, the rest, and what is left of
+`curr`. -/
 def stripSymbolicLength (cs : List Node) (front : Bool) (curr : Node) :
     Option (List Node × List Node × Node) :=
   let zero := ArithEntail.zero
+  let take (rest : List Node) := if front then rest.tail else rest.dropLast
+  let add (stripped : List Node) (c : Node) := if front then stripped ++ [c] else c :: stripped
   let rec go (rest stripped : List Node) (curr : Node) (fuel : Nat) : List Node × List Node × Node :=
     match fuel, (if front then rest.head? else rest.getLast?) with
     | fuel + 1, some c =>
       if curr == zero then (stripped, rest, curr) else
-      let next := ArithEntail.rewriteArith (mkNode .SUB #[curr, len c])
-      let ok := match word? c with
-        | some w =>
-          match ArithEntail.lowerBound? (ArithEntail.rewriteArith curr) with
-          | some lb => lb > 0 && lb - w.length ≥ 0
-          | none => false
-        | none => ArithEntail.check next
-      if ok then
-        let rest' := if front then rest.tail else rest.dropLast
-        let stripped' := if front then stripped ++ [c] else c :: stripped
-        go rest' stripped' next fuel
-      else (stripped, rest, curr)
+      match word? c with
+      | some w =>
+        match ArithEntail.lowerBound? (ArithEntail.rewriteArith curr) with
+        | some lb =>
+          if lb ≤ 0 then (stripped, rest, curr)
+          else if lb ≥ w.length then
+            go (take rest) (add stripped c)
+              (ArithEntail.rewriteArith (mkNode .SUB #[curr, .const (.integer w.length)])) fuel
+          else
+            -- strip `lb` characters of the constant, and stop
+            let k := lb.toNat
+            let (part, left) := if front then (w.take k, w.drop k) else (w.drop (w.length - k), w.take (w.length - k))
+            let rest' := if front then mkWord left :: rest.tail else rest.dropLast ++ [mkWord left]
+            (add stripped (mkWord part), rest',
+              ArithEntail.rewriteArith (mkNode .SUB #[curr, .const (.integer lb)]))
+        | none => (stripped, rest, curr)
+      | none =>
+        let next := ArithEntail.rewriteArith (mkNode .SUB #[curr, len c])
+        if ArithEntail.check next then go (take rest) (add stripped c) next fuel
+        else (stripped, rest, curr)
     | _, _ => (stripped, rest, curr)
   let (stripped, rest, curr) := go cs [] curr cs.length
   if stripped.isEmpty then none else some (stripped, rest, curr)
 
 /-- cvc5's `rewriteViaMacroSubstrStripSymLength`, certified as cvc5 elaborates
-`MACRO_SUBSTR_STRIP_SYM_LENGTH`: the string regrouped by `aci_norm` into the
-stripped part and the rest, then `str-substr-len-include-pre` or
-`str-substr-full` (`SS_LEN_INCLUDE`), `str-substr-concat2`
-(`SS_STRIP_START_PT`) or `str-substr-len-include` (`SS_STRIP_END_PT`), with
-their premises by `ArithEntail`. -/
+`MACRO_SUBSTR_STRIP_SYM_LENGTH`: the string regrouped into the stripped part and
+the rest (by `aci_norm`, or by splitting a constant: `regroup`), then
+`str-substr-len-include-pre` or `str-substr-full` (`SS_LEN_INCLUDE`),
+`str-substr-concat2` (`SS_STRIP_START_PT`) or `str-substr-len-include`
+(`SS_STRIP_END_PT`), with their premises by `ArithEntail`. When everything is
+stripped from the start, the result is empty: `str-substr-empty-start`. -/
 def substrStripSymLength (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
   match n.getChildren with
   | #[s, i, l] =>
     let zero := ArithEntail.zero
     let cs := ArithEntail.concatChildren s
     -- Regroup `s` as `(str.++ first second)`, then apply `rule`.
-    let regroup := fun (first second : List Node) (rule : String) =>
+    let regroupBy := fun (first second : List Node) (rule : String) =>
       if first.isEmpty || second.isEmpty then none else
       let g := mkNode .STRING_CONCAT #[mkConcat first, mkConcat second]
-      (Rw.id n).next? (fun m => Rw.congrArg m 0 fun c => aci c g) >>= fun r => r.next? (byRuleE rw rule)
+      (Rw.id n).next? (fun m => Rw.congrArg m 0 fun c => regroup c g) >>= fun r => r.next? (byRuleE rw rule)
     let lenInclude : Option (Rw n) :=
       if i == zero then
         match stripSymbolicLength cs true l with
-        | some (stripped, rest, curr) =>
+        | some (stripped, rest, _) =>
           if rest.isEmpty then byRuleE rw "str-substr-full" n
-          else if curr == zero then none
-          else regroup stripped rest "str-substr-len-include-pre"
+          else regroupBy stripped rest "str-substr-len-include-pre"
         | none => none
       else none
     lenInclude.orElse fun _ =>
     -- `SS_STRIP_START_PT`
     (if i != zero then
       match stripSymbolicLength cs true i with
-      | some (stripped, rest, _) => regroup stripped rest "str-substr-concat2"
+      | some (_, [], _) => byRuleE rw "str-substr-empty-start" n
+      | some (stripped, rest, _) => regroupBy stripped rest "str-substr-concat2"
       | none => none
     else none).orElse fun _ =>
     -- `SS_STRIP_END_PT`
     if l != len s then
       let curr := ArithEntail.rewriteArith (mkNode .SUB #[len s, mkNode .ADD #[i, l]])
       match stripSymbolicLength cs false curr with
-      | some (stripped, rest, _) => regroup rest stripped "str-substr-len-include"
+      | some (stripped, rest, _) => regroupBy rest stripped "str-substr-len-include"
       | none => none
     else none
   | _ => none
@@ -325,14 +346,6 @@ def checkContains (rw : (m : Node) → Rw m) (a b : Node) : Option Bool :=
   | .const (.boolean v) => some v
   | _ => none
 
-/-- `s` regrouped as the concatenation `g` of the same components, where `g`
-may split a constant of `s` or add empty constants: by `aci_norm`, or by
-rewriting `g` back to `s` (cvc5's `rewriteConcat`), reversed. -/
-def regroup (s g : Node) : Option (Rw s) :=
-  if s == g then some (Rw.id s) else
-  (aci s g).orElse fun _ =>
-    if g.getKind == .STRING_CONCAT then rewriteConcat g >>= Proof.reverse s else none
-
 /-- A concatenation with nested concatenations flattened at every depth, by
 `rewriteConcat` from the inside out. -/
 partial def rewriteConcatDeep (m : Node) : Option (Rw m) :=
@@ -357,7 +370,7 @@ def componentCtn (rw : (m : Node) → Rw m) (n a b : Node) : Option (Rw n) := do
 as cvc5 elaborates it: both arguments regrouped as three components, the
 stripped ones first and last (or `""`), then `str-overlap-endpoints-ctn` (or
 `-replace`), then `aci_norm` back. -/
-def stripEndpoints (n : Node) : Option (Rw n) := do
+def stripEndpoints (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) := do
   let cs := n.getChildren
   let a ← cs[0]?
   let b ← cs[1]?
@@ -373,6 +386,11 @@ def stripEndpoints (n : Node) : Option (Rw n) := do
   let (d2, nc2) := if ne.isEmpty then (emp, nc2) else (nc2.getLast!, nc2.dropLast)
   let c1 := nb.headD emp
   let c2 := ne.headD emp
+  -- A `str.from_int` endpoint, which `b` cannot start (end) in: one endpoint at a
+  -- time, by `str-contains-strip-from-int-pre` (`-post`)
+  if isCtn && (c1.getKind == .STRING_ITOS || c2.getKind == .STRING_ITOS) then
+    return ← if c1.getKind == .STRING_ITOS then byRuleE rw "str-contains-strip-from-int-pre" n
+      else byRuleE rw "str-contains-strip-from-int-post" n
   let remN := mkConcat rem
   if isIdof then
     -- only the end is stripped
@@ -425,6 +443,19 @@ partial def splitChar (rw : (m : Node) → Rw m) (m : Node) : Option (Rw m) :=
     else some (Rw.id m)
   | _ => none
 
+/-- `(str.contains (str.++ c₁ … cₖ) t)`, for characters `cᵢ` and `t` of length
+at most one, as `(or (= c₁ t) … (or (= "" t) (= cₖ t)))`: by
+`str-contains-cnst-split-leq-one` for each character but the last, and
+`str-contains-char` for the last. -/
+partial def cnstSplit (rw : (m : Node) → Rw m) (m : Node) : Option (Rw m) :=
+  match m.getChildren with
+  | #[a, _] =>
+    if a.getKind == .STRING_CONCAT && a.getChildren.size ≥ 2 then
+      (byRuleE rw "str-contains-cnst-split-leq-one" m).bind fun r =>
+        r.next? fun k => Rw.congrArg k 1 (cnstSplit rw)
+    else byRuleE rw "str-contains-char" m
+  | _ => none
+
 /-- cvc5's `rewriteContains`. Each case is `some r` when cvc5 rewrites, with
 `r` the certificate (`none` when telos cannot certify it, and leaves the node
 as it is). -/
@@ -454,9 +485,15 @@ def rewriteContains (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
         else if word? a == some [] then
           -- `CTN_LHS_EMPTYSTR`, certified as cvc5 does, by the multiset rule
           if ArithEntail.check lenB true then some (checkBy .str_ctn_multiset_subset n ff) else none
-        -- `CTN_SPLIT` for a constant first argument: no CPC rule (a proof
-        -- hole in cvc5)
-        else if ArithEntail.checkLengthOne b then some none
+        -- `CTN_SPLIT` for a constant first argument: `b` is empty or one of
+        -- the characters of `a`
+        else if ArithEntail.checkLengthOne b then
+          let chars := (word? a).getD [] |>.map fun c => mkWord [c]
+          let target := mkNode .OR ((eqNode (mkWord []) b :: chars.map (eqNode · b)).toArray)
+          some do
+            let r ← Rw.congrArg n 0 fun c => regroup c (mkConcat chars)
+            let r ← r.next? (cnstSplit rw)
+            r.next? fun m => aci m target
         else none,
       fun _ => match word? b with
         -- `CTN_RHS_EMPTYSTR`
@@ -478,7 +515,7 @@ def rewriteContains (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
           else none
         | _, _ => none,
       -- `CTN_STRIP_ENDPT`
-      fun _ => (stripEndpoints n).map some,
+      fun _ => (stripEndpoints rw n).map some,
       fun _ => nc2.findSome? fun c =>
         -- `CTN_CONCAT_COM_NON_CTN`
         if nc2.length > 1 && ctn a c == some false then
@@ -507,7 +544,9 @@ def rewriteContains (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
         | .STRING_REPLACE, #[x, y, z] =>
           if x == z && y == b then some (byRule "str-contains-repl-self" n)
           else if x == z && ArithEntail.checkLengthOne b then
-            some (byRuleE rw "str-contains-repl-self-tgt-char" n)
+            -- `CTN_REPL_LEN_ONE_TO_CTN`
+            some ((byRuleE rw "str-contains-repl-self-tgt-leq-one" n).orElse fun _ =>
+              byRuleE rw "str-contains-repl-self-tgt-char" n)
           else if z == b then some (byRule "str-contains-repl-tgt" n)
           else none
         -- `CTN_ITOS_NON_DIGIT`
@@ -626,7 +665,7 @@ def rewriteReplace (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
         | some false => some (byRuleE rw "str-replace-no-contains" n)
         | none => none,
       -- `RPL_PULL_ENDPT`
-      fun _ => if checkNonEmpty b then (stripEndpoints n).map some else none,
+      fun _ => if checkNonEmpty b then (stripEndpoints rw n).map some else none,
       -- `REPL_SUBST_IDX`: no CPC rule (a proof hole in cvc5)
       fun _ =>
         match children1.getLast? with
@@ -741,6 +780,34 @@ def rewriteReplaceAll (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
 
 def negOne : Node := .const (.integer (-1))
 
+/-- `a` rewritten to `b`, for integer terms with the same polynomial after
+length introduction (`ArithEntail.proveEq`, then `true_elim`). -/
+def arithEqRw (a b : Node) : Option (Rw a) :=
+  if a == b then some (Rw.id a) else do
+  let cmds ← ArithEntail.premiseProof (eqNode a b) tt
+  applyCmds ((cmds ++ [Eo.CCmd.step .true_elim .nil (.cons 0 .nil)]).foldr .cons .nil) a
+
+/-- The rule `r` with the given arguments, its premises `(= p true)` proven by
+`premiseProver`, or for a premise `(p, true)` the equality `p` itself (as
+`(= p true)`, then `true_elim`). -/
+def byRuleProving (rw : (m : Node) → Rw m) (r : Eo.CRule) (args : List Node)
+    (prems : List (Node × Bool)) (n : Node) : Option (Rw n) := do
+  let blocks ← prems.mapM fun (p, isEq) => do
+    let cs ← premiseProver rw p tt
+    return if isEq then cs ++ [Eo.CCmd.step .true_elim .nil (.cons 0 .nil)] else cs
+  let steps := blocks.flatten
+  let ends := (blocks.scanl (fun k b => k + b.length) 0).tail
+  let indices : Eo.CIndexList := ends.foldr (fun e acc => .cons (Int.ofNat (steps.length - e)) acc) .nil
+  let ruleStep := Eo.CCmd.step r (toArgList (args.map Node.toEo)) indices
+  applyCmds ((steps ++ [ruleStep]).foldr .cons .nil) n
+
+/-- `(str.indexof (str.++ c₁ … cₖ t …) s 0)` as `(+ 1 … (+ 1 (str.indexof
+(str.++ t …) s 0)))`, for `k` characters `cᵢ`, by `str-indexof-strip-char-pre`. -/
+def idofStripChars (rw : (m : Node) → Rw m) : Nat → (m : Node) → Option (Rw m)
+  | 0, m => some (Rw.id m)
+  | k + 1, m => (byRuleE rw "str-indexof-strip-char-pre" m).bind fun r =>
+      r.next? fun t => Rw.congrArg t 1 (idofStripChars rw k)
+
 /-- cvc5's `rewriteIndexof`. Each case is `some r` when cvc5 rewrites, with `r`
 the certificate (`none` when telos cannot certify it). -/
 def rewriteIndexof (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
@@ -752,6 +819,37 @@ def rewriteIndexof (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
     let children1 := getConcat b
     let zNeg : Bool := match z with | .const (.integer i) => decide (i < 0) | _ => false
     let len0 := len a
+    -- `IDOF_STRIP_CNST_ENDPTS`: the characters stripped one at a time
+    let stripCnst : Option (Option (Rw n)) :=
+      match stripConstantEndpoints children0 children1 1 with
+      | some (nb, rest, _) =>
+        some do
+          let ws ← nb.mapM word?
+          let chars := ws.flatten.map fun c => mkWord [c]
+          let target := mkNode .ADD #[len (mkConcat nb), mkNode .STRING_INDEXOF #[mkConcat rest, b, z]]
+          let r ← Rw.congrArg n 0 fun c => regroup c (mkConcat (chars ++ rest))
+          let r ← r.next? (idofStripChars rw chars.length)
+          r.next? fun m => arithEqRw m target
+      | none => none
+    -- `IDOF_STRIP_SYM_LEN`: `str-indexof-strip-prefix-len` when nothing is
+    -- left of the index, otherwise `str-indexof-strip-sym-len`
+    let stripSym : Option (Option (Rw n)) :=
+      if !(ArithEntail.check z && ArithEntail.check2 len0 z) then none else
+      match stripSymbolicLength children0 true z with
+      | some (stripped, rest@(_ :: _), newLen) =>
+        let s1 := mkConcat stripped
+        let s2 := mkConcat rest
+        let target := mkNode .ADD #[mkNode .SUB #[z, newLen], mkNode .STRING_INDEXOF #[s2, b, newLen]]
+        some do
+          let r ← Rw.congrArg n 0 fun c => regroup c (mkNode .STRING_CONCAT #[s1, s2])
+          let r ← r.next? fun m =>
+            (if newLen == zero then byRuleE rw "str-indexof-strip-prefix-len" m else none).orElse fun _ =>
+            byRuleProving rw Eo.CRule.str_indexof_strip_sym_len [s1, s2, b, z, newLen]
+              [(eqNode newLen (mkNode .SUB #[z, len s1]), true), (mkNode .GEQ #[newLen, zero], false),
+               (mkNode .GEQ #[len s2, newLen], false),
+               (ctnNode (mkNode .STRING_SUBSTR #[s2, newLen, len s2]) b, false)] m
+          r.next? fun m => arithEqRw m target
+      | _ => none
     let cases : List (Unit → Option (Option (Rw n))) := [
       -- `IDOF_NEG`
       fun _ => if zNeg then some (byRuleE rw "str-indexof-oob2" n) else none,
@@ -779,7 +877,7 @@ def rewriteIndexof (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
       -- `IDOF_LEN`
       fun _ => if ArithEntail.check2 (len b) (mkNode .SUB #[len0, z]) true then
           some (firstOf [fun _ => byRuleE rw "str-indexof-len-oob" n, fun _ => byRuleE rw "str-indexof-len-oob2" n,
-            fun _ => byRuleE rw "str-indexof-oob" n])
+            fun _ => byRuleE rw "str-indexof-oob" n, fun _ => byRuleE rw "str-indexof-len" n])
         else none,
       fun _ =>
         let fstr := if z == zero then a else mkNode .STRING_SUBSTR #[a, z, len0]
@@ -801,15 +899,12 @@ def rewriteIndexof (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
                   if r.1 == target then some r else
                   let r ← r.next? fun m => Rw.congrArg m 0 fun c => if c.getKind == .STRING_CONCAT then rewriteConcat c else none
                   if r.1 == target then some r else none
-              -- `IDOF_STRIP_CNST_ENDPTS`: no CPC rule (a proof hole in cvc5)
-              else if (stripConstantEndpoints children0 children1 1).isSome then some none
-              else none
-            | none =>
-              if (stripConstantEndpoints children0 children1 1).isSome then some none else none
-          else none
+              else stripCnst
+            | none => stripCnst
+          else stripSym
         | none => none,
       -- `RPL_PULL_ENDPT`
-      fun _ => if z == zero then (stripEndpoints n).map some else none]
+      fun _ => if z == zero then (stripEndpoints rw n).map some else none]
     (cases.findSome? fun c => c ()).join
   | _ => none
 
@@ -885,9 +980,11 @@ def rewriteStrToInt (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
 def rewriteStringLeq (n : Node) : Option (Rw n) :=
   match n.getChildren with
   | #[a, b] =>
-    -- `STR_LEQ_ID`: no CPC rule (a proof hole in cvc5)
-    if a == b then none
-    else if a.isConst && b.isConst then byEvaluate n
+    -- `STR_LEQ_EVAL`, and `STR_LEQ_ID` for a constant (cvc5 proves both by
+    -- evaluation)
+    if a.isConst && b.isConst then byEvaluate n
+    -- `STR_LEQ_ID`
+    else if a == b then byRule "str-leq-id" n
     -- `STR_LEQ_EMPTY`
     else if word? a == some [] then byRule "str-leq-empty" n
     else if word? b == some [] then byRule "str-leq-empty-eq" n
@@ -920,6 +1017,9 @@ def rewriteStringLeq (n : Node) : Option (Rw n) :=
 
 /-! ## Regular expressions -/
 
+/-- Whether a regular expression has no variables (cvc5's `isConstRegExp`). -/
+def isConstRe (r : Node) : Bool := r.vars.isEmpty
+
 def reAllStar : Node := mkNode .REGEXP_STAR #[mkNode .REGEXP_ALLCHAR #[]]
 def reNone : Node := mkNode .REGEXP_NONE #[]
 def emptyRe : Node := mkNode .STRING_TO_REGEXP #[mkWord []]
@@ -933,11 +1033,64 @@ partial def reach (rw : (m : Node) → Rw m) (ruleNames : List String) (target :
     firstOf [fun _ => aci cur target, fun _ => checkBy .absorb cur target,
       fun _ => (firstOf (ruleNames.map fun r _ => byRuleE rw r cur)).bind (·.next? (reach rw ruleNames target fuel))]
 
-/-- cvc5's `rewriteAndOrRegExp`, its flattening part (`RE_ANDOR_FLATTEN`,
-`RE_AND_EMPTY`, `RE_OR_ALL`, `RE_INTER_CONST_CONST_CONFLICT`). The macros
-`rewriteViaMacroReInterUnionConstElim` and
-`rewriteViaMacroReInterUnionInclusion` are not ported. -/
-def rewriteAndOr (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) := do
+/-- cvc5's `rewriteViaMacroReInterUnionConstElim` (`RE_ANDOR_CONST_REMOVE`):
+a constant string `(str.to_re s)` of an intersection removes each constant
+member `r` with `s` in `r`, or makes it empty when `s` is not in `r`; in a
+union, `(str.to_re s)` is removed when `s` is in another constant member. Each
+removal is one step of `re-inter-const-elim` (resp. `re-union-const-elim`), on
+the node with `(str.to_re s)` and `r` moved to the front (`aci_norm`), and the
+conflict is `re-inter-cstring-neg`. -/
+def reInterUnionConstElim (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) := do
+  let nk := n.getKind
+  let isInter := nk == .REGEXP_INTER
+  let cs := n.getChildren.toList
+  let isStr := fun (c : Node) => c.getKind == .STRING_TO_REGEXP
+  let consts := cs.filter fun c => isConstRe c && isStr c
+  let others := cs.filter fun c => isConstRe c && !isStr c
+  if consts.isEmpty || others.isEmpty then none
+  let mem := fun (c r : Node) =>
+    let m := mkNode .STRING_IN_REGEXP #[c.getChildren[0]!, r]
+    if (inReEval m tt).isSome then some true
+    else if (inReEval m (.const (.boolean false))).isSome then some false else none
+  -- cvc5's loop: the pairs `(c, r)` with `c` in `r`, or a conflicting constant
+  -- string (`n` itself when a membership is not decided).
+  let (pairs, conflict) := consts.foldl (init := (([] : List (Node × Node)), (none : Option Node)))
+    fun (pairs, conflict) c =>
+      if conflict.isSome then (pairs, conflict) else
+      let (pairs, conflict, _) := others.foldl (init := (pairs, conflict, false))
+        fun (pairs, conflict, done) r =>
+          if conflict.isSome || done || (isInter && pairs.any (·.2 == r)) then (pairs, conflict, done) else
+          match mem c r with
+          | some true => (pairs ++ [(c, r)], none, !isInter)
+          | some false => if isInter then (pairs, some c, done) else (pairs, conflict, done)
+          | none => if isInter then (pairs, some n, done) else (pairs, conflict, done)
+      (pairs, conflict)
+  match conflict with
+  | some c =>
+    if c == n then none else
+    let g := mkNode .REGEXP_INTER (#[c] ++ n.getChildren)
+    (aci n g).bind (·.next? (byRuleE rw "re-inter-cstring-neg"))
+  | none =>
+    if pairs.isEmpty then none
+    let removed := pairs.map fun (c, r) => if isInter then r else c
+    let target := match cs.filter (!removed.contains ·) with
+      | [c] => c
+      | rest => mkNode nk rest.toArray
+    let rule := if isInter then "re-inter-const-elim" else "re-union-const-elim"
+    let step := fun (cr : Node × Node) (cur : Node) =>
+      let rest := (cur.getChildren.toList.erase cr.1).erase cr.2
+      let g := mkNode nk (#[cr.1, cr.2] ++ rest.toArray)
+      (aci cur g).bind (·.next? (byRuleE rw rule))
+    let rec go : List (Node × Node) → (cur : Node) → Option (Rw cur)
+      | [], cur => aci cur target
+      | cr :: crs, cur => (step cr cur).bind (·.next? (go crs))
+    go pairs n
+
+/-- cvc5's `rewriteAndOrRegExp`: flattening (`RE_ANDOR_FLATTEN`,
+`RE_AND_EMPTY`, `RE_OR_ALL`, `RE_INTER_CONST_CONST_CONFLICT`), then
+`reInterUnionConstElim`. The inclusion macro `rewriteViaMacroReInterUnionInclusion`
+is not ported. -/
+def rewriteAndOrFlatten (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) := do
   let nk := n.getKind
   let isInter := nk == .REGEXP_INTER
   -- cvc5's loop: the result, or an early answer.
@@ -967,7 +1120,45 @@ def rewriteAndOr (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) := do
         | [c] => c
         | cs => mkNode nk cs.toArray)
   if target == n then none
-  reach rw ["re-union-all", "re-inter-all", "re-inter-cstring-neg"] target (n.getChildren.size + 2) n
+  reach rw ["re-union-all", "re-inter-all", "re-inter-const-const-conflict", "re-inter-cstring-neg"] target (n.getChildren.size + 2) n
+
+def rewriteAndOr (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
+  (rewriteAndOrFlatten rw n).orElse fun _ =>
+    reInterUnionConstElim rw n
+
+/-- cvc5's `rewriteConcatRegExp`. `RE_CONCAT_EMPTY` is `absorb` and
+`RE_CONCAT_FLATTEN` is `aci_norm`. The combinations of `RE_CONCAT` are taken one
+rule at a time (the result is rewritten again): `re-concat-merge` for adjacent
+strings, `re-concat-star-repeat` for adjacent equal stars, and
+`re-concat-star-nullable1/2` for a constant nullable expression next to
+`(re.* re.allchar)` (its premise by `str-in-re-eval` only, so only for constant
+ones, as in cvc5). Then `re-concat-star-swap` (`RE_CONCAT_OPT`). -/
+def rewriteConcatRe (n : Node) : Option (Rw n) :=
+  let cs := n.getChildren.toList
+  if cs.any (·.getKind == .REGEXP_NONE) then checkBy .absorb n reNone
+  else if cs.any (fun c => c.getKind == .REGEXP_CONCAT || c == emptyRe) then
+    let vec := cs.flatMap fun c =>
+      if c.getKind == .REGEXP_CONCAT then c.getChildren.toList else if c == emptyRe then [] else [c]
+    aci n (match vec with
+      | [] => emptyRe
+      | [c] => c
+      | _ => mkNode .REGEXP_CONCAT vec.toArray)
+  else
+    let pairs := cs.zip cs.tail
+    let isStr := fun (c : Node) => c.getKind == .STRING_TO_REGEXP
+    let nullable := fun (c : Node) => isConstRe c && c != reAllStar
+    let byEval := fun (name : String) =>
+      rewriteByWith (fun p v => (inReEval p v).bind Proof.cmdsOf) name n
+    firstOf [
+      fun _ => if pairs.any (fun (a, b) => isStr a && isStr b) then byRule "re-concat-merge" n else none,
+      fun _ => if pairs.any (fun (a, b) => a == b && a.getKind == .REGEXP_STAR) then
+        byRule "re-concat-star-repeat" n else none,
+      fun _ => if pairs.any (fun (a, b) => a == reAllStar && (nullable b || b == reAllStar)) then
+        byEval "re-concat-star-nullable1" else none,
+      fun _ => if pairs.any (fun (a, b) => b == reAllStar && nullable a) then
+        byEval "re-concat-star-nullable2" else none,
+      fun _ => if pairs.any (fun (a, b) => a.getKind == .REGEXP_STAR && a.getChildren[0]? == some b) then
+        byRule "re-concat-star-swap" n else none]
 
 /-- cvc5's `rewriteStarRegExp`. -/
 def rewriteStar (n : Node) : Option (Rw n) :=
@@ -984,17 +1175,23 @@ def rewriteStar (n : Node) : Option (Rw n) :=
     | _ => none
   | _ => none
 
-/-- Whether a regular expression has no variables (cvc5's `isConstRegExp`). -/
-def isConstRe (r : Node) : Bool := r.vars.isEmpty
+/-- cvc5's `rewriteViaStrInReConsume`, certified by `str-in-re-consume`: the
+result is computed by CPC's own `$str_re_consume`. -/
+def inReConsume (n : Node) : Option (Rw n) :=
+  match n.getChildren with
+  | #[x, r] => do
+    let b ← Node.ofEo n.vars (Eo.__str_re_consume x.toEo r.toEo)
+    if b == n then none
+    checkBy .str_in_re_consume n b
+  | _ => none
 
-/-- cvc5's `rewriteMembership`, without simple consumption
-(`rewriteViaStrInReConsume`), inclusion (`rewriteViaMacroStrInReInclusion`),
-and the cases of stars over constant strings, of concatenations of
-`re.allchar` (`RE_CONCAT_PURE_ALLCHAR`, `RE_IN_CHAR_MODULUS_STAR`) and of
-`RE_IN_DIST_CHAR_STAR`. -/
+/-- cvc5's `rewriteMembership`, without inclusion
+(`rewriteViaMacroStrInReInclusion`) and `RE_IN_DIST_CHAR_STAR`. -/
 def rewriteMembership (n : Node) : Option (Rw n) :=
   match n.getChildren with
   | #[x, r] =>
+    let allchar := fun (c : Node) => c.getKind == .REGEXP_ALLCHAR
+    let lenX := len x
     match r.getKind with
     | .REGEXP_NONE => byRule "re-in-empty" n
     | _ =>
@@ -1002,25 +1199,53 @@ def rewriteMembership (n : Node) : Option (Rw n) :=
     if x.isConst && isConstRe r then
       (inReEval n (.const (.boolean true))).orElse fun _ => inReEval n (.const (.boolean false))
     else
-    match r.getKind with
-    | .REGEXP_ALLCHAR => byRule "re-in-sigma" n
-    | .REGEXP_STAR =>
-      if r.getChildren[0]?.map (·.getKind) == some .REGEXP_ALLCHAR then byRule "re-in-sigma-star" n
-      else none
-    | .REGEXP_CONCAT =>
-      -- `RE_CONCAT_TO_CONTAINS`: (str.in_re x (re.++ _* "abc" _*))
-      let rcs := r.getChildren.toList
-      let consts := rcs.filter (·.getKind == .STRING_TO_REGEXP)
-      if rcs.length ≥ 3 && consts.length == 1 && rcs.all (fun c => c == reAllStar || c.getKind == .STRING_TO_REGEXP)
-          && rcs.head? != consts.head? && rcs.getLast? != consts.head? then
-        byRule "str-in-re-contains" n
-      else none
-    | .REGEXP_UNION => byRule "str-in-re-union-elim" n
-    | .REGEXP_INTER => byRule "str-in-re-inter-elim" n
-    | .STRING_TO_REGEXP => byRule "re-in-cstring" n
-    | .REGEXP_RANGE => if isConstRe r then byRule "str-in-re-range-elim" n else none
-    | .REGEXP_COMPLEMENT => byRule "re-in-comp" n
-    | _ => none
+    -- `none`: the case does not apply; `some none`: cvc5 stops here
+    let byKind : Option (Option (Rw n)) := match r.getKind with
+      | .REGEXP_ALLCHAR => some (byRule "re-in-sigma" n)
+      | .REGEXP_STAR =>
+        let body := r.getChildren[0]!
+        match word? x with
+        | some [] =>
+          -- `RE_EMPTY_IN_STR_STAR`
+          some (checkBy .str_in_re_eval n (.const (.boolean true)))
+        | some [_] =>
+          -- `RE_CHAR_IN_STR_STAR`
+          if body.getKind == .STRING_TO_REGEXP then some (byRule "re-char-in-str-star" n)
+          else if allchar body then some (byRule "re-in-sigma-star" n) else none
+        | _ =>
+          if allchar body then some (byRule "re-in-sigma-star" n)
+          else if body.getKind == .REGEXP_CONCAT && body.getChildren.all allchar then
+            -- `RE_IN_CHAR_MODULUS_STAR`
+            let k := Node.const (.integer body.getChildren.size)
+            some (checkBy .str_in_re_sigma_star n
+              (mkNode .EQUAL #[mkNode .INTS_MODULUS #[lenX, k], .const (.integer 0)]))
+          else none
+      | .REGEXP_CONCAT =>
+        let rcs := r.getChildren.toList
+        let isAllStar := fun (c : Node) => c.getKind == .REGEXP_STAR && (c.getChildren[0]?.map allchar).getD false
+        let consts := rcs.filter (·.getKind == .STRING_TO_REGEXP)
+        if consts.length ≤ 1 && rcs.all (fun c => allchar c || isAllStar c || c.getKind == .STRING_TO_REGEXP) then
+          if consts.isEmpty then
+            -- `RE_CONCAT_PURE_ALLCHAR`
+            let k := Node.const (.integer (rcs.filter allchar).length)
+            some (checkBy .str_in_re_sigma n
+              (mkNode (if rcs.any isAllStar then .GEQ else .EQUAL) #[lenX, k]))
+          -- `RE_CONCAT_TO_CONTAINS`: (str.in_re x (re.++ _* "abc" _*))
+          else if !rcs.any allchar && rcs.length ≥ 3 && rcs.head? != consts.head? && rcs.getLast? != consts.head? then
+            some (byRule "str-in-re-contains" n)
+          else none
+        else none
+      | .REGEXP_UNION => some (byRule "str-in-re-union-elim" n)
+      | .REGEXP_INTER => some (byRule "str-in-re-inter-elim" n)
+      | .STRING_TO_REGEXP => some (byRule "re-in-cstring" n)
+      | .REGEXP_RANGE => if isConstRe r then some (byRule "str-in-re-range-elim" n) else none
+      | .REGEXP_COMPLEMENT => some (byRule "re-in-comp" n)
+      | _ => none
+    match byKind with
+    | some (some rw) => some rw
+    | some none => none
+    -- `RE_SIMPLE_CONSUME`
+    | none => inReConsume n
   | _ => none
 
 /-- The value of a string operator applied to constants. -/
@@ -1057,6 +1282,7 @@ def postRewrite (rw : (m : Node) → Rw m) (n : Node) : RewriteResponse n :=
     | .REGEXP_ALL => byRule "re-all-elim" n
     | .REGEXP_UNION | .REGEXP_INTER => rewriteAndOr rw n
     | .REGEXP_STAR => rewriteStar n
+    | .REGEXP_CONCAT => rewriteConcatRe n
     | .STRING_IN_REGEXP => rewriteMembership n
     | _ => evalConst n
   match r with

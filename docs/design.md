@@ -471,7 +471,9 @@ tested:
      `div` over `mod`), constant `abs`, `to_int` and `is_int`, `to_int` and
      `is_int` of `to_real` (`arith-to-int-elim-to-real`,
      `arith-is-int-elim-to-real`), and `to_real` removed from both sides of `/`
-     (`arith-div-elim-to-real`).
+     and `/_total` (`arith-div-int-to-real` and `arith-div-total-int-to-real`,
+     read right to left), and an integer constant numerator made real over an
+     integer denominator (the same rules, then `evaluate`).
    - Fuzzing (`scripts/fuzz.py --arith`, 3000 terms of depth 4, including
      `div`, `mod`, `abs`, `to_int` and `is_int`): 86.5% identical to cvc5,
      96.4% up to the orientation of equalities, no semantic disagreements.
@@ -675,10 +677,49 @@ tested:
    - Fuzzing: 65.4% identical to cvc5 (from 43.9%), 83.0% up to the
      orientation of equalities, no semantic disagreements; Ethos accepts all
      proofs. The other modes are unchanged.
-   - Next: the largest gaps are `str.substr` (the parts of
-     `rewriteSubstr` and `stripSymbolicLength` that split constants),
-     `rewriteConcatRegExp`, the rest of `rewriteMembership` (consumption,
-     inclusion, stars of constants), `rewriteLoopRegExp`, and `CTN_LEN_INEQ`.
+   - Then: `stripSymbolicLength` strips part of a constant, as cvc5 does
+     (the regrouping splits the constant: `regroup`), and stripping a whole
+     string from the start gives `str-substr-empty-start`;
+     `rewriteConcatRegExp` (`absorb` for `RE_CONCAT_EMPTY`, `aci_norm` for
+     `RE_CONCAT_FLATTEN`, and `re-concat-merge`, `re-concat-star-repeat`,
+     `re-concat-star-nullable1/2` and `re-concat-star-swap` one at a time);
+     in `rewriteMembership`, `RE_EMPTY_IN_STR_STAR` (`str-in-re-eval`),
+     `RE_CONCAT_PURE_ALLCHAR` (`str-in-re-sigma`), `RE_IN_CHAR_MODULUS_STAR`
+     (`str-in-re-sigma-star`) and simple consumption (`str-in-re-consume`, whose
+     result telos computes with CPC's own `$str_re_consume`);
+     `RE_ANDOR_CONST_REMOVE` for the intersections cvc5 can prove
+     (`re-inter-cstring`, `re-inter-cstring-neg`); and `str.<=` of two equal
+     constants by evaluation. `RE_CHAR_IN_STR_STAR` and the other constant
+     removals are proof holes in cvc5 and are left unchanged.
+   - Fuzzing: 71.3% identical to cvc5 (3000 terms of depth 3), 92.3% up to the
+     orientation of equalities, no semantic disagreements; Ethos accepts all
+     proofs. The other modes are unchanged.
+   - cvc5's proof holes found by fuzzing (`scripts/find-holes.py`) have
+     reproducers in `test/cvc5-holes/`.
+   - Then, with Logos `512983a8`, whose new rules cover most of those holes:
+     `RE_ANDOR_CONST_REMOVE` in full, for intersections and unions, one removal
+     at a time (`re-inter-const-elim`, `re-union-const-elim`), and
+     `RE_INTER_CONST_CONST_CONFLICT` (`re-inter-const-const-conflict`);
+     `RE_CHAR_IN_STR_STAR` (`re-char-in-str-star`); `STR_LEQ_ID`
+     (`str-leq-id`); `CTN_SPLIT` for a constant first argument (the constant
+     split into its characters, then `str-contains-cnst-split-leq-one` for each
+     and `str-contains-char` for the last); `CTN_REPL_LEN_ONE_TO_CTN` for
+     `|z| <= 1` (`str-contains-repl-self-tgt-leq-one`); `CTN_STRIP_ENDPT` past a
+     `str.from_int` (`str-contains-strip-from-int-pre/post`, the premise by
+     `str-is-digit-elim`); `IDOF_LEN` (`str-indexof-len`);
+     `IDOF_STRIP_CNST_ENDPTS` (one character at a time by
+     `str-indexof-strip-char-pre`, then `arith_poly_norm` to cvc5's
+     `(+ (str.len c) …)`); and `IDOF_STRIP_SYM_LEN`
+     (`str-indexof-strip-prefix-len`, or `str-indexof-strip-sym-len` with
+     cvc5's remaining index as its `m`). `IDOF_NORM_PREFIX` still has no rule.
+   - Fuzzing: 73.3% identical to cvc5 (3000 terms of depth 3), 96.1% up to the
+     orientation of equalities, no semantic disagreements; Ethos accepts all
+     proofs. The other modes are unchanged. Of the 15 reproducers in
+     `test/cvc5-holes/`, telos now matches cvc5 on all but `idof-norm-prefix`
+     (up to the orientation of equalities).
+   - Next: `CTN_LEN_INEQ`, `rewriteLoopRegExp`, inclusion
+     (`rewriteViaMacroStrInReInclusion`, `rewriteViaMacroReInterUnionInclusion`),
+     `RE_IN_DIST_CHAR_STAR`, and `CTN_NCONST_CTN_CONCAT`.
 9. **Performance.** ~~Rewrite cache~~ (done: `Cache` in
    `Telos/Rewriter/Rewriter.lean`, for one call of `rewriteWith`, as cvc5 caches
    `rewriteTo`; children are rewritten in order and assembled by

@@ -23,7 +23,9 @@ Differences from cvc5:
   (`(+ r (to_real x))`, which is also how cvc5 prints that sum).
 * Monomials are ordered by telos's structural term order where cvc5 uses node ids
   (`LeafNodeComparator`'s last case).
-* `to_real` is removed from the sides of a division only when both have it.
+* `to_real` is removed from the sides of a division only when both have it, and
+  an integer constant numerator is made real only when the denominator is an
+  integer (`(/ 1 x)` is `(/ 1.0 (to_real x))`).
 -/
 
 open Eo
@@ -120,14 +122,28 @@ def rewriteOther (n : Node) : Option (Rw n) :=
   | _, _ => none
 
 /-- cvc5's `rewriteDiv` removes `to_real` from the sides of a division by a
-non-constant: `(/ (to_real x) (to_real y))` is `(/ x y)`. Removing it from one
-side only would give a mixed division, which Logos's typing rejects. cvc5
-does the same for `/_total`, which has no RARE rule yet
-(`cpc-arith-div-total-elim-to-real.md`), so telos leaves it unchanged. -/
+non-constant: `(/ (to_real x) (to_real y))` is `(/ x y)`, and likewise for
+`/_total`, by `arith-div-int-to-real` (resp. `arith-div-total-int-to-real`)
+read right to left. Removing it from one side only would give a mixed
+division, which Logos's typing rejects. -/
 def rewriteDivToReal (n : Node) : Option (Rw n) :=
-  match n.getChildren with
-  | #[.app (.kind .TO_REAL) #[_], .app (.kind .TO_REAL) #[_]] => byRule "arith-div-elim-to-real" n
-  | _ => none
+  match n.getKind, n.getChildren with
+  | .DIVISION, #[.app (.kind .TO_REAL) #[x], .app (.kind .TO_REAL) #[y]] =>
+    symmRule .arith_div_int_to_real x y
+  | .DIVISION_TOTAL, #[.app (.kind .TO_REAL) #[x], .app (.kind .TO_REAL) #[y]] =>
+    symmRule .arith_div_total_int_to_real x y
+  -- An integer constant numerator becomes real, e.g. (/ 1 x) is (/ 1.0 x); for
+  -- an integer `x`, Logos's typing needs `(to_real x)`.
+  | .DIVISION, #[c@(.const (.integer _)), y] | .DIVISION_TOTAL, #[c@(.const (.integer _)), y] =>
+    if isInt y && !y.isConst then
+      let r := if n.getKind == .DIVISION then CRule.arith_div_int_to_real else .arith_div_total_int_to_real
+      (applyCmds (.cons (stepCmd r [c, y]) .nil) n).bind fun r =>
+        r.next? fun t => Rw.congrArg t 0 byEvaluate
+    else none
+  | _, _ => none
+where
+  symmRule (r : CRule) (x y : Node) : Option (Rw n) :=
+    applyCmds (.cons (stepCmd r [x, y]) (.cons (.step .symm .nil (.cons 0 .nil)) .nil)) n
 
 /-! ## Inequalities -/
 
@@ -351,6 +367,8 @@ def postRewrite (n : Node) : RewriteResponse n :=
       | .INTS_DIVISION | .INTS_MODULUS => (.REWRITE_AGAIN_FULL, ·) <$> rewriteIntsDivMod n
       | .INTS_DIVISION_TOTAL | .INTS_MODULUS_TOTAL =>
         (.REWRITE_AGAIN_FULL, ·) <$> rewriteIntsDivModTotal n
+      | .DIVISION_TOTAL =>
+        (.REWRITE_AGAIN_FULL, ·) <$> (rewriteDivToReal n).orElse fun _ => rewriteOther n
       | _ => (.REWRITE_AGAIN_FULL, ·) <$> rewriteOther n
   match r with
   | some (st, ⟨m, h⟩) => if m == n then .done n else ⟨st, m, h⟩
