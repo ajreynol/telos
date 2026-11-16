@@ -125,7 +125,8 @@ partial def approximations (a : Node) (isOver : Bool) : List Node :=
         if checkS2 lenz leny || checkS2 lenz lenx then [lenx] else [mkNode .SUB #[lenx, leny]]
     | .STRING_ITOS, #[i] =>
       if isOver then
-        if checkS i then (if checkS i true then [i] else [mkNode .ADD #[one, i]]) else []
+        -- `(+ i 1)`, as CPC's `$str_arith_entail_is_approx_len` writes it
+        if checkS i then (if checkS i true then [i] else [mkNode .ADD #[i, one]]) else []
       else if checkS i then [one] else []
     | _, _ => []
   | .STRING_INDEXOF, #[x, y, _] =>

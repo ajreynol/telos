@@ -386,6 +386,11 @@ def stripEndpoints (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) := do
   let (d2, nc2) := if ne.isEmpty then (emp, nc2) else (nc2.getLast!, nc2.dropLast)
   let c1 := nb.headD emp
   let c2 := ne.headD emp
+  -- Everything is stripped from a substring (of a `str.from_int`, which `b`
+  -- cannot be in): cvc5 gets `(str.contains "" b)`, which is `false`; here
+  -- `str-substr-ctn-contra`, the premise by the rewriter
+  if isCtn && rem.isEmpty && a.getKind == .STRING_SUBSTR then
+    return ← byRuleE rw "str-substr-ctn-contra" n
   -- A `str.from_int` endpoint, which `b` cannot start (end) in: one endpoint at a
   -- time, by `str-contains-strip-from-int-pre` (`-post`)
   if isCtn && (c1.getKind == .STRING_ITOS || c2.getKind == .STRING_ITOS) then
@@ -674,8 +679,9 @@ def rewriteReplace (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
                   fun _ => byRule "str-replace-prefix" m]
                 if r.1 == target then some r else r.next? fun m => aci m target
             else if !cc.after.isEmpty then
-              -- `RPL_CCTN`: what is after the first match is pulled out
-              let target := mkConcat (replNode (mkConcat cc.mid) b z :: cc.after)
+              -- `RPL_CCTN`: what is after the first match is pulled out (with
+              -- the constants of the rest merged, as cvc5 does next)
+              let target := mkConcat (replNode (mkConcat (concatNormChildren cc.mid)) b z :: cc.after)
               some do
                 let cc0 ← componentContains ctn false children0 children1 true 0
                 let g := mkConcat (cc0.before ++ [b] ++ cc0.after)
@@ -1214,9 +1220,12 @@ def rewriteMembership (n : Node) : Option (Rw n) :=
     match r.getKind with
     | .REGEXP_NONE => byRule "re-in-empty" n
     | _ =>
-    -- `RE_IN_EVAL`: a constant string in a regular expression without variables
-    if x.isConst && isConstRe r then
+    -- `RE_IN_EVAL`: a constant string in a regular expression without
+    -- variables, or the empty string in a nullable (or not nullable) one
+    let eval := fun (_ : Unit) =>
       (inReEval n (.const (.boolean true))).orElse fun _ => inReEval n (.const (.boolean false))
+    if x.isConst && isConstRe r then eval ()
+    else if word? x == some [] && (eval ()).isSome then eval ()
     else
     -- `none`: the case does not apply; `some none`: cvc5 stops here
     let byKind : Option (Option (Rw n)) := match r.getKind with
@@ -1232,7 +1241,14 @@ def rewriteMembership (n : Node) : Option (Rw n) :=
           if body.getKind == .STRING_TO_REGEXP then some (byRule "re-char-in-str-star" n)
           else if allchar body then some (byRule "re-in-sigma-star" n) else none
         | _ =>
-          if allchar body then some (byRule "re-in-sigma-star" n)
+          -- `RE_IN_DIST_CHAR_STAR`: when every string of `body` has length one,
+          -- `(str.in_re (str.++ x₁ … xₙ) (re.* body))` is the conjunction of
+          -- the `(str.in_re xᵢ (re.* body))` (`str-in-re-concat-star-char`;
+          -- the length by CPC's own `$str_fixed_len_re`)
+          if x.getKind == .STRING_CONCAT && Eo.__str_fixed_len_re body.toEo == .Numeral 1 then
+            some (checkBy .str_in_re_concat_star_char n
+              (mkNode .AND (x.getChildren.map fun c => mkNode .STRING_IN_REGEXP #[c, r])))
+          else if allchar body then some (byRule "re-in-sigma-star" n)
           else if body.getKind == .REGEXP_CONCAT && body.getChildren.all allchar then
             -- `RE_IN_CHAR_MODULUS_STAR`
             let k := Node.const (.integer body.getChildren.size)

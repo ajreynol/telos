@@ -538,8 +538,10 @@ tested:
      constants, with all operators including `zero_extend`, `sign_extend`,
      `repeat`, `bvite`, `bvcomp`, `bvredor`, `bvredand` and the overflow
      predicates): at depth 3 (3000 terms), 80.7% identical to cvc5 and 97.0% up
-     to the orientation of equalities, no semantic disagreements; the rest is
-     the order of children. (Before Logos had `bv-ite-const-cond`, a
+     to the orientation of equalities, 99.7% also up to the order of
+     commutative arguments, no semantic disagreements; the other 8 come from
+     the order of children too: `AndOrXorConcatPullUp` pulls up the first
+     `concat` among the (id-ordered) children. (Before Logos had `bv-ite-const-cond`, a
      constant-condition `bvite` was left as it was, and only 50.1% were
      identical.) Ethos accepts all
      proofs (`check-proofs.py --bv`, depths 3 and 4).
@@ -738,14 +740,25 @@ tested:
      `arith-eq-elim-int` and shows one conjunct false (`ctnLenIneq`). The
      rewrites that use it through `checkContains` follow (`RPL_NCTN`,
      `IDOF_NCTN`, …).
-   - Fuzzing against PR #13167: 73.8% identical to cvc5 (3000 terms of depth
-     3), 98.1% up to the orientation of equalities, 99.3% also up to the order
+   - Then: `RE_IN_DIST_CHAR_STAR` (`str-in-re-concat-star-char`, the fixed
+     length by CPC's own `$str_fixed_len_re`); `RE_IN_EVAL` for the empty
+     string in a regular expression with variables (nullability); everything
+     stripped from a substring in `CTN_STRIP_ENDPT` (`str-substr-ctn-contra`);
+     `Word.rfind` as cvc5's `String::rfind` (the number of characters after
+     the last match, which `stripConstantEndpoints` uses); the approximation
+     `(+ n 1)` of `(str.len (str.from_int n))` in the order CPC's
+     `$str_arith_entail_is_approx_len` expects; and the `RPL_CCTN` target with
+     its constants merged.
+   - Fuzzing against PR #13167: 74.0% identical to cvc5 (3000 terms of depth
+     3), 98.6% up to the orientation of equalities, 99.9% also up to the order
      of commutative arguments, no semantic disagreements; Ethos accepts all
-     proofs. The other 20: regular expressions (`RE_IN_DIST_CHAR_STAR`, stars
-     of `re.allchar` concatenations, nullable concatenations, about 10),
-     `str.prefixof` to `=` (a length bound for `str.from_int`), and a few
-     `str.contains`/`str.replace` component cases.
-   - Next: `rewriteLoopRegExp`, inclusion
+     proofs. The other 4 are `MACRO_STR_IN_RE_INCLUSION`, which cvc5 proves by
+     contradiction in a scope (`re-inter-inclusion`); telos cannot push an
+     assumption with its free constants (`Term.Var`, where Logos's parser makes
+     declared constants `UConst`). At depth 4 (another seed, 3000 terms): 64.1%,
+     95.2% and 100%.
+   - Next: free constants as `UConst` (scoped proofs, then inclusion),
+     `rewriteLoopRegExp`, inclusion
      (`rewriteViaMacroStrInReInclusion`, `rewriteViaMacroReInterUnionInclusion`),
      `RE_IN_DIST_CHAR_STAR`, and `CTN_NCONST_CTN_CONCAT`.
 9. **Performance.** ~~Rewrite cache~~ (done: `Cache` in

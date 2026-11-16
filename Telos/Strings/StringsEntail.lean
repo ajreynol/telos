@@ -24,9 +24,11 @@ namespace Word
 def find (s t : List Nat) (start : Nat := 0) : Option Nat :=
   (List.range (s.length + 1)).find? fun i => i ≥ start && t.isPrefixOf (s.drop i)
 
-/-- The last position where `t` occurs in `s` (`String::rfind`). -/
+/-- cvc5's `String::rfind`: the number of characters after the last
+occurrence of `t` in `s` (where `t` occurs in the reversed `s`). -/
 def rfind (s t : List Nat) : Option Nat :=
-  (List.range (s.length + 1)).reverse.find? fun i => t.isPrefixOf (s.drop i)
+  if s.length < t.length then none else
+  (List.range (s.length - t.length + 1)).find? fun i => t.reverse.isPrefixOf (s.reverse.drop i)
 
 def pre (s : List Nat) (k : Nat) : List Nat := s.take k
 def suffix (s : List Nat) (k : Nat) : List Nat := s.drop (s.length - k)
