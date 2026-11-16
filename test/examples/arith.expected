@@ -47,8 +47,8 @@ x
 3/4
 (mod_total (* 2 x) 3)
 true
-(/ x y)
+(/ (to_real x) (to_real y))
 0
 0
 0
-(+ r (/ x y))
+(+ r (/ (to_real x) (to_real y)))
