@@ -17,7 +17,7 @@ Ported so far: `rewriteConcat`, `rewriteLength`, `rewriteEquality`,
 `rewriteReplace`, `rewriteReplaceAll`, `rewriteIndexof`, `rewriteStrReverse`,
 the regular expression eliminations, `rewriteConcatRegExp`,
 `rewriteRangeRegExp`, `rewriteAndOrRegExp`,
-`rewriteStarRegExp`, `rewriteMembership`, and from `StringsRewriter` the conversions, `str.<`,
+`rewriteStarRegExp`, `rewriteLoopRegExp`, `rewriteMembership`, and from `StringsRewriter` the conversions, `str.<`,
 `str.<=` and `str.is_digit`; with the entailments they use (`ArithEntail`,
 `StringsEntail`). Each case is certified by CPC rules, as cvc5 elaborates its
 macros (see `docs/design.md`, roadmap item 8). Cases that are proof holes in
@@ -28,7 +28,7 @@ The strings rewriter is given the full rewriter (`rw`), which cvc5's
 `StringsEntail::checkContains` uses, and which proves premises that evaluation
 does not (`premiseProver`).
 
-Not ported yet: `rewriteLoopRegExp`, `IDOF_NORM_PREFIX`, the length of `str.to_lower` and
+Not ported yet: `IDOF_NORM_PREFIX`, the length of `str.to_lower` and
 `str.to_upper` (CPC has no rule), and sequences.
 -/
 
@@ -1382,6 +1382,26 @@ def rewriteMembership (n : Node) : Option (Rw n) :=
     | none => (inReConsume n).orElse fun _ => inReInclusion n
   | _ => none
 
+/-- cvc5's `rewriteLoopRegExp`: `((_ re.loop l u) r)` is `re.none` when `u < l`
+(`re-loop-neg`, `RE_LOOP_NONE`), the empty string when `u = 0` (`RE_LOOP_ZERO`),
+`r` when `r` is a star (`re-loop-star`, `RE_LOOP_STAR`), and otherwise the union
+of the concatenations of `l` to `u` copies of `r` (cvc5's
+`rewriteViaReLoopElim`, `RE_LOOP`), certified by `re-loop-elim`. -/
+def rewriteLoop (n : Node) : Option (Rw n) := do
+  let .app (.indexed .REGEXP_LOOP #[l, u]) #[r] := n | none
+  if u < l then byRule "re-loop-neg" n
+  else if u == 0 then checkBy .re_loop_elim n emptyRe
+  else if r.getKind == .REGEXP_STAR then byRule "re-loop-star" n
+  else
+    let copies (k : Int) : List Node := List.replicate k.toNat r
+    let cat : List Node → Node
+      | [] => emptyRe
+      | [c] => c
+      | cs => mkNode .REGEXP_CONCAT cs.toArray
+    let res := if u == l then cat (copies l)
+      else mkNode .REGEXP_UNION ((List.range (u - l + 1).toNat).map fun (j : Nat) => cat (copies (l + j))).toArray
+    checkBy .re_loop_elim n res
+
 /-- The value of a string operator applied to constants. -/
 def evalConst (n : Node) : Option (Rw n) :=
   let cs := n.getChildren
@@ -1412,6 +1432,7 @@ def postRewrite (rw : (m : Node) → Rw m) (n : Node) : RewriteResponse n :=
     | .REGEXP_PLUS => byRule "re-plus-elim" n
     | .REGEXP_DIFF => byRule "re-diff-elim" n
     | .REGEXP_REPEAT => byRule "re-repeat-elim" n
+    | .REGEXP_LOOP => rewriteLoop n
     | .REGEXP_RANGE => rewriteRange n
     | .REGEXP_ALL => byRule "re-all-elim" n
     | .REGEXP_UNION | .REGEXP_INTER => rewriteAndOr rw n

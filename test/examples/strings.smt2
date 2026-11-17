@@ -95,3 +95,11 @@
 (simplify (str.in_re s (re.++ (str.to_re "a") (re.* re.allchar))))
 (simplify (re.inter (re.++ (str.to_re "a") (re.* re.allchar)) (re.comp (re.* re.allchar)) (str.to_re t)))
 (simplify (re.union (re.comp (str.to_re "a")) (re.++ (str.to_re "a") (re.* re.allchar)) r))
+; loops
+(simplify ((_ re.loop 3 2) r))
+(simplify ((_ re.loop 0 0) r))
+(simplify ((_ re.loop 1 3) (re.* r)))
+(simplify ((_ re.loop 1 1) r))
+(simplify ((_ re.loop 0 2) r))
+(simplify ((_ re.loop 2 3) (re.++ r (str.to_re "a"))))
+(simplify (str.in_re s ((_ re.loop 2 3) (re.range "a" "c"))))

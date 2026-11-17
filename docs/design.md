@@ -352,8 +352,10 @@ theorem Telos.rewrite_correct (t : Node) (h : t.WellTyped) : t.Equiv (rewrite t)
   the `LogosFacts` instance from Logos's theorems, and so `Telos.rewrite_correct`,
   and audits its axioms.
 
-Upstream requests to Logos are collected in `../logos/telos-upstream-requests.md`
-(untracked, a brief for an agent working there).
+Upstream requests are collected in `upstream-requests.md`. Bugs in the CPC
+signature are fixed in cvc5 first (Logos compiles its checker from cvc5's
+signature, and telos then re-pins Logos), one write-up each, addressed to cvc5
+(`cvc5-*.md`); the Lean lemmas wanted from Logos follow.
 
 ## The rule extractor
 
@@ -793,17 +795,26 @@ tested:
      That test is weaker than cvc5's `regExpIncludes` for ranges: cvc5 rewrites
      `(re.union (re.++ (re.range "a" "c") (re.* re.allchar)) (re.comp (re.range "a" "c")))`
      to `(re.* re.allchar)`, but its `re-union-inclusion` step fails Ethos;
-     telos leaves it unchanged (Logos upstream request 10).
-   - The fuzzer now generates `re.comp`, which the strings mode did not.
-     Fuzzing against cvc5 main `9d7d9ee04b`: 74.2% identical (3000 terms of
-     depth 3), 96.8% up to the orientation of equalities, 98.5% also up to the
-     order of commutative arguments, no semantic disagreements; at depth 4
-     (seed 2): 62.3%, 92.6% and 97.6%. Of the 44 other terms at depth 3, 43
-     are `IDOF_NORM_PREFIX`, still in cvc5's rewriter at this commit. Ethos
-     accepts all proofs (`check-proofs.py --fuzz 1000 --strings`, and 400 at
-     depth 4).
-   - Next: `CTN_LEN_INEQ` by contradiction as cvc5 proves it (now possible),
-     `rewriteLoopRegExp`, and `CTN_NCONST_CTN_CONCAT`.
+     telos leaves it unchanged (`cvc5-re-includes.md`, with a fix).
+   - Then `rewriteLoopRegExp`: `re-loop-neg` (`u < l`), the empty string for
+     `u = 0` and the union of `l` to `u` copies otherwise (`re-loop-elim`, the
+     result computed as cvc5's `rewriteViaReLoopElim`), and `re-loop-star`.
+   - The fuzzer now generates `re.comp` and `re.loop`, which the strings mode
+     did not. Fuzzing against cvc5 main `9d7d9ee04b`: 72.7% identical (3000
+     terms of depth 3), 97.1% up to the orientation of equalities, 98.4% also
+     up to the order of commutative arguments, no semantic disagreements; at
+     depth 4 (seed 2): 63.6%, 92.1% and 96.6%. Of the 47 other terms at depth
+     3, 45 are `IDOF_NORM_PREFIX`, still in cvc5's rewriter at this commit, one
+     is a duplicate disjunct that cvc5 keeps, and one is the inclusion gap
+     above. Ethos accepts all proofs (`check-proofs.py --fuzz 1000 --strings`,
+     and 400 at depth 4).
+   - Next: `CTN_LEN_INEQ` by contradiction as cvc5 proves it (now possible;
+     the results are already the same). `CTN_NCONST_CTN_CONCAT`
+     (`MACRO_STR_CONST_NCTN_CONCAT`) is not ported: on the cases tried
+     (`(str.contains "abc" (str.++ x "d" y))` and similar), telos reaches cvc5's
+     result by other rewrites, and fuzzing shows no difference from it. cvc5's
+     proof of it uses `string_eager_reduction`, whose skolems telos's `Node`
+     does not represent.
 9. **Performance.** ~~Rewrite cache~~ (done: `Cache` in
    `Telos/Rewriter/Rewriter.lean`, for one call of `rewriteWith`, as cvc5 caches
    `rewriteTo`; children are rewritten in order and assembled by
@@ -927,7 +938,7 @@ tested:
       equality), `dt-collapse-tester-singleton`, and `dt-cons-eq-clash` for
       clashing equalities (cvc5's `checkClash`). `dt-collapse-updater` never
       applies: its side condition takes `eo::len` of a list and counts the field
-      from the wrong end, so cvc5's own proofs fail there (upstream request 9).
+      from the wrong end, so cvc5's own proofs fail there (`cvc5-dt-collapse-updater.md`).
       telos certifies the updater rewrite by `dt-updater-elim`, then the tester,
       the `ite` and the selectors (`collapseUpdater`).
     - `Node.isConst` is cvc5's: constructors applied to constants are constants.

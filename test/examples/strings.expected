@@ -18,7 +18,7 @@ true
 (str.substr s 3 3)
 (str.replace (str.substr s 0 x) "a" "b")
 ""
-((_ re.loop 2 2) (str.to_re "a"))
+(str.to_re "aa")
 (re.union (str.to_re "") (str.to_re "a"))
 re.none
 (re.* re.allchar)
@@ -84,3 +84,10 @@ true
 (str.in_re s (re.++ (str.to_re "a") (re.* re.allchar)))
 re.none
 (re.* re.allchar)
+re.none
+(str.to_re "")
+(re.* r)
+r
+(re.union (str.to_re "") r (re.++ r r))
+(re.union (re.++ r (str.to_re "a") r (str.to_re "a")) (re.++ r (str.to_re "a") r (str.to_re "a") r (str.to_re "a")))
+(or (str.in_re s (re.++ (re.range "a" "c") (re.range "a" "c"))) (str.in_re s (re.++ (re.range "a" "c") (re.range "a" "c") (re.range "a" "c"))))
