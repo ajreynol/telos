@@ -29,3 +29,12 @@ name = "TelosProofs"
 roots = []
 globs = ["TelosProofs.+"]
 moreLeanArgs = ["-DmaxHeartbeats=10000000", "-DwarningAsError=true"]
+
+# Not a default target: it imports Logos's checker soundness proof, which covers
+# every CPC rule and is most of the build. `lake build TelosFull` proves the
+# unconditional `Telos.rewrite_correct` (see `TelosProofs/LogosSound.lean`).
+[[lean_lib]]
+name = "TelosFull"
+roots = []
+globs = ["TelosFull.+"]
+moreLeanArgs = ["-DmaxHeartbeats=10000000", "-DwarningAsError=true"]

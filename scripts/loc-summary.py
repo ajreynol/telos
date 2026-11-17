@@ -45,7 +45,7 @@ SPEC = [
 GENERATED = ["Telos/Rules/Generated.lean", "Telos/Rules/RuleNames.lean"]
 FRONTEND = ["Telos/Frontend.lean", "Telos/Proof/", "Main.lean"]
 TESTS = ["TelosTests/", "FuzzMain.lean"]
-PROOFS = ["verification/TelosProofs/"]
+PROOFS = ["verification/TelosProofs/", "verification/TelosFull/"]
 REWRITER = ["Telos/", "Telos.lean"]
 
 # (key, title, path prefixes); the first bucket whose prefix matches owns a file.

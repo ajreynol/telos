@@ -129,7 +129,8 @@ Rules of thumb:
 - `bash scripts/profile.sh` and `--profile` show where the time goes, per checker
   phase and per rule (`Telos/Profile.lean`). Add probes (`Profile.time`) only in
   untrusted code.
-- `bash scripts/check-hygiene.sh`, `lake build`, and `lake -d verification build`.
+- `bash scripts/check-hygiene.sh`, `lake build`, and `lake -d verification build`
+  (`lake -d verification build TelosFull` after changing the Logos pin).
 
 ## Making a hot step static
 

@@ -28,4 +28,6 @@ elab "#assert_axioms " id:ident : command => do
   let native := (axioms.filter (!standard.contains ·)).size
   logInfo m!"'{name}': standard axioms, plus {native} native_decide axioms from Logos"
 
-#assert_axioms Telos.rewrite_correct
+-- The default build checks the theorem that takes Logos's checker soundness as a
+-- hypothesis; `TelosFull/Main.lean` checks the unconditional `rewrite_correct`.
+#assert_axioms Telos.rewrite_correct_of_logos

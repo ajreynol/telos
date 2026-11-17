@@ -69,7 +69,8 @@ Two Lake projects, so the rewriter builds without Mathlib:
 ```sh
 lake build                              # rewriter
 lake -d verification exe cache get      # Mathlib binaries (once)
-lake -d verification build              # proofs (also builds part of Logos's proofs; not run in CI)
+lake -d verification build              # proofs, with Logos's checker soundness as a hypothesis (CI)
+lake -d verification build TelosFull    # also Logos's proofs of every CPC rule: the unconditional theorem
 bash scripts/check-hygiene.sh           # no sorry/axiom; trusted code is listed
 python3 scripts/gen-rules.py            # regenerate Telos/Rules/Generated.lean
 python3 scripts/gen-term-order.py       # regenerate the generated part of TelosProofs/TermOrder.lean

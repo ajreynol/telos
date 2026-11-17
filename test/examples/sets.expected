@@ -27,7 +27,7 @@ false
 true
 false
 true
-(set.is_singleton s)
+(= s (set.singleton (set.choose s)))
 true
 (= s t)
 false

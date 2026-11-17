@@ -26,7 +26,8 @@ Each step is a CPC rule:
   `sets-union-comm`);
 * `set.choose` of a singleton (`sets-choose-singleton`); `set.is_empty` is an
   equality with the empty set (`sets-is-empty-elim`), and `set.is_singleton` of
-  the empty set or of a singleton is `false` or `true` (`sets-is-singleton-elim`,
+  the empty set or of a singleton is `false` or `true`, and otherwise an
+  equality (`sets-is-singleton-elim`,
   then `sets-eq-singleton-emp`, or `sets-choose-singleton` and `eq-refl`);
 * equalities of sets: `true` for equal sides (`eq-refl`), `false` for distinct
   constants (`distinct_values`, `false_intro`), and otherwise oriented by the
@@ -214,7 +215,8 @@ def rewriteIsEmpty (n : Node) : RewriteResponse n :=
     | none => .done n
   | _ => .done n
 
-/-- `set.is_singleton` of the empty set (`false`) and of a singleton (`true`). -/
+/-- `set.is_singleton`: `false` for the empty set, `true` for a singleton, and
+otherwise `(= A (set.singleton (set.choose A)))`. -/
 def rewriteIsSingleton (n : Node) : RewriteResponse n :=
   match n.getChildren with
   | #[a] =>
@@ -227,7 +229,8 @@ def rewriteIsSingleton (n : Node) : RewriteResponse n :=
         -- `(= {x} {(set.choose {x})})` is `(= {x} {x})`, which is `true`.
         r.next? (fun m => Rw.congrArg m 1 fun s => Rw.congrArg s 0 (byRule "sets-choose-singleton"))
           |>.bind fun r => r.next? (byRule "eq-refl")
-    else .done n
+    -- `(set.is_singleton A)` is `(= A (set.singleton (set.choose A)))`.
+    else respond .REWRITE_AGAIN_FULL (byRule "sets-is-singleton-elim" n)
   | _ => .done n
 
 def postRewrite (n : Node) : RewriteResponse n :=

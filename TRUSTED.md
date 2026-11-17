@@ -67,8 +67,13 @@ text, and are not covered by it:
 
 ## Axioms
 
-No `sorry` and no declared `axiom`. `verification/TelosProofs/Axioms.lean` fails
-the build if `Telos.rewrite_correct` uses any axiom other than:
+No `sorry` and no declared `axiom`. `Telos.rewrite_correct` is proved in
+`verification/TelosFull/Main.lean` (`lake -d verification build TelosFull`). The
+default build, which CI runs, proves `Telos.rewrite_correct_of_logos`, which
+takes Logos's checker soundness as the hypothesis `LogosCheckerSound`
+(`verification/TelosProofs/LogosSound.lean`); `TelosFull` proves that hypothesis
+from Logos's `proven_from_empty_valid`. Both builds fail if the theorem they
+prove uses any axiom other than:
 
 - `propext`, `Classical.choice` and `Quot.sound`; and
 - the auxiliary axioms created by `native_decide` (43 at present). Each asserts

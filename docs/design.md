@@ -188,9 +188,16 @@ proofs. The driver chains the certificates, so it is correct by construction
 too.
 
 The certificate depends on all of Logos's rule proofs, since the checker's
-soundness does. A cold build of `verification/` therefore compiles every rule
-proof in Logos (hours; cached afterwards). CI does not build it: run
-`lake -d verification build` locally after changing proved code or the Logos pin.
+soundness does: most of Logos's proof code (888 of the 889 modules telos's
+proofs import). So the default build of `verification/` takes that one theorem
+as a hypothesis: `LogosCheckerSound` (`TelosProofs/LogosSound.lean`) restates
+`proven_from_empty_valid`, and `Certified.equiv`, the driver's theorems and
+`Telos.rewrite_correct_of_logos` take it as an argument. That build needs only
+Logos's definitions and its support lemmas (62 modules), and runs in CI.
+`lake -d verification build TelosFull` imports the rule proofs, proves
+`LogosCheckerSound` from `proven_from_empty_valid` (so the restatement cannot
+drift from the pinned Logos), and derives the unconditional
+`Telos.rewrite_correct`. Run it after changing the Logos pin.
 
 The cost is speed. Every step translates to `Eo.Term` and runs a Logos program.
 That is acceptable to start. Later, generated lemmas of the form "for
@@ -331,10 +338,17 @@ theorem Telos.rewrite_correct (t : Node) (h : t.WellTyped) : t.Equiv (rewrite t)
   `Node.Equiv.congr_binder` (quantifiers, in their body). Both reuse Logos's
   soundness proof of the CPC `cong` rule, which is generic over application
   spines, so there is one case per `AppShape` and new kinds need no new proof.
+- `LogosSound.lean`: `LogosCheckerSound`, Logos's checker soundness
+  (`proven_from_empty_valid`) as a proposition.
 - `Certified.lean`: `Certified.equiv`, from Logos's checker soundness.
 - `Driver.lean`: `rewriteWith_sound`, for any theory rewriters: the driver's
   result is certified, so this is an instance of `Certified.equiv`.
+- `Rewriter.lean`: `Telos.rewrite_correct_of_logos`, the theorem given
+  `LogosCheckerSound`.
 - `Axioms.lean`: the axiom audit (`TRUSTED.md`).
+- `TelosFull/Main.lean` (`lake build TelosFull`, not a default target): proves
+  `LogosCheckerSound` from Logos's theorem, and so `Telos.rewrite_correct`, and
+  audits its axioms.
 
 Upstream requests to Logos are collected in `../logos/telos-upstream-requests.md`
 (untracked, a brief for an agent working there).
@@ -852,15 +866,16 @@ tested:
       membership of a constant in a constant set, and `set.is_empty` of a
       constant, go through the general rewrites, with the same results.
       Elements, arguments and equalities are ordered by telos's term order.
-    - Fuzzing (`scripts/fuzz.py --sets`, 3000 terms of depth 3), against the
-      cvc5 on `PATH` (`dc8ad24031`, 2025-11-05, which predates PR #12833 and
-      the `set.insert` changes of #13036): 41.3% identical, 48.2% up to the
-      orientation of equalities and the order of commutative arguments, no
-      semantic disagreements. Most of the other differences are the order of
-      set arguments, that reference solving integer equalities
-      (`(= (+ 1 x) 0)` is `(= x -1)` there), and the holes above. Ethos accepts
-      all proofs (`check-proofs.py --fuzz 500 --sets`). The other modes are
-      unchanged.
+    - `set.is_singleton` of any other set is
+      `(= A (set.singleton (set.choose A)))` (`sets-is-singleton-elim`), as in
+      cvc5's current main.
+    - Fuzzing (`scripts/fuzz.py --sets`, 3000 terms of depth 3), against cvc5
+      main `9d7d9ee04b` (built 2026-11-17): 44.8% identical, 58.4% up to the
+      orientation of equalities, 60.9% also up to the order of commutative
+      arguments, no semantic disagreements. Most of the other differences are
+      the order of set arguments, which cvc5 decides by node id, and the holes
+      above. Ethos accepts all proofs (`check-proofs.py --fuzz 500 --sets`).
+      The other modes are unchanged.
 
 ## Working conventions
 
