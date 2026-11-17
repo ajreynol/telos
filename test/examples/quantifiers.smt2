@@ -1,5 +1,7 @@
-; Quantifiers (cvc5's QuantifiersRewriter, first stage): exists elimination,
-; prenex merging, constant bodies, miniscoping over and/ite, unused variables.
+; Quantifiers (cvc5's QuantifiersRewriter): exists elimination, prenex merging,
+; constant bodies, the NNF of bodies, miniscoping (and, ite, splitting
+; disjunctions by free variables), unused variables, variable elimination
+; (equalities, Boolean variables, linear equations) and conditional splitting.
 ; cvc5 prints the variables of miniscoped quantifiers with fresh names.
 (set-logic ALL)
 (declare-const a Bool)
@@ -14,3 +16,34 @@
 (simplify (forall ((y Int)) (ite a (P y) (P x))))
 (simplify (exists ((y Int)) (forall ((z Int)) (P (+ y z)))))
 (simplify (forall ((y Int)) (and a (forall ((z Int)) (P z)))))
+(declare-fun Q (Int) Bool)
+(declare-fun R (Int Int) Bool)
+(simplify (forall ((y Int)) (=> (P y) (Q y))))
+(simplify (forall ((y Int)) (not (and (P y) (Q y) a))))
+(simplify (forall ((y Int)) (not (=> (P y) (Q y)))))
+(simplify (forall ((y Int)) (xor (P y) (Q y))))
+(simplify (forall ((y Int)) (not (ite (P y) (Q y) a))))
+(simplify (forall ((y Int)) (or (P y) (or (Q y) (P y)))))
+(simplify (forall ((y Int)) (not (= (P y) (Q y)))))
+(simplify (forall ((y Int)) (not (and (P y) (Q y) a))))
+(simplify (forall ((y Int) (z Int)) (or (P y) (Q z))))
+(simplify (forall ((y Int) (z Int)) (or (P y) a (Q z) (P z))))
+(simplify (forall ((y Int) (z Int) (w Int)) (or (P y) (Q w) (R y z))))
+(simplify (forall ((y Int) (z Int)) (or (P z) (Q z) (R y y))))
+(simplify (forall ((y Int) (z Int)) (or (P y) (Q x))))
+(simplify (forall ((y Int)) (ite (= y x) (P y) (Q y))))
+(simplify (forall ((y Int)) (or (and (= y x) (P y)) (Q y))))
+(simplify (forall ((y Int)) (or (Q y) (and (= y x) (P y)))))
+(simplify (forall ((b Bool) (y Int)) (ite b (P y) (Q y))))
+(simplify (forall ((y Int)) (or (not (= (+ 1 y) x)) (P y))))
+(simplify (forall ((y Int)) (or (not (= x (+ (* -1 y) 3))) (P y))))
+(simplify (forall ((y Int) (z Int)) (or (not (= (+ y z) x)) (P z))))
+(simplify (forall ((y Int)) (or (not (= (* 2 y) x)) (P y))))
+(simplify (forall ((b Bool)) b))
+(simplify (forall ((b Bool)) (or b a)))
+(simplify (forall ((b Bool)) (or (not b) a)))
+(simplify (forall ((y Int)) (or (not (= y x)) (P y))))
+(simplify (forall ((y Int)) (or (P y) (not (= x y)))))
+(simplify (forall ((y Int) (z Int)) (or (not (= y x)) (R y z))))
+(simplify (forall ((y Int) (z Int)) (or (not (= z y)) (R y z))))
+(simplify (forall ((y Int)) (not (= y x))))

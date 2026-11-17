@@ -28,7 +28,7 @@ def baseTheoryRewriterWith (strings : TheoryRewriter) : TheoryId → TheoryRewri
   | .THEORY_STRINGS => strings
   | .THEORY_SETS => .sets
   | .THEORY_DATATYPES => .datatypes
-  | .THEORY_QUANTIFIERS => .quantifiers
+  | .THEORY_QUANTIFIERS => .quantifiers Rw.id
   | _ => .trivial
 
 /-- The fuel for the rewrites the theory rewriters do as sub-steps: the
@@ -46,11 +46,13 @@ rewriters of the other theories: indices are not arrays here. -/
 def theoryRewriterAt : Nat → TheoryId → TheoryRewriter
   | 0 => fun t => match t with
     | .THEORY_ARRAYS => .arrays (rewriteWith (baseTheoryRewriterWith (.strings Rw.id)) indexFuel)
+    | .THEORY_QUANTIFIERS => .quantifiers (rewriteWith (baseTheoryRewriterWith (.strings Rw.id)) indexFuel)
     | t => baseTheoryRewriterWith (.strings Rw.id) t
   | k + 1 =>
     let strings := TheoryRewriter.strings (rewriteWith (theoryRewriterAt k) indexFuel)
     fun t => match t with
     | .THEORY_ARRAYS => .arrays (rewriteWith (baseTheoryRewriterWith strings) indexFuel)
+    | .THEORY_QUANTIFIERS => .quantifiers (rewriteWith (baseTheoryRewriterWith strings) indexFuel)
     | t => baseTheoryRewriterWith strings t
 
 /-- The rewriter of each theory. Theories not ported yet leave nodes unchanged. -/

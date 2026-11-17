@@ -916,22 +916,41 @@ tested:
       proofs (`check-proofs.py --fuzz 500 --datatypes`). The other modes are
       unchanged.
 
-13. **Quantifiers (stage 1).** `QuantifiersRewriter` is ported in part
-    (`Telos/Theory/Quantifiers.lean`, `test/examples/quantifiers.smt2`):
-    `exists` elimination (`exists-elim`), prenex merging in pre- and
-    post-rewriting (`quant-merge-prenex`, when no variable is shadowed), constant
-    bodies and unused variables (`quant-unused-vars`), and miniscoping over `and`
-    and over an `ite` with a ground condition (`quant-miniscope-and`,
-    `quant-miniscope-ite`). Each step is certified by the rule taking the
-    equation as its argument. cvc5 tries its steps in order, the first that
-    changes the quantifier winning (`computeOperation`); the steps not ported
-    yet are skipped: shadowed variables, the NNF of the body
-    (`COMPUTE_ELIM_SYMBOLS`, which comes before miniscoping), splitting
-    disjunctions by free variables (`computeSplit`), prenexing, variable
-    elimination, datatype variable expansion and conditional splitting. cvc5
-    proves all of these (`scripts/find-holes.py quantifiers`: no trusted steps
-    on 287 terms), by the basic CPC rules (`bool-*`, `aci_norm`,
-    `quant-miniscope-or`, `quant-var-elim-eq`, `quant_var_reordering`, …).
+13. **Quantifiers.** `QuantifiersRewriter` is ported in part
+    (`Telos/Theory/Quantifiers.lean`, `Telos/Theory/Nnf.lean`,
+    `test/examples/quantifiers.smt2`). cvc5 tries its steps in order, the first
+    that changes the quantifier winning (`computeOperation`); telos follows that
+    order. Ported, each certified by the CPC rules cvc5's elaboration uses:
+    - `exists` elimination (`exists-elim`), prenex merging in pre- and
+      post-rewriting (`quant-merge-prenex`, when no variable is shadowed), and
+      constant bodies (`quant-unused-vars`);
+    - the NNF of the body (`COMPUTE_ELIM_SYMBOLS`, `computeNnfNorm`): the
+      `bool-*` elimination and De Morgan rules, then `aci_norm` for flattening and
+      duplicates and `bool-or-taut*`/`bool-and-conf*` for complementary literals;
+    - miniscoping: over `and` and over an `ite` with a ground condition
+      (`quant-miniscope-and`, `quant-miniscope-ite`), splitting a disjunction by
+      classes of disjuncts connected by shared variables (`computeSplit`:
+      `quant-unused-vars`, `quant_var_reordering`, `aci_norm`,
+      `quant-miniscope-or`), and otherwise removing unused variables;
+    - variable elimination (`computeVarElimination`) by equalities, Boolean
+      variables and linear equations solved for a variable with coefficient
+      ±1: the variable moved last (`quant_var_reordering`) and split off
+      (`quant-merge-prenex`, reversed), the literal moved first (`aci_norm`) and
+      written `(not (= x t))` (by rewriting that literal and reversing the proof,
+      or by `arith_poly_norm_rel` for a solved equation), then
+      `quant-var-elim-eq`;
+    - conditional splitting (`computeCondSplit`, default mode): `ite-expand`,
+      and `bool-or-and-distrib` after `aci_norm`.
+    - Not ported: eliminating shadowed variables, prenexing (`computePrenex`),
+      datatype variable expansion, and inequality elimination
+      (`getVarElimIneq`, which also eliminates a variable from a positive
+      equality such as `(forall ((y Int)) (= x y))`). cvc5 proves the last by
+      contradiction: it assumes the quantified formula in a scope and
+      instantiates it. Logos's checker pushes only closed assumptions
+      (`__eo_is_closed`), and telos translates declared constants to variables
+      (`Term.Var`), so such an assumption is not closed whenever the formula
+      mentions a declared constant. This is most of the remaining difference to
+      cvc5 in fuzzing.
     - `Node.ofEo` reads a binder's body with its variables in scope, so that
       they are the same `boundVar`s (they were read as free variables of the
       same name, with the same translation).
@@ -939,10 +958,12 @@ tested:
       bound variables; telos, like Logos, identifies bound variables by name and
       type, so it keeps them. Instantiation patterns are dropped.
     - Fuzzing (`scripts/fuzz.py --quantifiers`, 1000 terms of depth 2), against
-      cvc5 main `9d7d9ee04b`: 35.6% identical (15.9% before this stage), no
-      semantic disagreements. `fuzz.py` also compares up to the names of bound
-      variables. Ethos accepts all proofs (`check-proofs.py --fuzz 300
-      --quantifiers`). The other modes are unchanged.
+      cvc5 main `9d7d9ee04b`: 62.0% identical, 66.7% up to the names of bound
+      variables, 67.4% also up to the orientation of equalities (15.9% before
+      the port), no semantic disagreements. `fuzz.py` compares up to the names
+      of bound variables. Ethos accepts all proofs (`check-proofs.py --fuzz 400
+      --quantifiers`). The examples match cvc5 up to bound variable names and
+      orientation. The other modes are unchanged.
 
 ## Working conventions
 
