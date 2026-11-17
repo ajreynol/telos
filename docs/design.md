@@ -823,6 +823,44 @@ tested:
    `(= t (rewrite t))`, checked by Logos's checker before printing, and accepted
    by Ethos (`scripts/check-proofs.py`: 2000 of 2000 fuzzed terms). Open:
    proofs are not compacted (one `cong` per rewrite below an operator).
+11. **Sets.** telos supports only what cvc5's `--safe-mode=safe` allows. For
+    sets, that is the operators below: safe mode excludes `set.card`, the
+    relations, `set.universe`, `set.complement` and comprehensions, and
+    `set.map`, `set.filter`, `set.fold`, `set.all` and `set.some` have no CPC
+    counterpart. `TheorySetsRewriter` is ported (`Telos/Theory/Sets.lean`,
+    `test/examples/sets.smt2`).
+    - Kinds `SET_SINGLETON`, `SET_UNION`, `SET_INTER`, `SET_MINUS`, `SET_MEMBER`,
+      `SET_SUBSET`, `SET_CHOOSE`, `SET_IS_EMPTY`, `SET_IS_SINGLETON` and
+      `SET_INSERT` (binary, as cvc5's type rule has it; `:right-assoc` in
+      `Cpc.eo`), all spines. The empty set is a constant, `Const.emptySet T`
+      (cvc5's `SET_EMPTY` is a constant kind), translated to
+      `(as set.empty (Set T))` (`UOp1 set_empty`), which the proof printer
+      writes with `as`.
+    - 12 RARE rules are generated. The 8 whose premise is
+      `(= x (as set.empty (Set T)))` (`sets-member-emp`, `sets-union-emp1`, …,
+      `sets-eq-singleton-emp`) are applied when `x` is the empty set, with the
+      premise by `refl`. Operations on two constant sets are computed and
+      certified by `sets-eval-op`. Distinct constant sets are unequal by
+      `distinct_values` and `false_intro`.
+    - Set constants are cvc5's normal form,
+      `(set.union (set.singleton c₁) (… (set.singleton cₙ)))` with
+      `c₁ > … > cₙ`, in telos's term order (`SetsRewriter.isConstNode`).
+      `Node.isConst` is unchanged; only the sets rewriter uses this.
+    - Deviations: `(set.union s s)` and `(set.inter s s)` are left unchanged
+      unless `s` is a constant. cvc5 rewrites them to `s` with a
+      `TRUST_THEORY_REWRITE` step (`test/cvc5-trust/sets-*-self.smt2`). The
+      membership of a constant in a constant set, and `set.is_empty` of a
+      constant, go through the general rewrites, with the same results.
+      Elements, arguments and equalities are ordered by telos's term order.
+    - Fuzzing (`scripts/fuzz.py --sets`, 3000 terms of depth 3), against the
+      cvc5 on `PATH` (`dc8ad24031`, 2025-11-05, which predates PR #12833 and
+      the `set.insert` changes of #13036): 41.3% identical, 48.2% up to the
+      orientation of equalities and the order of commutative arguments, no
+      semantic disagreements. Most of the other differences are the order of
+      set arguments, that reference solving integer equalities
+      (`(= (+ 1 x) 0)` is `(= x -1)` there), and the holes above. Ethos accepts
+      all proofs (`check-proofs.py --fuzz 500 --sets`). The other modes are
+      unchanged.
 
 ## Working conventions
 

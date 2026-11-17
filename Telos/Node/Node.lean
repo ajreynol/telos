@@ -50,6 +50,9 @@ inductive Const where
   /-- A string, as a list of code points (cvc5's `String`, Logos's
   `native_String`). Well typed only when every code point is valid. -/
   | string (codePoints : List Nat)
+  /-- The empty set whose elements have type `elem` (cvc5's `EmptySet`, of type
+  `(Set elem)`). -/
+  | emptySet (elem : TypeNode)
   deriving DecidableEq, Repr, Inhabited, Hashable
 
 namespace Const
@@ -60,6 +63,7 @@ def kind : Const → Kind
   | .rational _ => .CONST_RATIONAL
   | .bitVector _ _ => .CONST_BITVECTOR
   | .string _ => .CONST_STRING
+  | .emptySet _ => .SET_EMPTY
 
 /-- A string constant from a Lean string. -/
 def ofString (s : String) : Const := .string (s.toList.map Char.toNat)

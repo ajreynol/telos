@@ -78,6 +78,7 @@ def toEo : Const → Term
   | .rational q => Term.Rational q
   | .bitVector w v => Term.Binary w v
   | .string s => Term.String s
+  | .emptySet T => Term.UOp1 UserOp1.set_empty (TypeNode.set T).toEo
 
 end Const
 
@@ -253,6 +254,18 @@ def Kind.eoShape : Kind → AppShape
   | .REGEXP_RANGE => .spine (Term.UOp UserOp.re_range) (.exactly 2)
   | .REGEXP_COMPLEMENT => .spine (Term.UOp UserOp.re_comp) (.exactly 1)
   | .STORE => .spine (Term.UOp UserOp.store) (.exactly 3)
+  | .SET_SINGLETON => .spine (Term.UOp UserOp.set_singleton) (.exactly 1)
+  | .SET_UNION => .spine (Term.UOp UserOp.set_union) (.exactly 2)
+  | .SET_INTER => .spine (Term.UOp UserOp.set_inter) (.exactly 2)
+  | .SET_MINUS => .spine (Term.UOp UserOp.set_minus) (.exactly 2)
+  | .SET_MEMBER => .spine (Term.UOp UserOp.set_member) (.exactly 2)
+  | .SET_SUBSET => .spine (Term.UOp UserOp.set_subset) (.exactly 2)
+  | .SET_CHOOSE => .spine (Term.UOp UserOp.set_choose) (.exactly 1)
+  | .SET_IS_EMPTY => .spine (Term.UOp UserOp.set_is_empty) (.exactly 1)
+  | .SET_IS_SINGLETON => .spine (Term.UOp UserOp.set_is_singleton) (.exactly 1)
+  -- `:right-assoc` without a nil in `Cpc.eo`, but binary in cvc5 (its type rule
+  -- takes two children), and Logos translates only the binary application.
+  | .SET_INSERT => .spine (Term.UOp UserOp.set_insert) (.exactly 2)
   | .BITVECTOR_UBV_TO_INT => .spine (Term.UOp UserOp.ubv_to_int) (.exactly 1)
   | .BITVECTOR_SBV_TO_INT => .spine (Term.UOp UserOp.sbv_to_int) (.exactly 1)
   | .BITVECTOR_CONCAT => .rightAssocNil UserOp.concat .typed

@@ -4,7 +4,7 @@ import Telos
 # Tests of the rule database
 
 Each generated rule is applied to its own left-hand side, instantiated with fresh
-variables of one type (Boolean, Int or Real) (and `:list` variables with zero and with two elements). The
+variables of one type (Boolean, Int, Real, …, or `(Set Int)`) (and `:list` variables with zero and with two elements). The
 certified step must succeed: this catches generator and matcher mistakes, which
 would otherwise only show up as missed rewrites. Rules that cannot fire on fresh
 variables are listed in `expectedToFail`, and tested on concrete instances below.
@@ -33,7 +33,7 @@ def freshSubst (r : RuleSpec) (T : TypeNode) (listLen : Nat) : Subst :=
 /-- Whether the rule fires on its fresh left-hand side, with variables of some
 type (all of the same type). -/
 def firesOnFresh (r : RuleSpec) (listLen : Nat) : Bool :=
-  [TypeNode.boolean, .integer, .real, .bitVector 4, .string, .regExp].any fun T =>
+  [TypeNode.boolean, .integer, .real, .bitVector 4, .string, .regExp, .set .integer].any fun T =>
     match r.lhs.instantiate (freshSubst r T listLen) with
     | some n =>
       -- It fires, or its left-hand side matches and only a premise does not hold
@@ -70,7 +70,9 @@ def expectedToFail : List String :=
    "uf-bv2nat-geq-elim",
    -- arrays, with indices and elements of other types (tested below)
    "array-read-over-write", "array-read-over-write2", "array-store-overwrite",
-   "array-store-self", "array-read-over-write-split", "array-store-swap"]
+   "array-store-self", "array-read-over-write-split", "array-store-swap",
+   -- an element and sets of it (`test/examples/sets.smt2`)
+   "sets-insert-elim", "sets-inter-member", "sets-minus-member", "sets-union-member"]
 
 /-- Rules that fail on fresh variables with empty lists only: the left-hand side
 is then an n-ary application with one child, which is not a term. -/

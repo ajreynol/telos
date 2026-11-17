@@ -126,6 +126,10 @@ partial def printIn (N : Names) (bound : List Term) (t : Term) : String :=
   | .__eo_List_nil => "@list.nil"
   | .__eo_List_cons => "@list"
   | .USort i => symbol ((N.sort i).getD s!"@sort{i}")
+  -- Constants whose (implicit) parameter is their type are written with `as`,
+  -- as the signature does: `(as set.empty (Set Int))`.
+  | .UOp1 UserOp1.set_empty T => s!"(as set.empty {print N T})"
+  | .UOp1 UserOp1.seq_empty T => s!"(as seq.empty {print N T})"
   | .UConst i _ => symbol ((N.const i).getD s!"@const{i}")
   | .Apply .. =>
     let (h, xs) := eoSpine t

@@ -3,7 +3,7 @@ import Telos
 /-!
 # `telos-fuzz`: random terms and their rewrites
 
-`telos-fuzz SEED COUNT DEPTH [arith|uf|bv|arrays|mixed|strings] [--profile]` prints `COUNT` random Boolean terms over
+`telos-fuzz SEED COUNT DEPTH [arith|uf|bv|arrays|mixed|strings|sets] [--profile]` prints `COUNT` random Boolean terms over
 `a`, `b`, `c` (and the integer `x`), each with its telos rewrite, as
 `input<TAB>output` lines. With `arith`, the terms also contain comparisons of
 integer and real terms over `x`, `y`, `r` and `s`. With `uf`, they also contain
@@ -187,6 +187,37 @@ def genArrAtom : GenM Node := do
   if (← pick 3) == 0 then return eqNode (← genArr 3) (← genArr 3)
   return eqNode (mkNode .SELECT #[← genArr 3, ← genIdx]) (← genElem 2)
 
+/-! ## Sets -/
+
+def setT : TypeNode := .set .integer
+
+/-- A random set of sort `(Set Int)`, over `sa`, `sb` and elements `genIdx`. -/
+partial def genSet : Nat → GenM Node
+  | 0 => do
+    match ← pick 4 with
+    | 0 => return .var "sa" setT
+    | 1 => return .var "sb" setT
+    | 2 => return .const (.emptySet .integer)
+    | _ => return mkNode .SET_SINGLETON #[← genIdx]
+  | d + 1 => do
+    match ← pick 6 with
+    | 0 => genSet 0
+    | 1 => return mkNode .SET_UNION #[← genSet d, ← genSet d]
+    | 2 => return mkNode .SET_INTER #[← genSet d, ← genSet d]
+    | 3 => return mkNode .SET_MINUS #[← genSet d, ← genSet d]
+    | 4 => return mkNode .SET_INSERT #[← genIdx, ← genSet d]
+    | _ => return mkNode .SET_SINGLETON #[← genIdx]
+
+/-- A random set predicate. -/
+def genSetAtom : GenM Node := do
+  match ← pick 7 with
+  | 0 | 1 => return mkNode .SET_MEMBER #[← genIdx, ← genSet 3]
+  | 2 => return mkNode .SET_SUBSET #[← genSet 2, ← genSet 2]
+  | 3 => return eqNode (← genSet 2) (← genSet 2)
+  | 4 => return mkNode .SET_IS_EMPTY #[← genSet 2]
+  | 5 => return mkNode .SET_IS_SINGLETON #[← genSet 2]
+  | _ => return eqNode (mkNode .SET_CHOOSE #[← genSet 2]) (← genIdx)
+
 /-! ## Strings -/
 
 def strLit (w : String) : Node := .const (.string (w.toList.map Char.toNat))
@@ -299,7 +330,7 @@ def genCmp (d : Nat) : GenM Node := do
   return mkNode k #[← genArith real d, ← genArith real d]
 
 def genBool (arith : Bool) (uf : Bool := false) (bv : Bool := false) (arr : Bool := false)
-    (mixed : Bool := false) (str : Bool := false) : Nat → GenM Node
+    (mixed : Bool := false) (str : Bool := false) (sets : Bool := false) : Nat → GenM Node
   | 0 => do
     if arith && (← pick 2) == 0 then return ← genCmp 1
     if uf then
@@ -312,18 +343,20 @@ def genBool (arith : Bool) (uf : Bool := false) (bv : Bool := false) (arr : Bool
       if (← pick 4) != 0 then return ← genMixedAtom atoms[← pick atoms.size]!
     if str then
       if (← pick 4) != 0 then return ← genStrAtom
+    if sets then
+      if (← pick 4) != 0 then return ← genSetAtom
     return atoms[← pick atoms.size]!
   | d + 1 => do
     match ← pick 11 with
-    | 0 | 1 => genBool arith uf bv arr mixed str 0
-    | 2 => return notNode (← genBool arith uf bv arr mixed str d)
-    | 3 => return mkNode .AND (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf bv arr mixed str d)
-    | 4 => return mkNode .OR (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf bv arr mixed str d)
-    | 5 => return mkNode .IMPLIES #[← genBool arith uf bv arr mixed str d, ← genBool arith uf bv arr mixed str d]
-    | 6 => return mkNode .XOR #[← genBool arith uf bv arr mixed str d, ← genBool arith uf bv arr mixed str d]
-    | 7 => return eqNode (← genBool arith uf bv arr mixed str d) (← genBool arith uf bv arr mixed str d)
-    | 8 => if arith then genCmp d else genBool arith uf bv arr mixed str d
-    | _ => return iteNode (← genBool arith uf bv arr mixed str d) (← genBool arith uf bv arr mixed str d) (← genBool arith uf bv arr mixed str d)
+    | 0 | 1 => genBool arith uf bv arr mixed str sets 0
+    | 2 => return notNode (← genBool arith uf bv arr mixed str sets d)
+    | 3 => return mkNode .AND (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf bv arr mixed str sets d)
+    | 4 => return mkNode .OR (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf bv arr mixed str sets d)
+    | 5 => return mkNode .IMPLIES #[← genBool arith uf bv arr mixed str sets d, ← genBool arith uf bv arr mixed str sets d]
+    | 6 => return mkNode .XOR #[← genBool arith uf bv arr mixed str sets d, ← genBool arith uf bv arr mixed str sets d]
+    | 7 => return eqNode (← genBool arith uf bv arr mixed str sets d) (← genBool arith uf bv arr mixed str sets d)
+    | 8 => if arith then genCmp d else genBool arith uf bv arr mixed str sets d
+    | _ => return iteNode (← genBool arith uf bv arr mixed str sets d) (← genBool arith uf bv arr mixed str sets d) (← genBool arith uf bv arr mixed str sets d)
 
 def main (args : List String) : IO Unit := do
   let profile := args.contains "--profile"
@@ -338,9 +371,10 @@ def main (args : List String) : IO Unit := do
   let arr := args[3]? == some "arrays"
   let mixed := args[3]? == some "mixed"
   let str := args[3]? == some "strings"
+  let sets := args[3]? == some "sets"
   let mut rng : Rng := ⟨seed.toUInt64⟩
   for _ in [0:count] do
-    let (t, r) := (genBool arith uf bv arr mixed str depth).run rng
+    let (t, r) := (genBool arith uf bv arr mixed str sets depth).run rng
     rng := r
     let r ← Profile.measure "total" "rewrite" fun _ => rewrite t
     IO.println s!"{t.toSmtLib}\t{r.toSmtLib}"

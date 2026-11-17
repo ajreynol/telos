@@ -31,6 +31,7 @@ def Const.toSmtLib : Const → String
     -- `#b…`, as cvc5 prints bit-vector constants.
     "#b" ++ String.ofList ((List.range w.toNat).reverse.map fun i => if v.toNat.testBit i then '1' else '0')
   | .string s => "\"" ++ String.ofList (s.map Char.ofNat) ++ "\""
+  | .emptySet T => s!"(as set.empty {(TypeNode.set T).toSmtLib})"
 
 def Kind.smtLibName : Kind → String
   | .EQUAL => "=" | .NOT => "not" | .AND => "and" | .IMPLIES => "=>" | .OR => "or"
@@ -80,6 +81,10 @@ def Kind.smtLibName : Kind → String
   | .BITVECTOR_SDIVO => "bvsdivo"
   | .BITVECTOR_ITE => "bvite"
   | .SELECT => "select" | .STORE => "store"
+  | .SET_SINGLETON => "set.singleton" | .SET_UNION => "set.union" | .SET_INTER => "set.inter"
+  | .SET_MINUS => "set.minus" | .SET_MEMBER => "set.member" | .SET_SUBSET => "set.subset"
+  | .SET_CHOOSE => "set.choose" | .SET_IS_EMPTY => "set.is_empty"
+  | .SET_IS_SINGLETON => "set.is_singleton" | .SET_INSERT => "set.insert"
   | .STRING_CONCAT => "str.++"
   | .REGEXP_CONCAT => "re.++"
   | .REGEXP_INTER => "re.inter"

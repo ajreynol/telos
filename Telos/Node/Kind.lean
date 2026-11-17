@@ -19,6 +19,8 @@ inductive Kind where
   | CONST_RATIONAL
   | CONST_BITVECTOR
   | CONST_STRING
+  /-- The empty set (cvc5's `SET_EMPTY`, a constant whose payload is its type). -/
+  | SET_EMPTY
   -- Variables (cvc5 `VARIABLE`, for user-declared constants and functions, and
   -- `BOUND_VARIABLE`).
   | VARIABLE
@@ -154,6 +156,17 @@ inductive Kind where
   -- theory/arrays
   | SELECT
   | STORE
+  -- theory/sets (the operators of cvc5's safe mode with a CPC counterpart)
+  | SET_SINGLETON
+  | SET_UNION
+  | SET_INTER
+  | SET_MINUS
+  | SET_MEMBER
+  | SET_SUBSET
+  | SET_CHOOSE
+  | SET_IS_EMPTY
+  | SET_IS_SINGLETON
+  | SET_INSERT
   -- theory/quantifiers
   | FORALL
   | EXISTS
@@ -182,6 +195,7 @@ def Kind.theoryId : Kind → TheoryId
   | .CONST_INTEGER | .CONST_RATIONAL => .THEORY_ARITH
   | .CONST_BITVECTOR => .THEORY_BV
   | .CONST_STRING => .THEORY_STRINGS
+  | .SET_EMPTY => .THEORY_SETS
   | .VARIABLE | .BOUND_VARIABLE | .EQUAL => .THEORY_BUILTIN
   | .NOT | .AND | .IMPLIES | .OR | .XOR | .ITE => .THEORY_BOOL
   | .ADD | .SUB | .NEG | .MULT | .DIVISION | .INTS_DIVISION | .INTS_MODULUS | .ABS
@@ -240,6 +254,8 @@ def Kind.theoryId : Kind → TheoryId
   | .APPLY_UF | .DISTINCT | .INT_TO_BITVECTOR | .BITVECTOR_UBV_TO_INT | .BITVECTOR_SBV_TO_INT =>
     .THEORY_UF
   | .SELECT | .STORE => .THEORY_ARRAYS
+  | .SET_SINGLETON | .SET_UNION | .SET_INTER | .SET_MINUS | .SET_MEMBER | .SET_SUBSET
+  | .SET_CHOOSE | .SET_IS_EMPTY | .SET_IS_SINGLETON | .SET_INSERT => .THEORY_SETS
   | .STRING_CONCAT => .THEORY_STRINGS
   | .REGEXP_CONCAT => .THEORY_STRINGS
   | .REGEXP_INTER => .THEORY_STRINGS

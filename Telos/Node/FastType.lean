@@ -21,11 +21,22 @@ def bvWidth? : Option TypeNode → Option Int
   | some (.bitVector w) => some w
   | _ => none
 
+/-- The type of a set operator's application, from the type of its first
+child. -/
+def setTypeOfFirst : Kind → Option TypeNode → Option TypeNode
+  | .SET_UNION, T | .SET_INTER, T | .SET_MINUS, T => T
+  | .SET_SINGLETON, some T | .SET_INSERT, some T => some (.set T)
+  | .SET_CHOOSE, some (.set T) => some T
+  | _, _ => none
+
+-- The match over `Kind` is large; its compilation needs more than the default.
+set_option maxHeartbeats 1000000 in
 def typeHint : Node → Option TypeNode
   | .const (.boolean _) => some .boolean
   | .const (.integer _) => some .integer
   | .const (.rational _) => some .real
   | .const (.bitVector w _) => some (.bitVector w)
+  | .const (.emptySet T) => some (.set T)
   | .var _ T | .boundVar _ T => some T
   | .app (.kind .ADD) ⟨c :: _⟩ | .app (.kind .MULT) ⟨c :: _⟩ | .app (.kind .SUB) ⟨c :: _⟩
   | .app (.kind .NEG) ⟨c :: _⟩ | .app (.kind .ABS) ⟨c :: _⟩ => typeHint c
@@ -69,7 +80,8 @@ def typeHint : Node → Option TypeNode
     | .BITVECTOR_UADDO | .BITVECTOR_SADDO | .BITVECTOR_UMULO | .BITVECTOR_SMULO
     | .BITVECTOR_USUBO | .BITVECTOR_SSUBO | .BITVECTOR_SDIVO | .BITVECTOR_NEGO
     | .STRING_CONTAINS | .STRING_PREFIX | .STRING_SUFFIX | .STRING_IN_REGEXP | .STRING_LT
-    | .STRING_LEQ | .STRING_IS_DIGIT => some .boolean
+    | .STRING_LEQ | .STRING_IS_DIGIT | .SET_MEMBER | .SET_SUBSET | .SET_IS_EMPTY
+    | .SET_IS_SINGLETON => some .boolean
     | .BITVECTOR_COMP | .BITVECTOR_REDOR | .BITVECTOR_REDAND | .BITVECTOR_ULTBV
     | .BITVECTOR_SLTBV => some (.bitVector 1)
     | .BITVECTOR_AND | .BITVECTOR_OR | .BITVECTOR_XOR | .BITVECTOR_ADD | .BITVECTOR_MULT
@@ -80,6 +92,12 @@ def typeHint : Node → Option TypeNode
       | c :: _ =>
         have : c ∈ cs := by rw [Array.mem_def, h]; simp
         typeHint c
+      | [] => n.getType
+    | .SET_UNION | .SET_INTER | .SET_MINUS | .SET_SINGLETON | .SET_CHOOSE | .SET_INSERT =>
+      match h : cs.toList with
+      | c :: _ =>
+        have : c ∈ cs := by rw [Array.mem_def, h]; simp
+        setTypeOfFirst k (typeHint c)
       | [] => n.getType
     | _ => n.getType
   | n => n.getType

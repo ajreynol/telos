@@ -4,6 +4,7 @@ import Telos.Theory.UF
 import Telos.Theory.BV
 import Telos.Theory.Arrays
 import Telos.Theory.Strings
+import Telos.Theory.Sets
 
 /-!
 # The rewriter
@@ -23,6 +24,7 @@ def baseTheoryRewriterWith (strings : TheoryRewriter) : TheoryId → TheoryRewri
   | .THEORY_UF => .uf
   | .THEORY_BV => .bv
   | .THEORY_STRINGS => strings
+  | .THEORY_SETS => .sets
   | _ => .trivial
 
 /-- The fuel for the rewrites the theory rewriters do as sub-steps: the

@@ -35,7 +35,8 @@ its rewrite, as cvc5 does. Only some theories are ported so far: Booleans,
 arithmetic (`+`, `-`, `*`, `/`, `div`, `mod`, `abs`, `to_real`, `to_int`,
 `is_int` and the comparisons), equality over uninterpreted sorts and
 `distinct` (cvc5's UF rewriter), bit-vectors, arrays (`select`, `store`),
-strings (partly), and quantifiers as far as they are Boolean.
+strings (partly), finite sets (the operators of cvc5's safe mode: no
+`set.card` or relations), and quantifiers as far as they are Boolean.
 Terms
 with other operators are reported as unsupported, and rewriting of the supported
 ones is incomplete.

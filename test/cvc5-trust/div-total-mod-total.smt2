@@ -1,0 +1,5 @@
+; cvc5 --dump-proofs --proof-format-mode=cpc: this needs a TRUST_THEORY_REWRITE step
+(set-logic ALL)
+(declare-const x Int)
+(assert (not (= (div (mod x 3) 3) 0)))
+(check-sat)
