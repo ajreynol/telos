@@ -22,7 +22,12 @@ open SmtEval
 
 namespace Telos
 
+/-- A string of Logos, as a Lean string. -/
+def nativeStr (s : native_String) : String := String.ofList (s.map Char.ofNat)
+
 namespace TypeNode
+
+mutual
 
 /-- The inverse of `TypeNode.toEo`. -/
 def ofEo : Term → Option TypeNode
@@ -37,7 +42,23 @@ def ofEo : Term → Option TypeNode
   | .Apply (.UOp UserOp.Set) e => .set <$> ofEo e
   | .Apply (.Apply .FunType a) r => .function <$> ofEo a <*> ofEo r
   | .USort i => some (.sort i)
+  | .DatatypeType s d => .datatype (nativeStr s) <$> dtDeclOfEo d
+  | .DatatypeTypeRef s => some (.typeRef (nativeStr s))
   | _ => none
+
+def dtDeclOfEo : DatatypeDecl → Option DtDecl
+  | .nil => some .nil
+  | .cons s d rest => .cons (nativeStr s) <$> dtOfEo d <*> dtDeclOfEo rest
+
+def dtOfEo : Datatype → Option Dt
+  | .null => some .null
+  | .sum c rest => .sum <$> dtConsOfEo c <*> dtOfEo rest
+
+def dtConsOfEo : DatatypeCons → Option DtCons
+  | .unit => some .unit
+  | .cons f rest => .cons <$> ofEo f <*> dtConsOfEo rest
+
+end
 
 end TypeNode
 
@@ -131,6 +152,9 @@ def varOfEo (env : List Node) (t : Term) (bound : Bool) : Option Node :=
 /-- A partial inverse of `toEo`, for the kinds `toEo` translates. Variables are
 looked up in `env` first (see the module doc). -/
 partial def ofEo (env : List Node) (t : Term) : Option Node := do
+  -- A nullary constructor is an `APPLY_CONSTRUCTOR` application, as in cvc5,
+  -- not the constructor symbol.
+  if let .DtCons s d i := t then return ← dtApp .APPLY_CONSTRUCTOR (← dtCons s d i) []
   if let some c := Const.ofEo t then return .const c
   if let .Var .. := t then return ← varOfEo env t false
   let (h, xs) := eoSpine t
@@ -171,6 +195,10 @@ partial def ofEo (env : List Node) (t : Term) : Option Node := do
       return .app (.indexed .REGEXP_LOOP #[i, j]) #[← ofEo env x]
   | .UOp2 UserOp2.extract (.Numeral i) (.Numeral j), [x] =>
       return .app (.indexed .BITVECTOR_EXTRACT #[i, j]) #[← ofEo env x]
+  | .DtCons s d i, _ => dtApp .APPLY_CONSTRUCTOR (← dtCons s d i) xs
+  | .DtSel s d i j, [_] => dtApp .APPLY_SELECTOR (← dtSel s d i j) xs
+  | .UOp1 UserOp1.is (.DtCons s d i), [_] => dtApp .APPLY_TESTER (← dtCons s d i) xs
+  | .UOp1 UserOp1.update (.DtSel s d i j), [_, _] => dtApp .APPLY_UPDATER (← dtSel s d i j) xs
   | .UOp1 op (.Numeral i), [x] =>
     match indexedKindOf op with
     | some k => return .app (.indexed k #[i]) #[← ofEo env x]
@@ -186,6 +214,12 @@ partial def ofEo (env : List Node) (t : Term) : Option Node := do
 where
   app (k : Kind) (xs : List Term) : Option Node := do
     return .app (.kind k) (← xs.mapM (ofEo env)).toArray
+  dtCons (s : native_String) (d : DatatypeDecl) (i : Nat) : Option Node := do
+    return .const (.dtCons (.datatype (nativeStr s) (← TypeNode.dtDeclOfEo d)) i)
+  dtSel (s : native_String) (d : DatatypeDecl) (i j : Nat) : Option Node := do
+    return .const (.dtSel (.datatype (nativeStr s) (← TypeNode.dtDeclOfEo d)) i j)
+  dtApp (k : Kind) (f : Node) (xs : List Term) : Option Node := do
+    return .app (.node k f) (← xs.mapM (ofEo env)).toArray
   nary (k : Kind) (first : Term) : Option Node := do
     let .rightAssocNil op nil := k.eoShape | none
     let elems ← eoRightAssocNilElems op (nil.eval op first) t

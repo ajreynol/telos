@@ -15,7 +15,7 @@ cvc5 to rewrite the same terms with `(simplify t)`, and reports:
   cvc5's, which is a bug in one of them.
 
 Usage:
-  CVC5=PATH scripts/fuzz.py ...  or  scripts/fuzz.py [--cvc5 PATH] [--seed N] [--count N] [--depth N] [--show N] [--arith | --uf | --bv | --arrays | --mixed | --strings | --sets]
+  CVC5=PATH scripts/fuzz.py ...  or  scripts/fuzz.py [--cvc5 PATH] [--seed N] [--count N] [--depth N] [--show N] [--arith | --uf | --bv | --arrays | --mixed | --strings | --sets | --datatypes]
 
 Build the fuzzer first: `lake build telos-fuzz`.
 """
@@ -54,6 +54,11 @@ PRELUDE = """(set-logic ALL)
 (declare-const sv String)
 (declare-const sa (Set Int))
 (declare-const sb (Set Int))
+(declare-datatypes ((Lst 0)) (((nil) (cons (head Int) (tail Lst)))))
+(declare-datatypes ((Color 0)) (((red) (green) (blue))))
+(declare-const la Lst)
+(declare-const lb Lst)
+(declare-const co Color)
 """
 
 
@@ -146,11 +151,12 @@ def main():
     ap.add_argument("--mixed", action="store_true", help="include atoms mixing theories")
     ap.add_argument("--strings", action="store_true", help="include string predicates")
     ap.add_argument("--sets", action="store_true", help="include set predicates")
+    ap.add_argument("--datatypes", action="store_true", help="include datatype predicates")
     a = ap.parse_args()
     if not FUZZ.exists():
         sys.exit("error: build the fuzzer first: lake build telos-fuzz")
 
-    lines = subprocess.run([str(FUZZ), str(a.seed), str(a.count), str(a.depth)] + (["arith"] if a.arith else ["uf"] if a.uf else ["bv"] if a.bv else ["arrays"] if a.arrays else ["mixed"] if a.mixed else ["strings"] if a.strings else ["sets"] if a.sets else []),
+    lines = subprocess.run([str(FUZZ), str(a.seed), str(a.count), str(a.depth)] + (["arith"] if a.arith else ["uf"] if a.uf else ["bv"] if a.bv else ["arrays"] if a.arrays else ["mixed"] if a.mixed else ["strings"] if a.strings else ["sets"] if a.sets else ["datatypes"] if a.datatypes else []),
                            capture_output=True, text=True, check=True).stdout.splitlines()
     cases = [tuple(line.split("\t")) for line in lines]
 

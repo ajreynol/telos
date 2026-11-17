@@ -10,7 +10,7 @@ With `--fuzz N`, the queries are N random terms from `telos-fuzz` instead.
 
 Usage:
   scripts/check-proofs.py [--ethos PATH] FILE.smt2 ...
-  scripts/check-proofs.py [--ethos PATH] --fuzz N [--seed S] [--depth D] [--arith | --uf | --bv | --arrays | --mixed | --strings | --sets]
+  scripts/check-proofs.py [--ethos PATH] --fuzz N [--seed S] [--depth D] [--arith | --uf | --bv | --arrays | --mixed | --strings | --sets | --datatypes]
 
 Build first: `lake build telos telos-fuzz`.
 """
@@ -49,11 +49,16 @@ FUZZ_PRELUDE = """(declare-const a Bool)
 (declare-const sv String)
 (declare-const sa (Set Int))
 (declare-const sb (Set Int))
+(declare-datatypes ((Lst 0)) (((nil) (cons (head Int) (tail Lst)))))
+(declare-datatypes ((Color 0)) (((red) (green) (blue))))
+(declare-const la Lst)
+(declare-const lb Lst)
+(declare-const co Color)
 """
 
 
-def fuzz_script(n, seed, depth, arith, uf=False, bv=False, arrays=False, mixed=False, strings=False, sets=False):
-    out = subprocess.run([str(BIN / "telos-fuzz"), str(seed), str(n), str(depth)] + (["arith"] if arith else ["uf"] if uf else ["bv"] if bv else ["arrays"] if arrays else ["mixed"] if mixed else ["strings"] if strings else ["sets"] if sets else []),
+def fuzz_script(n, seed, depth, arith, uf=False, bv=False, arrays=False, mixed=False, strings=False, sets=False, datatypes=False):
+    out = subprocess.run([str(BIN / "telos-fuzz"), str(seed), str(n), str(depth)] + (["arith"] if arith else ["uf"] if uf else ["bv"] if bv else ["arrays"] if arrays else ["mixed"] if mixed else ["strings"] if strings else ["sets"] if sets else ["datatypes"] if datatypes else []),
                          capture_output=True, text=True, check=True).stdout
     terms = [line.split("\t")[0] for line in out.splitlines()]
     return FUZZ_PRELUDE + "".join(f"(simplify {t})\n" for t in terms)
@@ -98,6 +103,7 @@ def main():
     ap.add_argument("--mixed", action="store_true", help="include atoms mixing theories")
     ap.add_argument("--strings", action="store_true", help="include string predicates")
     ap.add_argument("--sets", action="store_true", help="include set predicates")
+    ap.add_argument("--datatypes", action="store_true", help="include datatype predicates")
     a = ap.parse_args()
     if not (BIN / "telos").exists():
         sys.exit("error: build telos first: lake build telos telos-fuzz")
@@ -106,7 +112,7 @@ def main():
         files = list(a.files)
         if a.fuzz:
             f = Path(tmp) / "fuzz.smt2"
-            f.write_text(fuzz_script(a.fuzz, a.seed, a.depth, a.arith, a.uf, a.bv, a.arrays, a.mixed, a.strings, a.sets))
+            f.write_text(fuzz_script(a.fuzz, a.seed, a.depth, a.arith, a.uf, a.bv, a.arrays, a.mixed, a.strings, a.sets, a.datatypes))
             files.append(f)
         for f in files:
             n, failed, m = check(a.ethos, f, tmp)

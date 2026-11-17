@@ -5,6 +5,7 @@ import Telos.Theory.BV
 import Telos.Theory.Arrays
 import Telos.Theory.Strings
 import Telos.Theory.Sets
+import Telos.Theory.Datatypes
 
 /-!
 # The rewriter
@@ -25,6 +26,7 @@ def baseTheoryRewriterWith (strings : TheoryRewriter) : TheoryId → TheoryRewri
   | .THEORY_BV => .bv
   | .THEORY_STRINGS => strings
   | .THEORY_SETS => .sets
+  | .THEORY_DATATYPES => .datatypes
   | _ => .trivial
 
 /-- The fuel for the rewrites the theory rewriters do as sub-steps: the

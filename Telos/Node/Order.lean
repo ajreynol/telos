@@ -6,8 +6,8 @@ import Telos.Node.Node
 cvc5 orders nodes by id, for example to orient equalities (`(= a b)` with
 `a.getId() > b.getId()` becomes `(= b a)`) and to sort the children of
 commutative operators. Ids depend on creation order, which telos cannot
-reproduce, so it uses this fixed structural order instead: constants, then free
-variables, then bound variables, then applications; within each, by payload,
+reproduce, so it uses this fixed structural order instead: constants, then nullary
+constructors, then free variables, then bound variables, then applications; within each, by payload,
 name and type, or by operator and then children, lexicographically.
 
 Untrusted: the order only decides which certified rewrite to try.
@@ -24,6 +24,8 @@ private def rank : Const → Nat
   | .bitVector .. => 3
   | .string _ => 4
   | .emptySet _ => 5
+  | .dtCons .. => 6
+  | .dtSel .. => 7
 
 private def cmpOfLt {α} [LT α] [DecidableEq α] [DecidableLT α] (a b : α) : Ordering :=
   if a = b then .eq else if a < b then .lt else .gt
@@ -35,17 +37,23 @@ def cmp : Const → Const → Ordering
   | .bitVector w v, .bitVector w' v' => (compare w w').then (compare v v')
   | .string a, .string b => compare a b
   | .emptySet T, .emptySet U => compare T U
+  | .dtCons T i, .dtCons U j => (compare T U).then (compare i j)
+  | .dtSel T i j, .dtSel U k l => ((compare T U).then (compare i k)).then (compare j l)
   | a, b => compare a.rank b.rank
 
 end Const
 
 namespace Node
 
+/-- Nullary constructors come after constants and before variables: cvc5 creates
+them when their datatype is declared, so they usually have smaller ids than the
+constants declared after it (`(= nil x)`). -/
 private def rank : Node → Nat
   | .const _ => 0
-  | .var .. => 1
-  | .boundVar .. => 2
-  | .app .. => 3
+  | .app (.node .APPLY_CONSTRUCTOR _) #[] => 1
+  | .var .. => 2
+  | .boundVar .. => 3
+  | .app .. => 4
 
 mutual
 
@@ -53,7 +61,8 @@ mutual
 partial def cmp : Node → Node → Ordering
   | .const a, .const b => a.cmp b
   | .var n T, .var m U | .boundVar n T, .boundVar m U => (compare n m).then (compare T U)
-  | .app op cs, .app op' cs' => (opCmp op op').then (listCmp cs.toList cs'.toList)
+  | a@(.app op cs), b@(.app op' cs') =>
+    (compare a.rank b.rank).then ((opCmp op op').then (listCmp cs.toList cs'.toList))
   | a, b => compare a.rank b.rank
 
 partial def opCmp : Op → Op → Ordering

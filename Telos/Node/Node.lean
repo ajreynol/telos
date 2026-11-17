@@ -53,6 +53,13 @@ inductive Const where
   /-- The empty set whose elements have type `elem` (cvc5's `EmptySet`, of type
   `(Set elem)`). -/
   | emptySet (elem : TypeNode)
+  /-- Constructor `index` of the datatype `dt` (Logos's `Term.DtCons`). It is the
+  operator of `APPLY_CONSTRUCTOR` and `APPLY_TESTER` applications. -/
+  | dtCons (dt : TypeNode) (index : Nat)
+  /-- Selector `sel` of constructor `cons` of the datatype `dt` (Logos's
+  `Term.DtSel`). It is the operator of `APPLY_SELECTOR` and `APPLY_UPDATER`
+  applications. -/
+  | dtSel (dt : TypeNode) (cons sel : Nat)
   deriving DecidableEq, Repr, Inhabited, Hashable
 
 namespace Const
@@ -64,6 +71,7 @@ def kind : Const → Kind
   | .bitVector _ _ => .CONST_BITVECTOR
   | .string _ => .CONST_STRING
   | .emptySet _ => .SET_EMPTY
+  | .dtCons .. | .dtSel .. => .DT_SYMBOL
 
 /-- A string constant from a Lean string. -/
 def ofString (s : String) : Const := .string (s.toList.map Char.toNat)
@@ -135,8 +143,10 @@ def getChildren : Node → Array Node
 
 def getNumChildren (n : Node) : Nat := n.getChildren.size
 
+/-- cvc5's `isConst`: a constant, or a constructor applied to constants. -/
 def isConst : Node → Bool
   | .const _ => true
+  | .app (.node .APPLY_CONSTRUCTOR _) cs => cs.attach.all fun ⟨c, _⟩ => isConst c
   | _ => false
 
 def isVar : Node → Bool

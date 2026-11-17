@@ -17,9 +17,12 @@ constants and sorts (`UConst i`, `USort i`) in declaration order; the front end
 replays that numbering to map them back to their names, so that they become
 `Node.var`s.
 
-Supported commands: `declare-const`, `declare-fun`, `declare-sort` and
-`simplify`; `set-logic`, `set-option`, `set-info`, `check-sat` and `exit` are
-ignored. Everything else is an error.
+Supported commands: `declare-const`, `declare-fun`, `declare-sort`,
+`declare-datatypes` and `declare-datatype` (not parametric) and `simplify`;
+`set-logic`, `set-option`, `set-info`, `check-sat` and `exit` are ignored.
+Everything else is an error. Logos's datatypes have no constructor or selector
+names; the front end reads them from the declarations, for printing
+(`DtNames`).
 -/
 
 open Eo
@@ -41,8 +44,28 @@ structure Script where
   decls : List String
   names : Eunoia.Names
   queries : List Query
+  dtNames : DtNames := {}
 
 def ignored : List String := ["set-logic", "set-option", "set-info", "check-sat", "exit"]
+
+/-- The constructors of a datatype declaration, `((C (s T) …) …)`: each
+constructor's name and its selectors' names. -/
+def readConstructors (cs : Sexp) : Except String (Array (String × Array String)) := do
+  let .expr cs := cs | throw s!"bad datatype constructors: {cs.serialize}"
+  if let .atom "par" :: _ := cs then throw "parametric datatypes are not supported yet"
+  cs.toArray.mapM fun c => match c with
+    | .atom c => pure (c, #[])
+    | .expr (.atom c :: sels) => do
+      let sels ← sels.toArray.mapM fun
+        | .expr [.atom s, _] => pure s
+        | s => throw s!"bad selector: {s.serialize}"
+      pure (c, sels)
+    | c => throw s!"bad constructor: {c.serialize}"
+
+/-- The names of datatype constructors and selectors, by datatype. -/
+def mkDtNames (dts : Array (String × Array (String × Array String))) : DtNames where
+  cons d i := (dts.find? (·.1 == d)) >>= fun (_, cs) => cs[i]? |>.map (·.1)
+  sel d i j := (dts.find? (·.1 == d)) >>= fun (_, cs) => cs[i]? >>= fun (_, ss) => ss[j]?
 
 /-- Replace each numbered constant by the variable of its name. -/
 partial def nameConsts (name : Nat → Option String) : Term → Term
@@ -80,6 +103,7 @@ def readScript (input : String) : Except String Script := do
   let mut sources := #[]
   let mut consts : Array String := #[]
   let mut sorts : Array String := #[]
+  let mut dts : Array (String × Array (String × Array String)) := #[]
   for s in ss do
     match s with
     | .expr (.atom c :: _) =>
@@ -99,6 +123,21 @@ def readScript (input : String) : Except String Script := do
         sorts := sorts.push x
         decls := decls.push s.serialize
         eunoia := eunoia.push s.serialize
+      | .expr [.atom "declare-datatypes", .expr ds, .expr bodies] =>
+        if ds.length != bodies.length then throw s!"bad datatype declaration: {s.serialize}"
+        for (d, body) in ds.zip bodies do
+          match d with
+          | .expr [.atom name, .atom "0"] => dts := dts.push (name, ← readConstructors body)
+          | .expr [.atom _, _] => throw "parametric datatypes are not supported yet"
+          | _ => throw s!"bad datatype declaration: {s.serialize}"
+        decls := decls.push s.serialize
+        eunoia := eunoia.push s.serialize
+      | .expr [.atom "declare-datatype", .atom name, body] =>
+        dts := dts.push (name, ← readConstructors body)
+        -- As `declare-datatypes`, which Logos's parser reads.
+        let s' := Sexp.expr [.atom "declare-datatypes", .expr [.expr [.atom name, .atom "0"]], .expr [body]]
+        decls := decls.push s'.serialize
+        eunoia := eunoia.push s'.serialize
       | .expr [.atom "simplify", t] =>
         let t := t.serialize
         eunoia := eunoia.push s!"(assume @s{sources.size} (= {t} {t}))"
@@ -107,10 +146,11 @@ def readScript (input : String) : Except String Script := do
     | _ => throw s!"unsupported command: {s.serialize}"
   let (assums, _) ← parseProof ("\n".intercalate eunoia.toList)
   let constName := fun i => consts[i - 1]?
+  let dtNames := mkDtNames dts
   let names : Eunoia.Names :=
-    { sort := fun i => sorts[i - 1]?, const := constName, isConst := consts.contains }
+    { sort := fun i => sorts[i - 1]?, const := constName, isConst := consts.contains, dt := dtNames }
   let queries := (sources.toList.zip assums).map fun (src, t) => ⟨src, toNode constName t⟩
-  return { decls := decls.toList, names, queries }
+  return { decls := decls.toList, names, queries, dtNames }
 
 /-- The result of simplifying one term. -/
 structure Result where
@@ -141,6 +181,6 @@ def simplify (sc : Script) (q : Query) (withProof : Bool) : Result :=
           | .ok _ => throw "internal error: Logos does not accept the printed proof"
           | .error e => throw s!"internal error: Logos cannot parse the printed proof: {e}")
         else none
-      { source := q.source, output := .ok r.1.toSmtLib, proof }
+      { source := q.source, output := .ok (r.1.toSmtLibWith sc.dtNames), proof }
 
 end Telos.Frontend

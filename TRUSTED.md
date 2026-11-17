@@ -22,7 +22,12 @@ the wrong thing, so review them as specifications, not as code.
   giving each operator's CPC head symbol and arity. The nil terminator of
   `+`, `*`, the bit-vector operators, `str.++` and `distinct` depends on the type
   of the elements; it is a hand-written table (`typedNilOfType`) over the SMT
-  type of the first element, given by `__smtx_typeof`. `ToEo.lean` does not
+  type of the first element, given by `__smtx_typeof`. Datatype types
+  (`TypeNode.datatype`, with its block `DtDecl`) mirror Logos's
+  `Term.DatatypeType` constructor by constructor; constructors and selectors are
+  the constants `Const.dtCons` and `Const.dtSel` (`Term.DtCons`, `Term.DtSel`),
+  applied as spines (`nodeEoShape`). Their names are only printed, and are not
+  part of the specification. `ToEo.lean` does not
   import `Cpc/Logos.lean` (`scripts/check-hygiene.sh` checks this for every
   specification file).
 - `verification/TelosProofs/Spec.lean`: the definition of `Node.Equiv`.

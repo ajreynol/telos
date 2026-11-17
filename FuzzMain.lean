@@ -3,7 +3,7 @@ import Telos
 /-!
 # `telos-fuzz`: random terms and their rewrites
 
-`telos-fuzz SEED COUNT DEPTH [arith|uf|bv|arrays|mixed|strings|sets] [--profile]` prints `COUNT` random Boolean terms over
+`telos-fuzz SEED COUNT DEPTH [arith|uf|bv|arrays|mixed|strings|sets|datatypes] [--profile]` prints `COUNT` random Boolean terms over
 `a`, `b`, `c` (and the integer `x`), each with its telos rewrite, as
 `input<TAB>output` lines. With `arith`, the terms also contain comparisons of
 integer and real terms over `x`, `y`, `r` and `s`. With `uf`, they also contain
@@ -218,6 +218,67 @@ def genSetAtom : GenM Node := do
   | 5 => return mkNode .SET_IS_SINGLETON #[← genSet 2]
   | _ => return eqNode (mkNode .SET_CHOOSE #[← genSet 2]) (← genIdx)
 
+/-! ## Datatypes -/
+
+/-- `(declare-datatypes ((Lst 0)) (((nil) (cons (head Int) (tail Lst)))))` -/
+def lstT : TypeNode :=
+  .datatype "Lst" (.cons "Lst" (.sum .unit (.sum (.cons .integer (.cons (.typeRef "Lst") .unit)) .null)) .nil)
+
+/-- `(declare-datatype Color ((red) (green) (blue)))` -/
+def colorT : TypeNode :=
+  .datatype "Color" (.cons "Color" (.sum .unit (.sum .unit (.sum .unit .null))) .nil)
+
+def dtNames : DtNames where
+  cons d i := match d, i with
+    | "Lst", 0 => some "nil" | "Lst", 1 => some "cons"
+    | "Color", 0 => some "red" | "Color", 1 => some "green" | "Color", 2 => some "blue"
+    | _, _ => none
+  sel d i j := match d, i, j with
+    | "Lst", 1, 0 => some "head" | "Lst", 1, 1 => some "tail"
+    | _, _, _ => none
+
+def dtApp (k : Kind) (c : Const) (cs : Array Node) : Node := .app (.node k (.const c)) cs
+def lstNil : Node := dtApp .APPLY_CONSTRUCTOR (.dtCons lstT 0) #[]
+def lstCons (h t : Node) : Node := dtApp .APPLY_CONSTRUCTOR (.dtCons lstT 1) #[h, t]
+
+mutual
+/-- A random list, over `la`, `lb`, `nil`, `cons`, `tail` and updaters. -/
+partial def genLst : Nat → GenM Node
+  | 0 => do
+    match ← pick 4 with
+    | 0 => return .var "la" lstT
+    | 1 => return .var "lb" lstT
+    | 2 => return lstNil
+    | _ => return lstCons (← genIdx) (#[Node.var "la" lstT, .var "lb" lstT, lstNil][← pick 3]!)
+  | d + 1 => do
+    match ← pick 6 with
+    | 0 => genLst 0
+    | 1 | 2 => return lstCons (← genLstInt d) (← genLst d)
+    | 3 => return dtApp .APPLY_SELECTOR (.dtSel lstT 1 1) #[← genLst d]
+    | 4 => return dtApp .APPLY_UPDATER (.dtSel lstT 1 0) #[← genLst d, ← genIdx]
+    | _ => return dtApp .APPLY_UPDATER (.dtSel lstT 1 1) #[← genLst d, ← genLst d]
+
+/-- A random integer: an index, or the `head` of a list. -/
+partial def genLstInt : Nat → GenM Node
+  | 0 => genIdx
+  | d + 1 => do
+    if (← pick 2) == 0 then genIdx else return dtApp .APPLY_SELECTOR (.dtSel lstT 1 0) #[← genLst d]
+end
+
+def genColor : GenM Node := do
+  match ← pick 4 with
+  | 3 => return .var "co" colorT
+  | i => return dtApp .APPLY_CONSTRUCTOR (.dtCons colorT i) #[]
+
+/-- A random datatype predicate. -/
+def genDtAtom : GenM Node := do
+  match ← pick 6 with
+  | 0 | 1 => return eqNode (← genLst 2) (← genLst 2)
+  | 2 => return dtApp .APPLY_TESTER (.dtCons lstT (← pick 2)) #[← genLst 3]
+  | 3 => return eqNode (← genLstInt 3) (← genIdx)
+  | 4 => return eqNode (← genColor) (← genColor)
+  | _ => return dtApp .APPLY_TESTER (.dtCons colorT (← pick 3)) #[← genColor]
+
 /-! ## Strings -/
 
 def strLit (w : String) : Node := .const (.string (w.toList.map Char.toNat))
@@ -330,7 +391,7 @@ def genCmp (d : Nat) : GenM Node := do
   return mkNode k #[← genArith real d, ← genArith real d]
 
 def genBool (arith : Bool) (uf : Bool := false) (bv : Bool := false) (arr : Bool := false)
-    (mixed : Bool := false) (str : Bool := false) (sets : Bool := false) : Nat → GenM Node
+    (mixed : Bool := false) (str : Bool := false) (sets : Bool := false) (dt : Bool := false) : Nat → GenM Node
   | 0 => do
     if arith && (← pick 2) == 0 then return ← genCmp 1
     if uf then
@@ -345,18 +406,20 @@ def genBool (arith : Bool) (uf : Bool := false) (bv : Bool := false) (arr : Bool
       if (← pick 4) != 0 then return ← genStrAtom
     if sets then
       if (← pick 4) != 0 then return ← genSetAtom
+    if dt then
+      if (← pick 4) != 0 then return ← genDtAtom
     return atoms[← pick atoms.size]!
   | d + 1 => do
     match ← pick 11 with
-    | 0 | 1 => genBool arith uf bv arr mixed str sets 0
-    | 2 => return notNode (← genBool arith uf bv arr mixed str sets d)
-    | 3 => return mkNode .AND (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf bv arr mixed str sets d)
-    | 4 => return mkNode .OR (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf bv arr mixed str sets d)
-    | 5 => return mkNode .IMPLIES #[← genBool arith uf bv arr mixed str sets d, ← genBool arith uf bv arr mixed str sets d]
-    | 6 => return mkNode .XOR #[← genBool arith uf bv arr mixed str sets d, ← genBool arith uf bv arr mixed str sets d]
-    | 7 => return eqNode (← genBool arith uf bv arr mixed str sets d) (← genBool arith uf bv arr mixed str sets d)
-    | 8 => if arith then genCmp d else genBool arith uf bv arr mixed str sets d
-    | _ => return iteNode (← genBool arith uf bv arr mixed str sets d) (← genBool arith uf bv arr mixed str sets d) (← genBool arith uf bv arr mixed str sets d)
+    | 0 | 1 => genBool arith uf bv arr mixed str sets dt 0
+    | 2 => return notNode (← genBool arith uf bv arr mixed str sets dt d)
+    | 3 => return mkNode .AND (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf bv arr mixed str sets dt d)
+    | 4 => return mkNode .OR (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf bv arr mixed str sets dt d)
+    | 5 => return mkNode .IMPLIES #[← genBool arith uf bv arr mixed str sets dt d, ← genBool arith uf bv arr mixed str sets dt d]
+    | 6 => return mkNode .XOR #[← genBool arith uf bv arr mixed str sets dt d, ← genBool arith uf bv arr mixed str sets dt d]
+    | 7 => return eqNode (← genBool arith uf bv arr mixed str sets dt d) (← genBool arith uf bv arr mixed str sets dt d)
+    | 8 => if arith then genCmp d else genBool arith uf bv arr mixed str sets dt d
+    | _ => return iteNode (← genBool arith uf bv arr mixed str sets dt d) (← genBool arith uf bv arr mixed str sets dt d) (← genBool arith uf bv arr mixed str sets dt d)
 
 def main (args : List String) : IO Unit := do
   let profile := args.contains "--profile"
@@ -372,10 +435,11 @@ def main (args : List String) : IO Unit := do
   let mixed := args[3]? == some "mixed"
   let str := args[3]? == some "strings"
   let sets := args[3]? == some "sets"
+  let dt := args[3]? == some "datatypes"
   let mut rng : Rng := ⟨seed.toUInt64⟩
   for _ in [0:count] do
-    let (t, r) := (genBool arith uf bv arr mixed str sets depth).run rng
+    let (t, r) := (genBool arith uf bv arr mixed str sets dt depth).run rng
     rng := r
     let r ← Profile.measure "total" "rewrite" fun _ => rewrite t
-    IO.println s!"{t.toSmtLib}\t{r.toSmtLib}"
+    IO.println s!"{t.toSmtLibWith dtNames}\t{r.toSmtLibWith dtNames}"
   if profile then Profile.report

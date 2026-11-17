@@ -7,10 +7,18 @@ cvc5 represents types as `TypeNode`s, which are nodes of type kinds
 (`BOOLEAN_TYPE`, `BITVECTOR_TYPE`, `FUNCTION_TYPE`, `SORT_TYPE`, …). Here they are a
 separate inductive with one constructor per type kind, so a type cannot be confused
 with a term. The constructors cover the types that Logos gives a semantics to,
-except datatypes and tuples, which come later.
+except tuples and parametric datatypes, which come later.
+
+Datatypes mirror Logos's `Term.DatatypeType` exactly: a datatype is its name and
+the whole block of (mutually recursive) datatypes it was declared in, each a list
+of constructors, each a list of field types, in which the block's own datatypes
+are `typeRef`s. Constructors and selectors have no names here, as in Logos;
+their names are only for printing (`DtNames`, `Telos/Node/Print.lean`).
 -/
 
 namespace Telos
+
+mutual
 
 inductive TypeNode where
   | boolean
@@ -32,7 +40,54 @@ inductive TypeNode where
   /-- An uninterpreted sort (cvc5 `SORT_TYPE`). Logos numbers uninterpreted sorts
   (`Term.USort`), so the sort is identified by that number. -/
   | sort (id : Nat)
-  deriving DecidableEq, Repr, Inhabited, Hashable, Ord
+  /-- The datatype `name` of the block `decl` (cvc5 `DATATYPE_TYPE`; Logos's
+  `Term.DatatypeType`). -/
+  | datatype (name : String) (decl : DtDecl)
+  /-- Inside a block, a reference to one of its datatypes (Logos's
+  `Term.DatatypeTypeRef`). -/
+  | typeRef (name : String)
+
+/-- A block of datatypes, by name (Logos's `DatatypeDecl`). -/
+inductive DtDecl where
+  | nil
+  | cons (name : String) (dt : Dt) (rest : DtDecl)
+
+/-- The constructors of a datatype (Logos's `Datatype`). -/
+inductive Dt where
+  | null
+  | sum (c : DtCons) (rest : Dt)
+
+/-- The field types of a constructor (Logos's `DatatypeCons`). -/
+inductive DtCons where
+  | unit
+  | cons (field : TypeNode) (rest : DtCons)
+
+end
+
+deriving instance DecidableEq, Repr, Inhabited, Hashable, Ord for TypeNode, DtDecl, Dt, DtCons
+
+namespace DtDecl
+
+/-- The datatype of this name. -/
+def lookup? : DtDecl → String → Option Dt
+  | .nil, _ => none
+  | .cons n d rest, s => if n == s then some d else rest.lookup? s
+
+end DtDecl
+
+namespace Dt
+
+def toList : Dt → List DtCons
+  | .null => []
+  | .sum c rest => c :: rest.toList
+
+def numConstructors (d : Dt) : Nat := d.toList.length
+
+end Dt
+
+def DtCons.toList : DtCons → List TypeNode
+  | .unit => []
+  | .cons f rest => f :: rest.toList
 
 namespace TypeNode
 
@@ -62,6 +117,27 @@ def getRangeType : TypeNode → TypeNode
   | .function _ r => r.getRangeType
   | t => t
 
+def isDatatype : TypeNode → Bool
+  | .datatype .. => true
+  | _ => false
+
+/-- The constructors of a datatype type. -/
+def dtConstructors? : TypeNode → Option (List DtCons)
+  | .datatype s decl => (decl.lookup? s).map Dt.toList
+  | _ => none
+
+/-- A field type of a constructor of the datatype block `decl`, with a reference
+to one of the block's datatypes resolved to that datatype. -/
+def resolveIn (decl : DtDecl) : TypeNode → TypeNode
+  | .typeRef r => .datatype r decl
+  | T => T
+
+/-- The field types of constructor `i` of a datatype type, resolved. -/
+def dtFields? (T : TypeNode) (i : Nat) : Option (List TypeNode) := do
+  let .datatype _ decl := T | none
+  let c ← (← T.dtConstructors?)[i]?
+  return c.toList.map (resolveIn decl)
+
 end TypeNode
 
 end Telos
@@ -77,5 +153,6 @@ def TypeNode.theoryId : TypeNode → TheoryId
   | .array _ _ => .THEORY_ARRAYS
   | .set _ => .THEORY_SETS
   | .function _ _ | .sort _ => .THEORY_UF
+  | .datatype .. | .typeRef _ => .THEORY_DATATYPES
 
 end Telos

@@ -21,6 +21,9 @@ inductive Kind where
   | CONST_STRING
   /-- The empty set (cvc5's `SET_EMPTY`, a constant whose payload is its type). -/
   | SET_EMPTY
+  /-- A datatype constructor or selector symbol (`Const.dtCons`, `Const.dtSel`),
+  the operator of `APPLY_CONSTRUCTOR`, `APPLY_SELECTOR`, … -/
+  | DT_SYMBOL
   -- Variables (cvc5 `VARIABLE`, for user-declared constants and functions, and
   -- `BOUND_VARIABLE`).
   | VARIABLE
@@ -167,6 +170,11 @@ inductive Kind where
   | SET_IS_EMPTY
   | SET_IS_SINGLETON
   | SET_INSERT
+  -- theory/datatypes (the operator is the constructor or selector, `Op.node`)
+  | APPLY_CONSTRUCTOR
+  | APPLY_SELECTOR
+  | APPLY_TESTER
+  | APPLY_UPDATER
   -- theory/quantifiers
   | FORALL
   | EXISTS
@@ -184,6 +192,7 @@ inductive TheoryId where
   | THEORY_UF
   | THEORY_ARRAYS
   | THEORY_SETS
+  | THEORY_DATATYPES
   | THEORY_STRINGS
   | THEORY_QUANTIFIERS
   deriving DecidableEq, Repr, Inhabited
@@ -196,6 +205,7 @@ def Kind.theoryId : Kind → TheoryId
   | .CONST_BITVECTOR => .THEORY_BV
   | .CONST_STRING => .THEORY_STRINGS
   | .SET_EMPTY => .THEORY_SETS
+  | .DT_SYMBOL => .THEORY_DATATYPES
   | .VARIABLE | .BOUND_VARIABLE | .EQUAL => .THEORY_BUILTIN
   | .NOT | .AND | .IMPLIES | .OR | .XOR | .ITE => .THEORY_BOOL
   | .ADD | .SUB | .NEG | .MULT | .DIVISION | .INTS_DIVISION | .INTS_MODULUS | .ABS
@@ -296,6 +306,7 @@ def Kind.theoryId : Kind → TheoryId
   | .REGEXP_COMPLEMENT => .THEORY_STRINGS
   | .REGEXP_REPEAT => .THEORY_STRINGS
   | .REGEXP_LOOP => .THEORY_STRINGS
+  | .APPLY_CONSTRUCTOR | .APPLY_SELECTOR | .APPLY_TESTER | .APPLY_UPDATER => .THEORY_DATATYPES
   | .FORALL | .EXISTS | .BOUND_VAR_LIST | .INST_PATTERN_LIST => .THEORY_QUANTIFIERS
 
 /-- The quantifier kinds, whose congruence is in their body only. -/

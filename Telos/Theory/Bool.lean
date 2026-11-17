@@ -135,7 +135,12 @@ def eqConstEq (n : Node) : Result n :=
             Rw.congrArg m i fun ni => Rw.congrArg ni 0 (byRule "eq-symm")
           again do
             let r ← normalized
-            let r ← Rw.next? r (byRule "eq-cond-deq")
+            -- The premise `(= (= k z) false)` by `evaluate`, or for datatype
+            -- values, which `evaluate` does not decide, by `dt-cons-eq-clash`.
+            let clash (m : Node) : Option (Rw m) :=
+              byRuleWithPremises .eq_cond_deq [t, k, z]
+                [stepCmd .dt_cons_eq_clash [eqNode (eqNode k z) mkFalse]] m
+            let r ← Rw.next? r fun m => (byRule "eq-cond-deq" m).orElse fun _ => clash m
             let r ← Rw.nextIf flip0 r (unflip 0)
             Rw.nextIf flip1 r (unflip 1)
   | _, _ => none

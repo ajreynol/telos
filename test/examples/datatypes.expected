@@ -1,0 +1,33 @@
+1
+x
+(head nil)
+nil
+true
+false
+((_ is cons) x)
+(= nil x)
+(= red c)
+true
+(cons 2 x)
+nil
+((_ update head) x 2)
+true
+false
+false
+(= (cons n x) (cons n y))
+false
+(= nil x)
+(= x y)
+false
+(= blue c)
+false
+n
+3
+t
+false
+false
+(= x (cons 1 x))
+(and ((_ is cons) x) (= (head x) 1))
+(cons 1 nil)
+(and (not (= red c)) (not (= blue c)))
+true

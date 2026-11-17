@@ -20,6 +20,7 @@ def TypeNode.toSmtLib : TypeNode → String
   | .set e => s!"(Set {e.toSmtLib})"
   | .function a r => s!"(-> {a.toSmtLib} {r.toSmtLib})"
   | .sort i => s!"U{i}"
+  | .datatype s _ | .typeRef s => s
 
 def Const.toSmtLib : Const → String
   | .boolean b => if b then "true" else "false"
@@ -32,6 +33,8 @@ def Const.toSmtLib : Const → String
     "#b" ++ String.ofList ((List.range w.toNat).reverse.map fun i => if v.toNat.testBit i then '1' else '0')
   | .string s => "\"" ++ String.ofList (s.map Char.ofNat) ++ "\""
   | .emptySet T => s!"(as set.empty {(TypeNode.set T).toSmtLib})"
+  | .dtCons _ i => s!"<constructor {i}>"
+  | .dtSel _ i j => s!"<selector {i} {j}>"
 
 def Kind.smtLibName : Kind → String
   | .EQUAL => "=" | .NOT => "not" | .AND => "and" | .IMPLIES => "=>" | .OR => "or"
@@ -142,20 +145,47 @@ def Kind.smtLibName : Kind → String
   | .TO_REAL => "to_real" | .TO_INTEGER => "to_int" | .IS_INTEGER => "is_int"
   | k => toString (repr k)
 
-partial def Node.toSmtLib : Node → String
+/-- The names of datatype constructors and selectors, which `TypeNode` does not
+record (as in Logos): by datatype name and position. The front end fills it from
+the script's `declare-datatypes`. -/
+structure DtNames where
+  cons : String → Nat → Option String := fun _ _ => none
+  sel : String → Nat → Nat → Option String := fun _ _ _ => none
+
+def DtNames.consName (N : DtNames) : TypeNode → Nat → String
+  | .datatype s _, i => (N.cons s i).getD s!"{s}.c{i}"
+  | _, i => s!"?.c{i}"
+
+def DtNames.selName (N : DtNames) : TypeNode → Nat → Nat → String
+  | .datatype s _, i, j => (N.sel s i j).getD s!"{s}.c{i}.s{j}"
+  | _, i, j => s!"?.c{i}.s{j}"
+
+/-- A node in SMT-LIB syntax, with `N` naming constructors and selectors. -/
+partial def Node.toSmtLibWith (N : DtNames) : Node → String
+  | .const (.dtCons T i) => N.consName T i
+  | .const (.dtSel T i j) => N.selName T i j
   | .const c => c.toSmtLib
   | .var n _ | .boundVar n _ => n
+  | .app (.node .APPLY_CONSTRUCTOR f) #[] => f.toSmtLibWith N
+  | .app (.node .APPLY_TESTER f) cs =>
+    "(" ++ String.intercalate " " (s!"(_ is {f.toSmtLibWith N})" :: cs.toList.map (·.toSmtLibWith N)) ++ ")"
+  | .app (.node .APPLY_UPDATER f) cs =>
+    "(" ++ String.intercalate " " (s!"(_ update {f.toSmtLibWith N})" :: cs.toList.map (·.toSmtLibWith N)) ++ ")"
   | .app (.kind .BOUND_VAR_LIST) vs =>
     "(" ++ String.intercalate " " (vs.toList.map fun
       | .boundVar n T => s!"({n} {T.toSmtLib})"
-      | v => v.toSmtLib) ++ ")"
+      | v => v.toSmtLibWith N) ++ ")"
   | .app (.kind k) #[] => k.smtLibName
   | .app op cs =>
     let head := match op with
       | .kind k => k.smtLibName
       | .indexed k is => s!"(_ {k.smtLibName} {String.intercalate " " (is.toList.map toString)})"
-      | .node _ f => f.toSmtLib
-    "(" ++ String.intercalate " " (head :: cs.toList.map Node.toSmtLib) ++ ")"
+      | .node _ f => f.toSmtLibWith N
+    "(" ++ String.intercalate " " (head :: cs.toList.map (·.toSmtLibWith N)) ++ ")"
+
+/-- A node in SMT-LIB syntax, with placeholder names for datatype constructors and
+selectors. -/
+def Node.toSmtLib (n : Node) : String := n.toSmtLibWith {}
 
 instance : ToString Node := ⟨Node.toSmtLib⟩
 

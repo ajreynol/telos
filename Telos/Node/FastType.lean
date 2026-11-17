@@ -29,6 +29,14 @@ def setTypeOfFirst : Kind → Option TypeNode → Option TypeNode
   | .SET_CHOOSE, some (.set T) => some T
   | _, _ => none
 
+/-- The type of an application of a datatype operator, from its symbol. -/
+def dtTypeHint : Kind → Const → Option TypeNode
+  | .APPLY_CONSTRUCTOR, .dtCons T _ => some T
+  | .APPLY_TESTER, .dtCons .. => some .boolean
+  | .APPLY_SELECTOR, .dtSel T i j => (T.dtFields? i).bind (·[j]?)
+  | .APPLY_UPDATER, .dtSel T .. => some T
+  | _, _ => none
+
 -- The match over `Kind` is large; its compilation needs more than the default.
 set_option maxHeartbeats 1000000 in
 def typeHint : Node → Option TypeNode
@@ -37,6 +45,7 @@ def typeHint : Node → Option TypeNode
   | .const (.rational _) => some .real
   | .const (.bitVector w _) => some (.bitVector w)
   | .const (.emptySet T) => some (.set T)
+  | n@(.app (.node k (.const c)) _) => (dtTypeHint k c).orElse fun _ => n.getType
   | .var _ T | .boundVar _ T => some T
   | .app (.kind .ADD) ⟨c :: _⟩ | .app (.kind .MULT) ⟨c :: _⟩ | .app (.kind .SUB) ⟨c :: _⟩
   | .app (.kind .NEG) ⟨c :: _⟩ | .app (.kind .ABS) ⟨c :: _⟩ => typeHint c

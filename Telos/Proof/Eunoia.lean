@@ -1,5 +1,6 @@
 import Cpc.Parser
 import Telos.Node.OfEo
+import Telos.Node.Print
 
 /-!
 # Printing Logos terms in Eunoia syntax
@@ -76,6 +77,8 @@ structure Names where
   are printed as `(@var "x" T)` outside their binder (the signature's
   `(define @var ((s String) (T Type)) (eo::var s T))`). -/
   isConst : String → Bool := fun _ => false
+  /-- The names of datatype constructors and selectors. -/
+  dt : DtNames := {}
 
 def isSimpleSymbolChar (c : Char) : Bool :=
   c.isAlphanum || "~!@$%^&*_-+=<>.?/".contains c
@@ -126,6 +129,13 @@ partial def printIn (N : Names) (bound : List Term) (t : Term) : String :=
   | .__eo_List_nil => "@list.nil"
   | .__eo_List_cons => "@list"
   | .USort i => symbol ((N.sort i).getD s!"@sort{i}")
+  | .DatatypeType s _ | .DatatypeTypeRef s => symbol (nativeStringToString s)
+  | .DtCons s _ i =>
+    let d := nativeStringToString s
+    symbol ((N.dt.cons d i).getD s!"{d}.c{i}")
+  | .DtSel s _ i j =>
+    let d := nativeStringToString s
+    symbol ((N.dt.sel d i j).getD s!"{d}.c{i}.s{j}")
   -- Constants whose (implicit) parameter is their type are written with `as`,
   -- as the signature does: `(as set.empty (Set Int))`.
   | .UOp1 UserOp1.set_empty T => s!"(as set.empty {print N T})"
@@ -169,7 +179,7 @@ partial def printIn (N : Names) (bound : List Term) (t : Term) : String :=
           else app info.name (headIndices h ++ xs)
     | none =>
       match h with
-      | .Var .. | .UConst .. => app (print N h) xs
+      | .Var .. | .UConst .. | .DtCons .. | .DtSel .. => app (print N h) xs
       | _ => curried h xs
   | _ =>
     match opTable.get? (headKey t) with

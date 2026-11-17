@@ -55,6 +55,8 @@ def eoList : List Term → Term
 
 namespace TypeNode
 
+mutual
+
 def toEo : TypeNode → Term
   | .boolean => Term.Bool
   | .integer => Term.UOp UserOp.Int
@@ -67,6 +69,22 @@ def toEo : TypeNode → Term
   | .set e => Term.Apply (Term.UOp UserOp.Set) e.toEo
   | .function a r => Term.Apply (Term.Apply Term.FunType a.toEo) r.toEo
   | .sort id => Term.USort id
+  | .datatype s d => Term.DatatypeType (native_string_lit s) (DtDecl.toEo d)
+  | .typeRef s => Term.DatatypeTypeRef (native_string_lit s)
+
+def _root_.Telos.DtDecl.toEo : DtDecl → DatatypeDecl
+  | .nil => .nil
+  | .cons s d rest => .cons (native_string_lit s) (Dt.toEo d) (DtDecl.toEo rest)
+
+def _root_.Telos.Dt.toEo : Dt → Datatype
+  | .null => .null
+  | .sum c rest => .sum (DtCons.toEo c) (Dt.toEo rest)
+
+def _root_.Telos.DtCons.toEo : DtCons → DatatypeCons
+  | .unit => .unit
+  | .cons f rest => .cons (toEo f) (DtCons.toEo rest)
+
+end
 
 end TypeNode
 
@@ -79,6 +97,9 @@ def toEo : Const → Term
   | .bitVector w v => Term.Binary w v
   | .string s => Term.String s
   | .emptySet T => Term.UOp1 UserOp1.set_empty (TypeNode.set T).toEo
+  | .dtCons (.datatype s d) i => Term.DtCons (native_string_lit s) d.toEo i
+  | .dtSel (.datatype s d) i j => Term.DtSel (native_string_lit s) d.toEo i j
+  | .dtCons .. | .dtSel .. => Term.Stuck
 
 end Const
 
@@ -94,6 +115,8 @@ def Arity.accepts : Arity → Nat → Bool
 
 namespace TypeNode
 
+mutual
+
 /-- The type of a Logos SMT type, if `TypeNode` has one for it. -/
 def ofSmt : SmtType → Option TypeNode
   | .Bool => some .boolean
@@ -107,7 +130,24 @@ def ofSmt : SmtType → Option TypeNode
   | .Map i e => .array <$> ofSmt i <*> ofSmt e
   | .FunType a r => .function <$> ofSmt a <*> ofSmt r
   | .USort i => some (.sort i)
+  | .Datatype s d => .datatype (String.ofList (s.map Char.ofNat)) <$> dtDeclOfSmt d
+  | .TypeRef s => some (.typeRef (String.ofList (s.map Char.ofNat)))
   | _ => none
+
+def dtDeclOfSmt : SmtDatatypeDecl → Option DtDecl
+  | .nil => some .nil
+  | .cons s d rest =>
+    .cons (String.ofList (s.map Char.ofNat)) <$> dtOfSmt d <*> dtDeclOfSmt rest
+
+def dtOfSmt : SmtDatatype → Option Dt
+  | .null => some .null
+  | .sum c rest => .sum <$> dtConsOfSmt c <*> dtOfSmt rest
+
+def dtConsOfSmt : SmtDatatypeCons → Option DtCons
+  | .unit => some .unit
+  | .cons f rest => .cons <$> ofSmt f <*> dtConsOfSmt rest
+
+end
 
 /-- The CPC type term of a Logos SMT type, and `Term.Stuck` if it has none. -/
 def eoOfSmt (T : SmtType) : Term :=
@@ -334,6 +374,16 @@ def indexedEoShape : Kind → List Int → AppShape
 /-- The CPC form of an operator that is a term, given its translation `f`. -/
 def nodeEoShape : Kind → Term → AppShape
   | .APPLY_UF, f => .spine f (.atLeast 1)
+  -- `f` is a constructor (`Term.DtCons`), applied to its fields; a nullary
+  -- constructor is the constructor itself. Applications of the wrong arity
+  -- are not well typed.
+  | .APPLY_CONSTRUCTOR, f => .spine f (.atLeast 0)
+  -- `f` is a selector (`Term.DtSel`).
+  | .APPLY_SELECTOR, f => .spine f (.exactly 1)
+  -- `((_ is C) t)`, with `f` the constructor `C`.
+  | .APPLY_TESTER, f => .spine (Term.UOp1 UserOp1.is f) (.exactly 1)
+  -- `((_ update s) t u)`, with `f` the selector `s`.
+  | .APPLY_UPDATER, f => .spine (Term.UOp1 UserOp1.update f) (.exactly 2)
   | _, _ => .none
 
 /-- The `:right-assoc-nil` bit-vector operators, whose nil is typed. -/

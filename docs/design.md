@@ -877,6 +877,43 @@ tested:
       above. Ethos accepts all proofs (`check-proofs.py --fuzz 500 --sets`).
       The other modes are unchanged.
 
+12. **Datatypes.** Inductive datatypes, as in cvc5's safe mode (no
+    codatatypes, `match` or nullables), not yet parametric, and not yet tuples.
+    `DatatypesRewriter` is ported (`Telos/Theory/Datatypes.lean`,
+    `test/examples/datatypes.smt2`).
+    - Representation, mirroring Logos: `TypeNode.datatype name decl`, with the
+      block `decl` (`DtDecl`, `Dt`, `DtCons`: datatypes, constructors, field
+      types, `typeRef` for the block's own datatypes), as Logos's
+      `Term.DatatypeType`. Constructors and selectors are `Const.dtCons T i` and
+      `Const.dtSel T i j`, the operators (`Op.node`) of `APPLY_CONSTRUCTOR`,
+      `APPLY_SELECTOR`, `APPLY_TESTER` and `APPLY_UPDATER`, all spines, so their
+      congruence needs no new proof. A nullary constructor is an
+      `APPLY_CONSTRUCTOR` with no children, as in cvc5. Logos's datatypes have no
+      constructor or selector names, so neither does `TypeNode`: the front end
+      reads them from `declare-datatypes` (`DtNames`), for printing results and
+      proofs.
+    - Each rewrite is certified by the `dt-*` rule that takes the equation as
+      its argument, with the result computed in telos: `dt-collapse-selector`,
+      `dt-collapse-tester`, `dt-inst` (a tester for a nullary constructor is an
+      equality), `dt-collapse-tester-singleton`, and `dt-cons-eq-clash` for
+      clashing equalities (cvc5's `checkClash`). `dt-collapse-updater` never
+      applies: its side condition takes `eo::len` of a list and counts the field
+      from the wrong end, so cvc5's own proofs fail there (upstream request 9).
+      telos certifies the updater rewrite by `dt-updater-elim`, then the tester,
+      the `ite` and the selectors (`collapseUpdater`).
+    - `Node.isConst` is cvc5's: constructors applied to constants are constants.
+      The Boolean rewriter's `eq-cond-deq` (cvc5's `rewriteViaEqConstEq`) proves
+      its premise `(= (= k z) false)` for datatype values by
+      `dt-cons-eq-clash`, since `evaluate` does not decide it.
+    - Term order: nullary constructors come after constants and before
+      variables, as their node ids usually do in cvc5 (`(= nil x)`).
+    - Fuzzing (`scripts/fuzz.py --datatypes`, 3000 terms of depth 3, over a list
+      datatype and an enumeration), against cvc5 main `9d7d9ee04b`: 79.4%
+      identical, all others identical up to the orientation of equalities (node
+      ids of compound terms), no semantic disagreements. Ethos accepts all
+      proofs (`check-proofs.py --fuzz 500 --datatypes`). The other modes are
+      unchanged.
+
 ## Working conventions
 
 - Small commits; each commit builds both projects and passes
