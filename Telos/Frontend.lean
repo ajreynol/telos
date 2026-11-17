@@ -146,7 +146,7 @@ def readScript (input : String) : Except String Script := do
     | _ => throw s!"unsupported command: {s.serialize}"
   let (assums, _) ← parseProof ("\n".intercalate eunoia.toList)
   let constName := fun i => consts[i - 1]?
-  let dtNames := mkDtNames dts
+  let dtNames := { mkDtNames dts with sort := fun i => sorts[i - 1]? }
   let names : Eunoia.Names :=
     { sort := fun i => sorts[i - 1]?, const := constName, isConst := consts.contains, dt := dtNames }
   let queries := (sources.toList.zip assums).map fun (src, t) => ⟨src, toNode constName t⟩

@@ -15,7 +15,7 @@ cvc5 to rewrite the same terms with `(simplify t)`, and reports:
   cvc5's, which is a bug in one of them.
 
 Usage:
-  CVC5=PATH scripts/fuzz.py ...  or  scripts/fuzz.py [--cvc5 PATH] [--seed N] [--count N] [--depth N] [--show N] [--arith | --uf | --bv | --arrays | --mixed | --strings | --sets | --datatypes]
+  CVC5=PATH scripts/fuzz.py ...  or  scripts/fuzz.py [--cvc5 PATH] [--seed N] [--count N] [--depth N] [--show N] [--arith | --uf | --bv | --arrays | --mixed | --strings | --sets | --datatypes | --quantifiers]
 
 Build the fuzzer first: `lake build telos-fuzz`.
 """
@@ -93,6 +93,28 @@ def orient_free(e):
     return e
 
 
+def alpha_free(e, env=None, counter=None):
+    """`e` with its bound variables renamed `@b0`, `@b1`, … in order of binding:
+    equal for terms that differ only in the names of bound variables (cvc5
+    gives the quantifiers it creates fresh variables)."""
+    env = env or {}
+    counter = counter if counter is not None else [0]
+    if isinstance(e, str):
+        return env.get(e, e)
+    if len(e) == 3 and e[0] in ("forall", "exists") and isinstance(e[1], list):
+        env = dict(env)
+        decls = []
+        for d in e[1]:
+            if isinstance(d, list) and len(d) == 2 and isinstance(d[0], str):
+                env[d[0]] = f"@b{counter[0]}"
+                counter[0] += 1
+                decls.append([env[d[0]], d[1]])
+            else:
+                decls.append(d)
+        return [e[0], decls, alpha_free(e[2], env, counter)]
+    return [alpha_free(x, env, counter) for x in e]
+
+
 COMMUTATIVE = {"and", "or", "xor", "+", "*", "distinct", "bvand", "bvor", "bvxor",
                "bvadd", "bvmul", "re.union", "re.inter"}
 
@@ -152,11 +174,12 @@ def main():
     ap.add_argument("--strings", action="store_true", help="include string predicates")
     ap.add_argument("--sets", action="store_true", help="include set predicates")
     ap.add_argument("--datatypes", action="store_true", help="include datatype predicates")
+    ap.add_argument("--quantifiers", action="store_true", help="include quantified formulas")
     a = ap.parse_args()
     if not FUZZ.exists():
         sys.exit("error: build the fuzzer first: lake build telos-fuzz")
 
-    lines = subprocess.run([str(FUZZ), str(a.seed), str(a.count), str(a.depth)] + (["arith"] if a.arith else ["uf"] if a.uf else ["bv"] if a.bv else ["arrays"] if a.arrays else ["mixed"] if a.mixed else ["strings"] if a.strings else ["sets"] if a.sets else ["datatypes"] if a.datatypes else []),
+    lines = subprocess.run([str(FUZZ), str(a.seed), str(a.count), str(a.depth)] + (["arith"] if a.arith else ["uf"] if a.uf else ["bv"] if a.bv else ["arrays"] if a.arrays else ["mixed"] if a.mixed else ["strings"] if a.strings else ["sets"] if a.sets else ["datatypes"] if a.datatypes else ["quantifiers"] if a.quantifiers else []),
                            capture_output=True, text=True, check=True).stdout.splitlines()
     cases = [tuple(line.split("\t")) for line in lines]
 
@@ -172,13 +195,15 @@ def main():
     # for cvc5. A check that times out (`unknown`) is reported as unverified.
     verdicts = run_cvc5(a.cvc5, PRELUDE + "".join(checks), ["--tlimit-per=2000"])
 
-    same, oriented, ordered, mismatches, unsound, unverified = 0, 0, 0, [], [], 0
+    same, renamed, oriented, ordered, mismatches, unsound, unverified = 0, 0, 0, 0, [], [], 0
     for i, ((t, ours), theirs) in enumerate(zip(cases, simplified)):
         if ours == theirs:
             same += 1
-        elif orient_free(parse_sexpr(ours)) == orient_free(parse_sexpr(theirs)):
+        elif alpha_free(parse_sexpr(ours)) == alpha_free(parse_sexpr(theirs)):
+            renamed += 1
+        elif orient_free(alpha_free(parse_sexpr(ours))) == orient_free(alpha_free(parse_sexpr(theirs))):
             oriented += 1
-        elif order_free(parse_sexpr(ours)) == order_free(parse_sexpr(theirs)):
+        elif order_free(alpha_free(parse_sexpr(ours))) == order_free(alpha_free(parse_sexpr(theirs))):
             ordered += 1
         else:
             mismatches.append((t, ours, theirs))
@@ -193,7 +218,8 @@ def main():
     version = subprocess.run([a.cvc5, "--version"], capture_output=True, text=True).stdout.splitlines()
     print(f"reference: {version[0] if version else a.cvc5}")
     print(f"{n} terms: {same} identical to cvc5 ({100 * same / n:.1f}%), "
-          f"{oriented} identical up to the orientation of equalities, "
+          + (f"{renamed} up to the names of bound variables, " if renamed else "")
+          + f"{oriented} identical up to the orientation of equalities, "
           f"{ordered} up to the order of commutative arguments, "
           f"{len(mismatches)} different, {len(unsound)} semantic disagreements"
           + (f" ({unverified} checks timed out)" if unverified else ""))

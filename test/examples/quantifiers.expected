@@ -1,0 +1,9 @@
+true
+a
+(not (forall ((y Int)) (not (P y))))
+(forall ((y Int) (z Int)) (P (+ y z)))
+(forall ((y Int)) (P y))
+(and (forall ((y Int)) (P y)) a (forall ((y Int)) (P (+ 1 y))))
+(ite a (forall ((y Int)) (P y)) (P x))
+(not (forall ((y Int)) (not (forall ((z Int)) (P (+ y z))))))
+(and a (forall ((z Int)) (P z)))

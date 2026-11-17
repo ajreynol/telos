@@ -151,6 +151,17 @@ the script's `declare-datatypes`. -/
 structure DtNames where
   cons : String → Nat → Option String := fun _ _ => none
   sel : String → Nat → Nat → Option String := fun _ _ _ => none
+  /-- The names of uninterpreted sorts, which Logos numbers. -/
+  sort : Nat → Option String := fun _ => none
+
+/-- A type in SMT-LIB syntax, with `N` naming uninterpreted sorts. -/
+def TypeNode.toSmtLibWith (N : DtNames) : TypeNode → String
+  | .sort i => (N.sort i).getD s!"U{i}"
+  | .array i e => s!"(Array {i.toSmtLibWith N} {e.toSmtLibWith N})"
+  | .sequence e => s!"(Seq {e.toSmtLibWith N})"
+  | .set e => s!"(Set {e.toSmtLibWith N})"
+  | .function a r => s!"(-> {a.toSmtLibWith N} {r.toSmtLibWith N})"
+  | T => T.toSmtLib
 
 def DtNames.consName (N : DtNames) : TypeNode → Nat → String
   | .datatype s _, i => (N.cons s i).getD s!"{s}.c{i}"
@@ -173,7 +184,7 @@ partial def Node.toSmtLibWith (N : DtNames) : Node → String
     "(" ++ String.intercalate " " (s!"(_ update {f.toSmtLibWith N})" :: cs.toList.map (·.toSmtLibWith N)) ++ ")"
   | .app (.kind .BOUND_VAR_LIST) vs =>
     "(" ++ String.intercalate " " (vs.toList.map fun
-      | .boundVar n T => s!"({n} {T.toSmtLib})"
+      | .boundVar n T => s!"({n} {T.toSmtLibWith N})"
       | v => v.toSmtLibWith N) ++ ")"
   | .app (.kind k) #[] => k.smtLibName
   | .app op cs =>

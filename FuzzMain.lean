@@ -3,7 +3,7 @@ import Telos
 /-!
 # `telos-fuzz`: random terms and their rewrites
 
-`telos-fuzz SEED COUNT DEPTH [arith|uf|bv|arrays|mixed|strings|sets|datatypes] [--profile]` prints `COUNT` random Boolean terms over
+`telos-fuzz SEED COUNT DEPTH [arith|uf|bv|arrays|mixed|strings|sets|datatypes|quantifiers] [--profile]` prints `COUNT` random Boolean terms over
 `a`, `b`, `c` (and the integer `x`), each with its telos rewrite, as
 `input<TAB>output` lines. With `arith`, the terms also contain comparisons of
 integer and real terms over `x`, `y`, `r` and `s`. With `uf`, they also contain
@@ -236,6 +236,7 @@ def dtNames : DtNames where
   sel d i j := match d, i, j with
     | "Lst", 1, 0 => some "head" | "Lst", 1, 1 => some "tail"
     | _, _, _ => none
+  sort i := if i == 0 then some "U" else none
 
 def dtApp (k : Kind) (c : Const) (cs : Array Node) : Node := .app (.node k (.const c)) cs
 def lstNil : Node := dtApp .APPLY_CONSTRUCTOR (.dtCons lstT 0) #[]
@@ -278,6 +279,68 @@ def genDtAtom : GenM Node := do
   | 3 => return eqNode (← genLstInt 3) (← genIdx)
   | 4 => return eqNode (← genColor) (← genColor)
   | _ => return dtApp .APPLY_TESTER (.dtCons colorT (← pick 3)) #[← genColor]
+
+/-! ## Quantifiers -/
+
+/-- The bound variables quantified formulas use, never shadowed. -/
+def qVars : Array Node :=
+  #[.boundVar "qx" .integer, .boundVar "qy" .integer, .boundVar "qb" .boolean, .boundVar "qu" sortU]
+
+/-- A random integer term over the bound variables in scope `vs` and `x`, `y`. -/
+def genQInt (vs : List Node) : GenM Node := do
+  let ints := vs.filter (·.typeHint == some .integer)
+  let pool := ints.toArray ++ #[.var "x" .integer, .var "y" .integer, .const (.integer 0),
+    .const (.integer 1)]
+  let t := pool[← pick pool.size]!
+  if (← pick 4) == 0 then return mkNode .ADD #[t, .const (.integer 1)] else return t
+
+/-- A random atom over the bound variables in scope. -/
+def genQAtom (vs : List Node) : GenM Node := do
+  let us := vs.filter (·.typeHint == some sortU)
+  let bs := vs.filter (·.typeHint == some .boolean)
+  let f := Node.var "f" (.function sortU sortU)
+  match ← pick 7 with
+  | 0 | 1 => return mkNode .GEQ #[← genQInt vs, ← genQInt vs]
+  | 2 => return eqNode (← genQInt vs) (← genQInt vs)
+  | 3 => match bs with
+    | b :: _ => return b
+    | [] => return atoms[← pick 3]!
+  | 4 => match us with
+    | u :: _ => return eqNode u (#[Node.var "u" sortU, .var "v" sortU][← pick 2]!)
+    | [] => return atoms[← pick 3]!
+  | 5 => match us with
+    | u :: _ => return eqNode (.app (.node .APPLY_UF f) #[u]) (.var "v" sortU)
+    | [] => return eqNode (← genQInt vs) (← genQInt vs)
+  | _ => return atoms[← pick atoms.size]!
+
+mutual
+/-- A random quantified formula, binding some of the variables `avail`. -/
+partial def genQuant (avail : List Node) (vs : List Node) (d : Nat) : GenM Node := do
+  if avail.isEmpty then return ← genQAtom vs
+  let n := 1 + (← pick (min 2 avail.length))
+  -- `n` variables of `avail`, from a random start
+  let i ← pick avail.length
+  let bound := ((avail.drop i) ++ avail.take i).take n
+  let rest := avail.filter (!bound.contains ·)
+  let body ← genQBody rest (vs ++ bound) d
+  let k := if (← pick 3) == 0 then Kind.EXISTS else .FORALL
+  return mkNode k #[mkNode .BOUND_VAR_LIST bound.toArray, body]
+
+/-- A random body over the bound variables in scope `vs`. -/
+partial def genQBody (avail : List Node) (vs : List Node) : Nat → GenM Node
+  | 0 => genQAtom vs
+  | d + 1 => do
+    match ← pick 9 with
+    | 0 | 1 => genQAtom vs
+    | 2 => return notNode (← genQBody avail vs d)
+    | 3 => return mkNode .AND (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genQBody avail vs d)
+    | 4 => return mkNode .OR (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genQBody avail vs d)
+    | 5 => return mkNode .IMPLIES #[← genQBody avail vs d, ← genQBody avail vs d]
+    | 6 => return iteNode (← genQBody avail vs d) (← genQBody avail vs d) (← genQBody avail vs d)
+    | _ => genQuant avail vs d
+end
+
+def genQuantAtom : GenM Node := genQuant qVars.toList [] 3
 
 /-! ## Strings -/
 
@@ -391,7 +454,7 @@ def genCmp (d : Nat) : GenM Node := do
   return mkNode k #[← genArith real d, ← genArith real d]
 
 def genBool (arith : Bool) (uf : Bool := false) (bv : Bool := false) (arr : Bool := false)
-    (mixed : Bool := false) (str : Bool := false) (sets : Bool := false) (dt : Bool := false) : Nat → GenM Node
+    (mixed : Bool := false) (str : Bool := false) (sets : Bool := false) (dt : Bool := false) (quant : Bool := false) : Nat → GenM Node
   | 0 => do
     if arith && (← pick 2) == 0 then return ← genCmp 1
     if uf then
@@ -408,18 +471,20 @@ def genBool (arith : Bool) (uf : Bool := false) (bv : Bool := false) (arr : Bool
       if (← pick 4) != 0 then return ← genSetAtom
     if dt then
       if (← pick 4) != 0 then return ← genDtAtom
+    if quant then
+      if (← pick 3) != 0 then return ← genQuantAtom
     return atoms[← pick atoms.size]!
   | d + 1 => do
     match ← pick 11 with
-    | 0 | 1 => genBool arith uf bv arr mixed str sets dt 0
-    | 2 => return notNode (← genBool arith uf bv arr mixed str sets dt d)
-    | 3 => return mkNode .AND (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf bv arr mixed str sets dt d)
-    | 4 => return mkNode .OR (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf bv arr mixed str sets dt d)
-    | 5 => return mkNode .IMPLIES #[← genBool arith uf bv arr mixed str sets dt d, ← genBool arith uf bv arr mixed str sets dt d]
-    | 6 => return mkNode .XOR #[← genBool arith uf bv arr mixed str sets dt d, ← genBool arith uf bv arr mixed str sets dt d]
-    | 7 => return eqNode (← genBool arith uf bv arr mixed str sets dt d) (← genBool arith uf bv arr mixed str sets dt d)
-    | 8 => if arith then genCmp d else genBool arith uf bv arr mixed str sets dt d
-    | _ => return iteNode (← genBool arith uf bv arr mixed str sets dt d) (← genBool arith uf bv arr mixed str sets dt d) (← genBool arith uf bv arr mixed str sets dt d)
+    | 0 | 1 => genBool arith uf bv arr mixed str sets dt quant 0
+    | 2 => return notNode (← genBool arith uf bv arr mixed str sets dt quant d)
+    | 3 => return mkNode .AND (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf bv arr mixed str sets dt quant d)
+    | 4 => return mkNode .OR (← (List.range (2 + (← pick 2))).toArray.mapM fun _ => genBool arith uf bv arr mixed str sets dt quant d)
+    | 5 => return mkNode .IMPLIES #[← genBool arith uf bv arr mixed str sets dt quant d, ← genBool arith uf bv arr mixed str sets dt quant d]
+    | 6 => return mkNode .XOR #[← genBool arith uf bv arr mixed str sets dt quant d, ← genBool arith uf bv arr mixed str sets dt quant d]
+    | 7 => return eqNode (← genBool arith uf bv arr mixed str sets dt quant d) (← genBool arith uf bv arr mixed str sets dt quant d)
+    | 8 => if arith then genCmp d else genBool arith uf bv arr mixed str sets dt quant d
+    | _ => return iteNode (← genBool arith uf bv arr mixed str sets dt quant d) (← genBool arith uf bv arr mixed str sets dt quant d) (← genBool arith uf bv arr mixed str sets dt quant d)
 
 def main (args : List String) : IO Unit := do
   let profile := args.contains "--profile"
@@ -436,9 +501,10 @@ def main (args : List String) : IO Unit := do
   let str := args[3]? == some "strings"
   let sets := args[3]? == some "sets"
   let dt := args[3]? == some "datatypes"
+  let quant := args[3]? == some "quantifiers"
   let mut rng : Rng := ⟨seed.toUInt64⟩
   for _ in [0:count] do
-    let (t, r) := (genBool arith uf bv arr mixed str sets dt depth).run rng
+    let (t, r) := (genBool arith uf bv arr mixed str sets dt quant depth).run rng
     rng := r
     let r ← Profile.measure "total" "rewrite" fun _ => rewrite t
     IO.println s!"{t.toSmtLibWith dtNames}\t{r.toSmtLibWith dtNames}"

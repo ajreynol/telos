@@ -234,7 +234,9 @@ where
     app k xs
   binder (k : Kind) (vs body : Term) : Option Node := do
     let bvs ← (← eoListElems vs).mapM (varOfEo env · true)
-    return .app (.kind k) #[.app (.kind .BOUND_VAR_LIST) bvs.toArray, ← ofEo env body]
+    -- The body is read with the bound variables in scope, so that their
+    -- occurrences are the same `boundVar`s.
+    return .app (.kind k) #[.app (.kind .BOUND_VAR_LIST) bvs.toArray, ← ofEo (bvs ++ env) body]
 
 end Node
 

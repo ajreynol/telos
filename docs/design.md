@@ -916,6 +916,34 @@ tested:
       proofs (`check-proofs.py --fuzz 500 --datatypes`). The other modes are
       unchanged.
 
+13. **Quantifiers (stage 1).** `QuantifiersRewriter` is ported in part
+    (`Telos/Theory/Quantifiers.lean`, `test/examples/quantifiers.smt2`):
+    `exists` elimination (`exists-elim`), prenex merging in pre- and
+    post-rewriting (`quant-merge-prenex`, when no variable is shadowed), constant
+    bodies and unused variables (`quant-unused-vars`), and miniscoping over `and`
+    and over an `ite` with a ground condition (`quant-miniscope-and`,
+    `quant-miniscope-ite`). Each step is certified by the rule taking the
+    equation as its argument. cvc5 tries its steps in order, the first that
+    changes the quantifier winning (`computeOperation`); the steps not ported
+    yet are skipped: shadowed variables, the NNF of the body
+    (`COMPUTE_ELIM_SYMBOLS`, which comes before miniscoping), splitting
+    disjunctions by free variables (`computeSplit`), prenexing, variable
+    elimination, datatype variable expansion and conditional splitting. cvc5
+    proves all of these (`scripts/find-holes.py quantifiers`: no trusted steps
+    on 287 terms), by the basic CPC rules (`bool-*`, `aci_norm`,
+    `quant-miniscope-or`, `quant-var-elim-eq`, `quant_var_reordering`, …).
+    - `Node.ofEo` reads a binder's body with its variables in scope, so that
+      they are the same `boundVar`s (they were read as free variables of the
+      same name, with the same translation).
+    - Deviations: cvc5 gives the quantifiers created by miniscoping fresh
+      bound variables; telos, like Logos, identifies bound variables by name and
+      type, so it keeps them. Instantiation patterns are dropped.
+    - Fuzzing (`scripts/fuzz.py --quantifiers`, 1000 terms of depth 2), against
+      cvc5 main `9d7d9ee04b`: 35.6% identical (15.9% before this stage), no
+      semantic disagreements. `fuzz.py` also compares up to the names of bound
+      variables. Ethos accepts all proofs (`check-proofs.py --fuzz 300
+      --quantifiers`). The other modes are unchanged.
+
 ## Working conventions
 
 - Small commits; each commit builds both projects and passes
