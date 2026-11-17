@@ -9,16 +9,22 @@ list current: `scripts/check-hygiene.sh` fails on any `unsafe`, `@[extern]` or
 These define what the theorem *means*. A mistake here makes the theorem true of
 the wrong thing, so review them as specifications, not as code.
 
-- The Logos/CPC definitions: `Cpc.eo` compiled to `Cpc/Logos.lean` by
-  `ethos-eoc`, the translation `__eo_to_smt` (`Cpc/SmtTranslate.lean`), the SMT
-  type checker `__smtx_typeof` (`Cpc/SmtTyping.lean`) and the model semantics
+- The Logos specification: the term datatype (`Cpc/LogosTerm.lean`), the
+  translation `__eo_to_smt` (`Cpc/SmtTranslate.lean`), the SMT type checker
+  `__smtx_typeof` (`Cpc/SmtTyping.lean`) and the model semantics
   (`Cpc/SmtModel.lean`, `Cpc/Spec.lean`). Logos commit pinned in `lakefile.toml`.
+  The Eunoia programs compiled from `Cpc.eo` (`Cpc/Logos.lean`: the rules, the
+  checker, `__eo_typeof`, `__eo_nil`) are not part of it; Logos proves the
+  checker sound against this specification.
 - `Telos/Node/ToEo.lean`: the translation of `Node` to Logos terms. It assigns
   every node its meaning, so it must match how cvc5 prints that node in CPC. The
   per-operator part is a table (`Kind.eoShape`, `indexedEoShape`, `nodeEoShape`)
-  giving each operator's CPC head symbol and arity. For `+` and `*` it uses the
-  signature's own `__eo_nil` and `__eo_typeof` (`Cpc/Logos.lean`) to compute the
-  nil terminator from the type, as Eunoia does.
+  giving each operator's CPC head symbol and arity. The nil terminator of
+  `+`, `*`, the bit-vector operators, `str.++` and `distinct` depends on the type
+  of the elements; it is a hand-written table (`typedNilOfType`) over the SMT
+  type of the first element, given by `__smtx_typeof`. `ToEo.lean` does not
+  import `Cpc/Logos.lean` (`scripts/check-hygiene.sh` checks this for every
+  specification file).
 - `verification/TelosProofs/Spec.lean`: the definition of `Node.Equiv`.
 
 ## Not trusted

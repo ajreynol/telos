@@ -145,8 +145,7 @@ def main():
     logos = logos_spec_loc()
     if logos is not None:
         print(f"\nfor reference, the Logos specification telos builds on "
-              f"(Cpc.Spec, Cpc.SmtTranslate and their imports): {logos}\n"
-              f"(Telos/Node/ToEo.lean also uses `__eo_nil` and `__eo_typeof` from Cpc/Logos.lean)")
+              f"(Cpc.Spec, Cpc.SmtTranslate and their imports): {logos}")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 import Telos.Node.Node
 import Cpc.SmtTranslate
 import Cpc.SmtTyping
-import Cpc.Logos
+import Cpc.LogosTerm
 
 /-!
 # Translation to Logos terms
@@ -91,18 +91,70 @@ def Arity.accepts : Arity → Nat → Bool
   | .exactly n, m => m == n
   | .atLeast n, m => n ≤ m
 
+namespace TypeNode
+
+/-- The type of a Logos SMT type, if `TypeNode` has one for it. -/
+def ofSmt : SmtType → Option TypeNode
+  | .Bool => some .boolean
+  | .Int => some .integer
+  | .Real => some .real
+  | .RegLan => some .regExp
+  | .BitVec w => some (.bitVector w)
+  | .Seq .Char => some .string
+  | .Seq e => .sequence <$> ofSmt e
+  | .Set e => .set <$> ofSmt e
+  | .Map i e => .array <$> ofSmt i <*> ofSmt e
+  | .FunType a r => .function <$> ofSmt a <*> ofSmt r
+  | .USort i => some (.sort i)
+  | _ => none
+
+/-- The CPC type term of a Logos SMT type, and `Term.Stuck` if it has none. -/
+def eoOfSmt (T : SmtType) : Term :=
+  match ofSmt T with
+  | some T => T.toEo
+  | none => Term.Stuck
+
+end TypeNode
+
+/-- The nil terminator of a typed `:right-assoc-nil` operator (or of the typed
+list of `distinct`) whose elements have SMT type `T`, as `Cpc.eo` declares it
+(`:right-assoc-nil` attributes). `Term.Stuck` on any other type, so the
+application is not well typed.
+
+This table is written out here rather than taken from Logos's `__eo_nil` and
+`__eo_typeof`, to keep Eunoia's type inference out of the trusted base; the
+element type comes from `__smtx_typeof`, which the specification already relies
+on (`WellTyped`). Logos's `__eo_nil` agrees with it on well-typed elements, up
+to bit-vector widths above 2^32, where `__eo_to_bin` is stuck. -/
+def typedNilOfType : UserOp → SmtType → Term
+  | .plus, .Int => Term.Numeral 0
+  | .plus, .Real => Term.Rational (native_mk_rational 0 1)
+  | .mult, .Int => Term.Numeral 1
+  | .mult, .Real => Term.Rational (native_mk_rational 1 1)
+  | .concat, .BitVec _ => Term.Binary 0 0
+  | .bvand, .BitVec w => Term.Binary w (2 ^ w - 1)
+  | .bvor, .BitVec w => Term.Binary w 0
+  | .bvxor, .BitVec w => Term.Binary w 0
+  | .bvadd, .BitVec w => Term.Binary w 0
+  | .bvmul, .BitVec w => Term.Binary w (1 % 2 ^ w)
+  | .str_concat, .Seq .Char => Term.String []
+  | .str_concat, .Seq E => Term.UOp1 UserOp1.seq_empty (TypeNode.eoOfSmt (.Seq E))
+  | ._at__at_TypedList_cons, T =>
+      if T = .None then Term.Stuck
+      else Term.Apply (Term.UOp UserOp._at__at_TypedList_nil) (TypeNode.eoOfSmt T)
+  | _, _ => Term.Stuck
+
 /-- The nil terminator of a `:right-assoc-nil` operator. -/
 inductive Nil where
   /-- The same nil for every type, like `true` for `and`. -/
   | const (t : Term)
-  /-- `(eo::nil op (eo::typeof x₁))`, computed from the first element, like `0`
-  or `0/1` for `+`. -/
+  /-- The nil for the type of the first element (`typedNilOfType`), like `0` or
+  `0.0` for `+`. -/
   | typed
 
-/-- The nil of a `:right-assoc-nil` operator whose nil depends on the type of
-its elements: `(eo::nil op (eo::typeof x₁))`. -/
+/-- The nil of `op` for a list whose first element is `x`, from its SMT type. -/
 def typedNil (op : UserOp) (x : Term) : Term :=
-  __eo_nil (Term.UOp op) (__eo_typeof x)
+  typedNilOfType op (__smtx_typeof (__eo_to_smt x))
 
 /-- The nil of `op` for a list whose first element is `x`. -/
 def Nil.eval (op : UserOp) : Nil → Term → Term
@@ -115,8 +167,8 @@ inductive AppShape where
   /-- `(head x₁ … xₙ)`, curried: `Apply (… (Apply head x₁) …) xₙ`. -/
   | spine (head : Term) (arity : Arity)
   /-- A `:right-assoc-nil` operator: `(op x₁ (op x₂ … (op xₙ nil)))`, n ≥ 2. The
-  nil terminator is computed from the first element `x₁`, as Logos's parser and
-  Eunoia do (`Nil.eval`). -/
+  nil terminator is computed from the type of the first element `x₁`, as Logos's
+  parser and Eunoia do (`Nil.eval`). -/
   | rightAssocNil (op : UserOp) (nil : Nil)
   /-- An operator applied to a typed argument list, `(op (@@TypedList_cons x₁ …
   (@@TypedList_cons xₙ nil)))`, n ≥ 2, with the nil computed from `x₁` as for
@@ -354,25 +406,6 @@ end Node
 /-- The CPC formula `(= t s)`. -/
 def eqFormula (t s : Node) : Term :=
   eoApp2 UserOp.eq t.toEo s.toEo
-
-namespace TypeNode
-
-/-- The type of a Logos SMT type, if `TypeNode` has one for it. -/
-def ofSmt : SmtType → Option TypeNode
-  | .Bool => some .boolean
-  | .Int => some .integer
-  | .Real => some .real
-  | .RegLan => some .regExp
-  | .BitVec w => some (.bitVector w)
-  | .Seq .Char => some .string
-  | .Seq e => .sequence <$> ofSmt e
-  | .Set e => .set <$> ofSmt e
-  | .Map i e => .array <$> ofSmt i <*> ofSmt e
-  | .FunType a r => .function <$> ofSmt a <*> ofSmt r
-  | .USort i => some (.sort i)
-  | _ => none
-
-end TypeNode
 
 namespace Node
 

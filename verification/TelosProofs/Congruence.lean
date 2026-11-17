@@ -96,46 +96,13 @@ theorem translation_rest_arith {op : UserOp} (hop : op = UserOp.plus ∨ op = Us
     rw [typeof_mult_eq] at h
     exact key h
 
-/-- The typed nil of `+` and `*` is `0` or `1` of an arithmetic type, and stuck
-on any other type. -/
-theorem typedNil_eq {op : UserOp} (hop : op = UserOp.plus ∨ op = UserOp.mult) (A : Term) :
-    __eo_nil (Term.UOp op) A =
-      if op = UserOp.plus then __arith_mk_zero A else __arith_mk_one A := by
-  rcases hop with rfl | rfl <;> cases A <;> rfl
-
-theorem arith_mk_stuck {A : Term} (hI : A ≠ Term.UOp UserOp.Int) (hR : A ≠ Term.UOp UserOp.Real) :
-    __arith_mk_zero A = Term.Stuck ∧ __arith_mk_one A = Term.Stuck := by
-  constructor
-  · unfold __arith_mk_zero; split <;> simp_all
-  · unfold __arith_mk_one; split <;> simp_all
-
-/-- Equivalent first elements give `+` and `*` the same nil: the nil depends only
-on the type, which equivalent terms share. -/
-theorem typedNil_congr {op : UserOp} (hop : op = UserOp.plus ∨ op = UserOp.mult) {x y : Term}
-    (h : TermEquiv x y) : typedNil op x = typedNil op y := by
-  obtain ⟨⟨hne, heq⟩, _⟩ := (termEquiv_iff x y).1 h
-  have hx := TranslationProofs.eo_to_smt_type_typeof_of_smt_type x rfl hne
-  have hy := TranslationProofs.eo_to_smt_type_typeof_of_smt_type y heq.symm hne
+/-- Equivalent first elements give a typed-nil operator the same nil: the nil
+depends only on the SMT type, which equivalent terms share. -/
+theorem typedNil_congr (op : UserOp) {x y : Term} (h : TermEquiv x y) :
+    typedNil op x = typedNil op y := by
+  obtain ⟨⟨_, heq⟩, _⟩ := (termEquiv_iff x y).1 h
   unfold typedNil
-  rw [typedNil_eq hop, typedNil_eq hop]
-  generalize __smtx_typeof (__eo_to_smt x) = T at hx hy hne
-  generalize __eo_typeof x = A at hx
-  generalize __eo_typeof y = B at hy
-  by_cases hI : T = SmtType.Int
-  · subst hI
-    rw [TranslationProofs.eo_to_smt_type_eq_int hx, TranslationProofs.eo_to_smt_type_eq_int hy]
-  by_cases hR : T = SmtType.Real
-  · subst hR
-    rw [TranslationProofs.eo_to_smt_type_eq_real hx, TranslationProofs.eo_to_smt_type_eq_real hy]
-  have notArith : ∀ {C : Term}, __eo_to_smt_type C = T →
-      __arith_mk_zero C = Term.Stuck ∧ __arith_mk_one C = Term.Stuck := by
-    intro C hC
-    refine arith_mk_stuck (fun hc => hI ?_) (fun hc => hR ?_)
-    · rw [← hC, hc]; rfl
-    · rw [← hC, hc]; rfl
-  obtain ⟨hA0, hA1⟩ := notArith hx
-  obtain ⟨hB0, hB1⟩ := notArith hy
-  split <;> simp [hA0, hA1, hB0, hB1]
+  rw [heq]
 
 /-! ## Bit-vector operators -/
 
@@ -184,24 +151,6 @@ theorem bv_nary_args {op : UserOp} (hop : op.isBvNary = true) {x r : Term}
   · change __smtx_typeof (SmtTerm.bvmul _ _) ≠ _ at h
     rw [typeof_bvmul'] at h; exact bv_op_2_args h
 
-/-- Equivalent first elements of a well-typed bit-vector application give the
-same nil: equivalent terms of a bit-vector type have the same Eunoia type. -/
-theorem typedNil_congr_bv {op : UserOp} (hop : op.isBvNary = true) {x y r : Term}
-    (h : TermEquiv x y) (ht : eo_has_smt_translation (eoApp2 op x r)) :
-    typedNil op x = typedNil op y := by
-  obtain ⟨⟨hne, heq⟩, _⟩ := (termEquiv_iff x y).1 h
-  obtain ⟨w, hw⟩ := (bv_nary_args hop ht).1
-  have hx := TranslationProofs.eo_to_smt_type_typeof_of_smt_type x rfl hne
-  have hy : __eo_typeof y = __eo_typeof x := by
-    apply SubstituteSupport.eo_typeof_eq_of_smt_type_eq _ _
-    · show __smtx_typeof (__eo_to_smt y) ≠ SmtType.None
-      rw [← heq]; exact hne
-    · rw [hx, hw]; simp [__smtx_type_wf, __smtx_type_wf_component, __smtx_type_wf_rec,
-        SmtEval.native_and]
-    · rw [hx, ← heq]
-  unfold typedNil
-  rw [hy]
-
 /-! ## Strings and regular expressions -/
 
 theorem typeof_str_concat' (a b : SmtTerm) : __smtx_typeof (SmtTerm.str_concat a b) =
@@ -229,23 +178,6 @@ theorem typed_nary_args {op : UserOp} (hop : op.isTypedNary = true) {x r : Term}
     refine ⟨?_, hU⟩
     rw [hA]
     exact smt_term_seq_type_wf_of_non_none _ (by unfold term_has_non_none_type; rw [hA]; simp) hA
-
-/-- Equivalent first elements of a well-typed typed-nil application give the same
-nil: equivalent terms of a well-formed type have the same Eunoia type. -/
-theorem typedNil_congr_typed {op : UserOp} (hop : op.isTypedNary = true) {x y r : Term}
-    (h : TermEquiv x y) (ht : eo_has_smt_translation (eoApp2 op x r)) :
-    typedNil op x = typedNil op y := by
-  obtain ⟨⟨hne, heq⟩, _⟩ := (termEquiv_iff x y).1 h
-  have hwf := (typed_nary_args hop ht).1
-  have hx := TranslationProofs.eo_to_smt_type_typeof_of_smt_type x rfl hne
-  have hy : __eo_typeof y = __eo_typeof x := by
-    apply SubstituteSupport.eo_typeof_eq_of_smt_type_eq _ _
-    · show __smtx_typeof (__eo_to_smt y) ≠ SmtType.None
-      rw [← heq]; exact hne
-    · rw [hx]; exact hwf
-    · rw [hx, ← heq]
-  unfold typedNil
-  rw [hy]
 
 /-- The tail of a well-typed `re.++`, `re.inter` or `re.union` is well typed. -/
 theorem translation_rest_re {op : UserOp} (hop : op.isReNary = true) {x r : Term}
@@ -301,16 +233,9 @@ theorem shape_congr (sh : AppShape) (hsh : sh.isChildCongruent = true) {xs ys : 
         cases nil with
         | const _ => rfl
         | typed =>
-          simp only [AppShape.isChildCongruent, Bool.or_eq_true, beq_iff_eq] at hsh
-          rcases hsh with hsh | hbv
-          · cases h with
-            | nil => simp at hle
-            | cons hxy _ => exact (typedNil_congr hsh hxy).symm
-          · cases h with
-            | nil => simp at hle
-            | cons hxy _ =>
-              simp only [eoRightAssocNil] at ht
-              exact (typedNil_congr_typed hbv hxy ht).symm
+          cases h with
+          | nil => simp at hle
+          | cons hxy _ => exact (typedNil_congr op hxy).symm
       rw [hnil]
       have hrest : ∀ {x r : Term}, eo_has_smt_translation (eoApp2 op x r) →
           eo_has_smt_translation r := by

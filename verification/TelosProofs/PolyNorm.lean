@@ -1324,33 +1324,19 @@ theorem NS_stuck : ¬ NS .Stuck := by simp [NS, __get_arith_poly_norm]
 
 theorem V_typedNil_plus (x : Term) (h : NS (typedNil .plus x)) : V (typedNil .plus x) = 0 := by
   unfold typedNil at *
-  generalize __eo_typeof x = T at *
-  by_cases hT : T = .Stuck
-  · subst hT; exact absurd h (by simpa [__eo_nil] using NS_stuck)
-  · have e : __eo_nil (.UOp .plus) T = __arith_mk_zero T := by
-      cases T <;> simp_all [__eo_nil, __eo_nil_plus]
-    rw [e] at h ⊢
-    have hc : __arith_mk_zero T = .Numeral 0 ∨ __arith_mk_zero T = .Rational (native_mk_rational 0 1) ∨
-        __arith_mk_zero T = .Stuck := by unfold __arith_mk_zero; split <;> simp
-    rcases hc with e | e | e <;> rw [e] at h ⊢
-    · rw [V_numeral]; simp
-    · rw [V_rational, rat_zero_eq]; simp
-    · exact absurd h NS_stuck
+  generalize __smtx_typeof (__eo_to_smt x) = T at *
+  cases T
+  case Int => rw [typedNilOfType, V_numeral]; simp
+  case Real => rw [typedNilOfType, V_rational, rat_zero_eq]; simp
+  all_goals exact absurd h (by simpa [typedNilOfType] using NS_stuck)
 
 theorem V_typedNil_mult (x : Term) (h : NS (typedNil .mult x)) : V (typedNil .mult x) = 1 := by
   unfold typedNil at *
-  generalize __eo_typeof x = T at *
-  by_cases hT : T = .Stuck
-  · subst hT; exact absurd h (by simpa [__eo_nil] using NS_stuck)
-  · have e : __eo_nil (.UOp .mult) T = __arith_mk_one T := by
-      cases T <;> simp_all [__eo_nil, __eo_nil_mult]
-    rw [e] at h ⊢
-    have hc : __arith_mk_one T = .Numeral 1 ∨ __arith_mk_one T = .Rational (native_mk_rational 1 1) ∨
-        __arith_mk_one T = .Stuck := by unfold __arith_mk_one; split <;> simp
-    rcases hc with e | e | e <;> rw [e] at h ⊢
-    · rw [V_numeral]; simp
-    · rw [V_rational]; simp [native_mk_rational]
-    · exact absurd h NS_stuck
+  generalize __smtx_typeof (__eo_to_smt x) = T at *
+  cases T
+  case Int => rw [typedNilOfType, V_numeral]; simp
+  case Real => rw [typedNilOfType, V_rational]; simp [native_mk_rational]
+  all_goals exact absurd h (by simpa [typedNilOfType] using NS_stuck)
 
 theorem V_chain_plus {nil : Term} (hnil : NS nil → V nil = 0) :
     ∀ xs : List Term, NS (eoRightAssocNil .plus nil xs) →

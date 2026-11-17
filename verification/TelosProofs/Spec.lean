@@ -1,4 +1,4 @@
-import Telos
+import Telos.Node.ToEo
 import Cpc.Spec
 
 /-!

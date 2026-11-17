@@ -1,3 +1,4 @@
+import Cpc.Logos
 import Telos.Node.ToEo
 import Telos.Node.FastType
 import Telos.Node.Order
