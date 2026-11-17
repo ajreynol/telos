@@ -387,12 +387,13 @@ partial def genRe : Nat → GenM Node
     | 2 => return mkNode .REGEXP_RANGE #[strLit "a", strLit "c"]
     | _ => return mkNode .REGEXP_ALL #[]
   | d + 1 => do
-    match ← pick 6 with
+    match ← pick 7 with
     | 0 => return mkNode .REGEXP_STAR #[← genRe d]
     | 1 => return mkNode .REGEXP_CONCAT #[← genRe d, ← genRe d]
     | 2 => return mkNode .REGEXP_UNION #[← genRe d, ← genRe d]
     | 3 => return mkNode .REGEXP_INTER #[← genRe d, ← genRe d]
     | 4 => return mkNode .REGEXP_OPT #[← genRe d]
+    | 5 => return mkNode .REGEXP_COMPLEMENT #[← genRe d]
     | _ => genRe 0
 
 /-- A random string predicate. -/

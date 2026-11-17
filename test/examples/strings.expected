@@ -78,3 +78,9 @@ s
 true
 false
 (and (not (= s t)) (str.<= s t))
+true
+true
+true
+(str.in_re s (re.++ (str.to_re "a") (re.* re.allchar)))
+re.none
+(re.* re.allchar)

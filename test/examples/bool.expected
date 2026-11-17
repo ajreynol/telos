@@ -3,5 +3,5 @@ a
 (and (not a) b)
 (= x 0)
 (f x)
-(forall ((y Int)) (= x y))
+false
 false

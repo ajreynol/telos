@@ -773,10 +773,37 @@ tested:
      assumption with its free constants (`Term.Var`, where Logos's parser makes
      declared constants `UConst`). At depth 4 (another seed, 3000 terms): 64.1%,
      95.2% and 100%.
-   - Next: free constants as `UConst` (scoped proofs, then inclusion),
-     `rewriteLoopRegExp`, inclusion
-     (`rewriteViaMacroStrInReInclusion`, `rewriteViaMacroReInterUnionInclusion`),
-     `RE_IN_DIST_CHAR_STAR`, and `CTN_NCONST_CTN_CONCAT`.
+   - Then, with declared constants as `UConst`s (see Quantifiers), inclusion.
+     `RE_ANDOR_INC_CONFLICT` (`rewriteViaMacroReInterUnionInclusion`): an
+     intersection with `R₂` and `(re.comp R₁)`, `R₁` including `R₂`, is
+     `re.none`, and a union with `R₁` and `(re.comp R₂)` is
+     `(re.* re.allchar)`, by `aci_norm` and `re-inter-inclusion`
+     (`re-union-inclusion`) on the pair, the other members kept and rewritten
+     again, as cvc5 does. `RE_IN_INCLUSION` (`rewriteViaMacroStrInReInclusion`):
+     `(str.in_re x R)` is `true` when `R` includes the generalized regular
+     expression of `x` (`getGeneralizedConstRegExp`), by contradiction, as
+     cvc5's elaboration: `(not (str.in_re x R))` assumed (`assume-push`),
+     `re-in-comp`, the membership of `x` in the generalized expression
+     (`str-in-re-eval`, `re-in-sigma-star`, `str-in-re-from-int-dig-range` or
+     its non-empty version with an `ArithEntail` premise, `re_concat`),
+     `re_inter`, `re-inter-inclusion`, `re-in-empty`, and the scope closed
+     (`scope`, `process_scope`, `bool-double-not-elim`). Not for memberships with
+     bound variables, which make the assumption open. Inclusion is decided by
+     the rule step itself, whose side condition is CPC's `$str_re_includes`.
+     That test is weaker than cvc5's `regExpIncludes` for ranges: cvc5 rewrites
+     `(re.union (re.++ (re.range "a" "c") (re.* re.allchar)) (re.comp (re.range "a" "c")))`
+     to `(re.* re.allchar)`, but its `re-union-inclusion` step fails Ethos;
+     telos leaves it unchanged (Logos upstream request 10).
+   - The fuzzer now generates `re.comp`, which the strings mode did not.
+     Fuzzing against cvc5 main `9d7d9ee04b`: 74.2% identical (3000 terms of
+     depth 3), 96.8% up to the orientation of equalities, 98.5% also up to the
+     order of commutative arguments, no semantic disagreements; at depth 4
+     (seed 2): 62.3%, 92.6% and 97.6%. Of the 44 other terms at depth 3, 43
+     are `IDOF_NORM_PREFIX`, still in cvc5's rewriter at this commit. Ethos
+     accepts all proofs (`check-proofs.py --fuzz 1000 --strings`, and 400 at
+     depth 4).
+   - Next: `CTN_LEN_INEQ` by contradiction as cvc5 proves it (now possible),
+     `rewriteLoopRegExp`, and `CTN_NCONST_CTN_CONCAT`.
 9. **Performance.** ~~Rewrite cache~~ (done: `Cache` in
    `Telos/Rewriter/Rewriter.lean`, for one call of `rewriteWith`, as cvc5 caches
    `rewriteTo`; children are rewritten in order and assembled by
@@ -941,27 +968,39 @@ tested:
       `quant-var-elim-eq`;
     - conditional splitting (`computeCondSplit`, default mode): `ite-expand`,
       and `bool-or-and-distrib` after `aci_norm`.
+    - inequality elimination (`getVarElimIneq`): a variable occurring in one
+      literal of the body, a bound of one direction or a disequality, is
+      eliminated with that literal. cvc5 proves it by contradiction
+      (`ensureProofMacroQuantVarElimIneq`), and so does telos: the variable is
+      split off and the literal miniscoped out (`quant-miniscope-or`), then
+      `(forall (v) L)` is assumed (`assume-push`), instantiated with a value
+      that falsifies `L` (`instantiate`), `L` rewritten to `false`, and the scope
+      closed (`scope`, `process_scope`, `false_intro`). When `L` is the whole
+      body and uses other variables of the quantifier, the whole quantifier is
+      refuted, with `0` for the others.
+    - Declared constants are `Term.UConst`s (`Node.toEo`, numbered by name with
+      `constId`), as in cvc5's proofs: Logos's checker pushes only closed
+      assumptions (`__eo_is_closed`), and they were `Term.Var`s. Proof output
+      supports `assume-push` and `step-pop` (`Proof.toCmds` tracks the stack of
+      facts), and prints variables as `(@var "x" T)` outside their binder.
     - Not ported: eliminating shadowed variables, prenexing (`computePrenex`),
-      datatype variable expansion, and inequality elimination
-      (`getVarElimIneq`, which also eliminates a variable from a positive
-      equality such as `(forall ((y Int)) (= x y))`). cvc5 proves the last by
-      contradiction: it assumes the quantified formula in a scope and
-      instantiates it. Logos's checker pushes only closed assumptions
-      (`__eo_is_closed`), and telos translates declared constants to variables
-      (`Term.Var`), so such an assumption is not closed whenever the formula
-      mentions a declared constant. This is most of the remaining difference to
-      cvc5 in fuzzing.
+      datatype variable expansion, and inequality elimination with several
+      literals for the variable (cvc5 instantiates with an `ite` of the bounds
+      and proves the bounds by transitivity) or whose literal shares other
+      bound variables with the rest of the body (the assumption would not be
+      closed).
     - `Node.ofEo` reads a binder's body with its variables in scope, so that
       they are the same `boundVar`s (they were read as free variables of the
       same name, with the same translation).
     - Deviations: cvc5 gives the quantifiers created by miniscoping fresh
       bound variables; telos, like Logos, identifies bound variables by name and
       type, so it keeps them. Instantiation patterns are dropped.
-    - Fuzzing (`scripts/fuzz.py --quantifiers`, 1000 terms of depth 2), against
-      cvc5 main `9d7d9ee04b`: 62.0% identical, 66.7% up to the names of bound
-      variables, 67.4% also up to the orientation of equalities (15.9% before
-      the port), no semantic disagreements. `fuzz.py` compares up to the names
-      of bound variables. Ethos accepts all proofs (`check-proofs.py --fuzz 400
+    - Fuzzing (`scripts/fuzz.py --quantifiers`), against cvc5 main
+      `9d7d9ee04b`: on 1000 terms of depth 2, 86.7% identical, 95.7% up to the
+      names of bound variables, 96.8% also up to the orientation of equalities
+      (15.9% before the port); on 3000 terms of depth 3, 78.4%, 91.7% and
+      94.8%. No semantic disagreements. `fuzz.py` compares up to the names of
+      bound variables. Ethos accepts all proofs (`check-proofs.py --fuzz 400
       --quantifiers`). The examples match cvc5 up to bound variable names and
       orientation. The other modes are unchanged.
 

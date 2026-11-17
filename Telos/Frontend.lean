@@ -14,8 +14,8 @@ proof. The script is rewritten into a Eunoia input that Logos's parser accepts:
 declarations are kept, and `(simplify t)` becomes the assumption
 `(assume @sN (= t t))`, from which `t` is taken back. Logos numbers declared
 constants and sorts (`UConst i`, `USort i`) in declaration order; the front end
-replays that numbering to map them back to their names, so that they become
-`Node.var`s.
+replays that numbering to map constants back to their names, so that they become
+`Node.var`s (which `Node.toEo` numbers by name, `constId`).
 
 Supported commands: `declare-const`, `declare-fun`, `declare-sort`,
 `declare-datatypes` and `declare-datatype` (not parametric) and `simplify`;
@@ -67,12 +67,13 @@ def mkDtNames (dts : Array (String × Array (String × Array String))) : DtNames
   cons d i := (dts.find? (·.1 == d)) >>= fun (_, cs) => cs[i]? |>.map (·.1)
   sel d i j := (dts.find? (·.1 == d)) >>= fun (_, cs) => cs[i]? >>= fun (_, ss) => ss[j]?
 
-/-- Replace each numbered constant by the variable of its name. -/
+/-- Renumber the constants the parser numbered in declaration order by their
+names (`constId`), as `Node.toEo` numbers them. -/
 partial def nameConsts (name : Nat → Option String) : Term → Term
   | .UConst i T =>
     let T := nameConsts name T
     match name i with
-    | some s => .Var (.String (native_string_lit s)) T
+    | some s => .UConst (constId s) T
     | none => .UConst i T
   | .Apply f a => .Apply (nameConsts name f) (nameConsts name a)
   | .Var n T => .Var n (nameConsts name T)
@@ -148,7 +149,7 @@ def readScript (input : String) : Except String Script := do
   let constName := fun i => consts[i - 1]?
   let dtNames := { mkDtNames dts with sort := fun i => sorts[i - 1]? }
   let names : Eunoia.Names :=
-    { sort := fun i => sorts[i - 1]?, const := constName, isConst := consts.contains, dt := dtNames }
+    { sort := fun i => sorts[i - 1]?, dt := dtNames }
   let queries := (sources.toList.zip assums).map fun (src, t) => ⟨src, toNode constName t⟩
   return { decls := decls.toList, names, queries, dtNames }
 

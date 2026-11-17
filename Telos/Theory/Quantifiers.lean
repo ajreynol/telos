@@ -305,7 +305,8 @@ def varElim (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) := do
   -- the inner `(forall (x) F)` to `F` without `x`
   let elim (q : Node) : Option (Rw q) := do
     let r ← if rest.isEmpty then
-        congrBody? q fun b => (normLit b).getD (Rw.id b)
+        if d == lit then some (Rw.id q)
+        else congrBody? q fun b => (normLit b).getD (Rw.id b)
       else do
         let arranged := mkNode .OR (#[d] ++ rest)
         let r := if arranged == body then Rw.id q
@@ -324,6 +325,117 @@ def varElim (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) := do
     let split := mkQuant .FORALL others (mkQuant .FORALL #[x] body)
     let r ← r.next? fun m => (checkBy .quant_merge_prenex split m).bind (Proof.reverse m)
     r.next? fun m => congrBody? m fun q => (elim q).getD (Rw.id q)
+
+/-- `(forall (v) L)` is `false`, by contradiction, as cvc5's proofs of
+`getVarElimIneq` do (`ensureProofMacroQuantVarElimIneq`): assume it, instantiate
+`v` with `t` (`instantiate`), rewrite `L[v := t]` to `false` with `rw`
+(`eq_resolve`), and close the scope (`scope`, `process_scope`, `false_intro`).
+Logos's checker assumes only closed formulas, so `L` may use no other bound
+variable. -/
+def refute (rw : (m : Node) → Rw m) (v t lit : Node) (q : Node) : Option (Rw q) :=
+  refuteWith rw [(v, t)] lit q
+where
+  /-- With the values `σ` for the quantifier's variables, in order. -/
+  refuteWith (rw : (m : Node) → Rw m) (σ : List (Node × Node)) (lit : Node) (q : Node) :
+      Option (Rw q) := do
+  let inst := σ.foldl (fun l (v, t) => substitute v t l) lit
+  let r := rw inst
+  if r.1 != mkFalse then none
+  let rewrite : List CCmd ← if inst == mkFalse then some [] else Proof.cmdsOf r
+  let toFalse : List CCmd := if rewrite.isEmpty then []
+    else [.step .eq_resolve .nil (.cons (Int.ofNat rewrite.length) (.cons 0 .nil))]
+  let cmds : List CCmd :=
+    [.assume_push q.toEo,
+     .step .instantiate (toArgList [eoList (σ.map (·.2.toEo))]) (.cons 0 .nil)] ++ rewrite ++ toFalse ++
+    [.step_pop .scope .nil (.cons 0 .nil),
+     .step .process_scope (toArgList [mkFalse.toEo]) (.cons 0 .nil),
+     .step .false_intro .nil (.cons 0 .nil)]
+  applyCmds (cmds.foldr .cons .nil) q
+
+/-- A value for `v` that makes the bound `lit` (a disjunct: `(>= a b)`, its
+negation, or a positive arithmetic equation) false, if `v` has coefficient 1 or
+-1 in it and occurs in no other monomial. -/
+def falsifier (v lit : Node) : Option Node := do
+  let (atom, neg) := match lit.getKind, lit.getChildren with
+    | .NOT, #[a] => (a, true)
+    | _, _ => (lit, false)
+  let #[a, b] := atom.getChildren | none
+  if !(Arith.isInt a || Arith.isReal a) then none
+  let p := Arith.polyOf (mkNode .SUB #[a, b])
+  let c ← p.findSome? fun (m, c) => if m == [v] then some c else none
+  if !(c == 1 || c == -1) || p.any (fun (m, _) => m != [v] && m.contains v) then none
+  let rest := p.filter (·.1 != [v])
+  -- `p = c v + rest` is zero at `v = root`
+  let root := Arith.Poly.scale rest (-1 / c)
+  let real := Arith.isReal v
+  let shifted (k : Rat) : Node := (Arith.Poly.add root (Arith.Poly.const k)).toNode real
+  match atom.getKind, neg with
+  -- `p >= 0` false: `p = -1`
+  | .GEQ, false => some (shifted (-1 / c))
+  -- `p >= 0` true: `p = 0`
+  | .GEQ, true => some (shifted 0)
+  -- `p = 0` false: `p = 1`
+  | .EQUAL, false => some (shifted (1 / c))
+  | _, _ => none
+
+/-- cvc5's `getVarElimIneq`, when the eliminated variable `v` occurs in one
+literal `L` of the body, with no other bound variable: `(forall vs (or L K))` is
+`(forall vs' K)`. Certified as cvc5's proofs do: `v` split off as for variable
+elimination, `L` moved first (`aci_norm`), `(forall (v) (or L K))` to
+`(or (forall (v) L) K)` (`quant-miniscope-or`), `(forall (v) L)` to `false` by
+`refute`, and `(or false K)` to `K` (`aci_norm`). -/
+def ineqElim (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) := do
+  let (_, vs, body) ← quant? n
+  let disjuncts := if body.getKind == .OR then body.getChildren else #[body]
+  let cands := vs.toList.mergeSort (fun a b => a.lt b) |>.filterMap fun v =>
+    let uses := (List.range disjuncts.size).filter fun i => occursIn v disjuncts[i]!
+    match uses with
+    | [i] =>
+      let lit := disjuncts[i]!
+      let onlyV := lit.vars.all fun w => w.getKind != .BOUND_VARIABLE || w == v
+      if onlyV then
+        (falsifier v lit).bind fun t =>
+          if t.vars.any (·.getKind == .BOUND_VARIABLE) then none else some (v, i, t)
+      else if disjuncts.size == 1 then
+        -- The literal is the body and uses other variables of `vs` (and no
+        -- others): refute the whole quantifier, with `0` for the others.
+        let others := vs.filter (· != v)
+        if !lit.vars.all (fun w => w.getKind != .BOUND_VARIABLE || vs.contains w) then none
+        else if !others.all (fun w => Arith.isInt w || Arith.isReal w) then none
+        else
+          let zero (w : Node) : Node := .const (if Arith.isInt w then .integer 0 else .rational 0)
+          let lit0 := others.foldl (fun l w => substitute w (zero w) l) lit
+          (falsifier v lit0).bind fun t =>
+            if t.vars.any (·.getKind == .BOUND_VARIABLE) then none else some (v, i, t)
+      else none
+    | _ => none
+  let (v, i, t) ← cands.head?
+  if disjuncts.size == 1 && vs.size > 1 && (disjuncts[0]!.vars.any fun w => w != v && vs.contains w) then
+    -- the whole quantifier, refuted at once
+    let zero (w : Node) : Node := .const (if Arith.isInt w then .integer 0 else .rational 0)
+    let σ := vs.toList.map fun w => (w, if w == v then t else zero w)
+    return ← refute.refuteWith rw σ body n
+  let lit := disjuncts[i]!
+  let keep := disjuncts.eraseIdx! i
+  let inner (q : Node) : Option (Rw q) :=
+    if keep.isEmpty then refute rw v t lit q
+    else do
+      let kd := if keep.size == 1 then keep[0]! else mkNode .OR keep
+      let arranged := mkNode .OR #[lit, kd]
+      let r := if arranged == body then Rw.id q
+        else (congrBody? q fun b => (checkBy .aci_norm b arranged).getD (Rw.id b)).getD (Rw.id q)
+      let r ← r.next? fun m => checkBy .quant_miniscope_or m (mkNode .OR #[mkQuant .FORALL #[v] lit, kd])
+      let r ← r.next? fun m => Rw.congrArg m 0 (refute rw v t lit)
+      r.next? fun m => checkBy .aci_norm m kd
+  let others := vs.filter (· != v)
+  if others.isEmpty then inner n
+  else
+    let r := if vs == others.push v then Rw.id n
+      else (checkBy .quant_var_reordering n (mkQuant .FORALL (others.push v) body)).getD (Rw.id n)
+    if r.1 == n && vs != others.push v then none
+    let split := mkQuant .FORALL others (mkQuant .FORALL #[v] body)
+    let r ← r.next? fun m => (checkBy .quant_merge_prenex split m).bind (Proof.reverse m)
+    r.next? fun m => congrBody? m fun q => (inner q).getD (Rw.id q)
 
 /-- cvc5's `computeMiniscoping`. -/
 def miniscope (n : Node) : Option (Rw n) := do
@@ -361,6 +473,7 @@ def rewriteForall (rw : (m : Node) → Rw m) (n : Node) : RewriteResponse n :=
           fun _ => congrBody? n Nnf.nnf,  -- COMPUTE_ELIM_SYMBOLS
           fun _ => miniscope n,           -- COMPUTE_MINISCOPING
           fun _ => varElim rw n,          -- COMPUTE_VAR_ELIMINATION
+          fun _ => ineqElim rw n,         -- (its inequality part)
           fun _ => condSplit n]           -- COMPUTE_COND_SPLIT
 
 /-- `(exists vs F)` is `(not (forall vs (not F)))` (`exists-elim`). -/

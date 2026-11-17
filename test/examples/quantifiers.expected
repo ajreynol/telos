@@ -36,3 +36,14 @@ a
 (forall ((z Int)) (R x z))
 (forall ((z Int)) (R z z))
 false
+false
+false
+false
+false
+a
+false
+false
+(forall ((w Int)) (P w))
+(or (P x) a)
+false
+false

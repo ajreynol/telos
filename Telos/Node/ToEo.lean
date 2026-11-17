@@ -23,7 +23,10 @@ The encoding follows the CPC signature (`Cpc.eo`) as Ethos elaborates it:
   `((_ extract i j) x)` is `Term.Apply (Term.UOp2 UserOp2.extract i j) x`.
 * `(f a b)` is the curried `((f a) b)`, and `(-> A B C)` is `(-> A (-> B C))`.
 * `(forall ((x T) …) F)` is `(forall (@list x …) F)`, where the bound variables are
-  `Term.Var`s, exactly like free constants. Instantiation patterns are dropped.
+  `Term.Var`s. Instantiation patterns are dropped.
+* A declared constant is a `Term.UConst`, as in cvc5's proofs, numbered by its
+  name (`constId`). Logos's checker treats these as closed (unlike `Term.Var`),
+  which proofs by contradiction need: it pushes only closed assumptions.
 
 A node with the wrong number of children or indices translates to `Term.Stuck`,
 which has no SMT type, so it is not `WellTyped`.
@@ -427,11 +430,18 @@ def AppShape.toEo : AppShape → List Term → Term
   | .binder _, _ => Term.Stuck
   | .none, _ => Term.Stuck
 
+/-- The number of the declared constant `name` (`Term.UConst`): the code points of
+the name as a numeral in bijective base `0x110000`, with digits `1` to
+`0x110000`. Different names have different numbers, so constants are identified
+by name, as in SMT-LIB. -/
+def constId (name : String) : Nat :=
+  name.toList.foldl (fun acc c => acc * 0x110000 + (c.toNat + 1)) 0
+
 namespace Node
 
 def toEo : Node → Term
   | .const c => c.toEo
-  | .var name T => Term.Var (Term.String (native_string_lit name)) T.toEo
+  | .var name T => Term.UConst (constId name) T.toEo
   | .boundVar name T => Term.Var (Term.String (native_string_lit name)) T.toEo
   | .app (.kind k) cs => k.eoShape.toEo (cs.attach.toList.map fun ⟨c, _⟩ => c.toEo)
   | .app (.indexed k is) cs =>

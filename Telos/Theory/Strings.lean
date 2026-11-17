@@ -16,8 +16,8 @@ Ported so far: `rewriteConcat`, `rewriteLength`, `rewriteEquality`,
 `rewriteCharAt`, `rewriteSubstr`, `rewritePrefixSuffix`, `rewriteContains`,
 `rewriteReplace`, `rewriteReplaceAll`, `rewriteIndexof`, `rewriteStrReverse`,
 the regular expression eliminations, `rewriteConcatRegExp`,
-`rewriteRangeRegExp`, `rewriteAndOrRegExp` (without the inclusion macro),
-`rewriteStarRegExp`, most of `rewriteMembership`, and from `StringsRewriter` the conversions, `str.<`,
+`rewriteRangeRegExp`, `rewriteAndOrRegExp`,
+`rewriteStarRegExp`, `rewriteMembership`, and from `StringsRewriter` the conversions, `str.<`,
 `str.<=` and `str.is_digit`; with the entailments they use (`ArithEntail`,
 `StringsEntail`). Each case is certified by CPC rules, as cvc5 elaborates its
 macros (see `docs/design.md`, roadmap item 8). Cases that are proof holes in
@@ -28,8 +28,7 @@ The strings rewriter is given the full rewriter (`rw`), which cvc5's
 `StringsEntail::checkContains` uses, and which proves premises that evaluation
 does not (`premiseProver`).
 
-Not ported yet: `rewriteLoopRegExp`, inclusion and `RE_IN_DIST_CHAR_STAR` in
-`rewriteMembership`, `IDOF_NORM_PREFIX`, the length of `str.to_lower` and
+Not ported yet: `rewriteLoopRegExp`, `IDOF_NORM_PREFIX`, the length of `str.to_lower` and
 `str.to_upper` (CPC has no rule), and sequences.
 -/
 
@@ -1113,8 +1112,7 @@ def reInterUnionConstElim (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) 
 
 /-- cvc5's `rewriteAndOrRegExp`: flattening (`RE_ANDOR_FLATTEN`,
 `RE_AND_EMPTY`, `RE_OR_ALL`, `RE_INTER_CONST_CONST_CONFLICT`), then
-`reInterUnionConstElim`. The inclusion macro `rewriteViaMacroReInterUnionInclusion`
-is not ported. -/
+`reInterUnionConstElim`. The inclusion macro is `reInterUnionInclusion`. -/
 def rewriteAndOrFlatten (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) := do
   let nk := n.getKind
   let isInter := nk == .REGEXP_INTER
@@ -1147,9 +1145,43 @@ def rewriteAndOrFlatten (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
   if target == n then none
   reach rw ["re-union-all", "re-inter-all", "re-inter-const-const-conflict", "re-inter-cstring-neg"] target (n.getChildren.size + 2) n
 
+/-- cvc5's `rewriteViaMacroReInterUnionInclusion` (`RE_ANDOR_INC_CONFLICT`): an
+intersection with members `R₂` and `(re.comp R₁)`, where `R₁` includes `R₂`, is
+`re.none`; a union with members `R₁` and `(re.comp R₂)`, where `R₁` includes
+`R₂`, is `(re.* re.allchar)`. Certified as cvc5's elaboration
+(`ensureProofForReInterUnionInclusion`): the two members grouped first
+(`aci_norm`), then `re-inter-inclusion` (resp. `re-union-inclusion`) on the
+group; the other members are kept, and the result is rewritten again.
+Inclusion is decided by that step, whose side condition is CPC's
+`$str_re_includes` (cvc5's `RegExpEntail::regExpIncludes`). -/
+def reInterUnionInclusion (n : Node) : Option (Rw n) := do
+  let nk := n.getKind
+  if nk != .REGEXP_INTER && nk != .REGEXP_UNION then none
+  let isInter := nk == .REGEXP_INTER
+  let rule : Eo.CRule := if isInter then .re_inter_inclusion else .re_union_inclusion
+  let result := if isInter then reNone else reAllStar
+  let incl := fun (d : Node) => checkBy rule d result
+  let cs := n.getChildren.toList
+  let negs := cs.filter (·.getKind == .REGEXP_COMPLEMENT)
+  let poss := cs.filter (·.getKind != .REGEXP_COMPLEMENT)
+  -- cvc5's loop: complemented members outside, the others inside
+  let d ← negs.findSome? fun comp => poss.findSome? fun ps =>
+    let d := mkNode nk #[ps, comp]
+    (incl d).map fun _ => d
+  let #[ps, comp] := d.getChildren | none
+  let rest := (cs.erase ps).erase comp
+  if rest.isEmpty then
+    (aci n d).bind (·.next? incl)
+  else
+    let remr := if rest.length == 1 then rest[0]! else mkNode nk rest.toArray
+    -- as cvc5, `(nk result remr)`, rewritten again
+    let r ← aci n (mkNode nk #[d, remr])
+    r.next? fun m => Rw.congrArg m 0 incl
+
 def rewriteAndOr (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
   (rewriteAndOrFlatten rw n).orElse fun _ =>
-    reInterUnionConstElim rw n
+    (reInterUnionConstElim rw n).orElse fun _ =>
+      reInterUnionInclusion n
 
 /-- cvc5's `rewriteConcatRegExp`. `RE_CONCAT_EMPTY` is `absorb` and
 `RE_CONCAT_FLATTEN` is `aci_norm`. The combinations of `RE_CONCAT` are taken one
@@ -1210,8 +1242,75 @@ def inReConsume (n : Node) : Option (Rw n) :=
     checkBy .str_in_re_consume n b
   | _ => none
 
-/-- cvc5's `rewriteMembership`, without inclusion
-(`rewriteViaMacroStrInReInclusion`) and `RE_IN_DIST_CHAR_STAR`. -/
+def digRange : Node := mkNode .REGEXP_RANGE #[mkWord ['0'.toNat], mkWord ['9'.toNat]]
+
+/-- cvc5's `rewriteViaMacroStrInReInclusion` (`RE_IN_INCLUSION`):
+`(str.in_re x R)` is `true` when `R` includes `G`, a regular expression of all
+values of `x` (cvc5's `getGeneralizedConstRegExp`: per component of `x`, a
+constant `c` is `(str.to_re c)`, a `(str.from_int t)` is the digit strings,
+non-empty when `t ≥ 0` is entailed, and anything else `(re.* re.allchar)`; at
+least one component must be of the first two kinds). Proven by contradiction, as
+cvc5's elaboration (`ensureProofForStrInReInclusion`): assume
+`(not (str.in_re x R))`, so `x` is in `(re.comp R)` (`re-in-comp`) and in `G`
+(per component, `re_concat`), so in `(re.inter G (re.comp R))` (`re_inter`),
+which is `re.none` (`re-inter-inclusion`, which decides the inclusion), and
+`x` is not in `re.none` (`re-in-empty`). Logos's checker assumes only closed
+formulas, so `x` and `R` may have no bound variables. -/
+def inReInclusion (n : Node) : Option (Rw n) := do
+  let #[x, r] := n.getChildren | none
+  if n.vars.any (·.getKind == .BOUND_VARIABLE) then none
+  let comps := if x.getKind == .STRING_CONCAT then x.getChildren.toList else [x]
+  if !comps.any (fun c => c.isConst || c.getKind == .STRING_ITOS) then none
+  let digStar := mkNode .REGEXP_STAR #[digRange]
+  -- each component, its regular expression, and for a `(str.from_int t)` with
+  -- `t ≥ 0` entailed, the proof of `(= (>= t 0) true)`
+  let gen : List (Node × Node × Option (List Eo.CCmd)) := comps.map fun c =>
+    if c.isConst then (c, mkNode .STRING_TO_REGEXP #[c], none)
+    else if c.getKind == .STRING_ITOS then
+      match ArithEntail.premiseProof (mkNode .GEQ #[c.getChildren[0]!, .const (.integer 0)]) tt with
+      | some cmds => (c, mkNode .REGEXP_CONCAT #[digRange, digStar], some cmds)
+      | none => (c, digStar, none)
+    else (c, reAllStar, none)
+  let g := match gen with
+    | [(_, g, _)] => g
+    | _ => mkNode .REGEXP_CONCAT (gen.map (·.2.1)).toArray
+  let inter := mkNode .REGEXP_INTER #[g, mkNode .REGEXP_COMPLEMENT #[r]]
+  let st := fun (rl : Eo.CRule) (args : List Node) (prems : List Nat) =>
+    Proof.push ⟨rl, args.map Node.toEo, prems, .step⟩
+  let run : Proof.EmitM Nat := do
+    let a ← Proof.push ⟨.refl, [(mkNode .NOT #[n]).toEo], [], .assume⟩
+    let mems ← gen.mapM fun (c, gc, pre) => do
+      let e ← match pre with
+        | some cmds => do
+          let p ← Proof.emitCmds (cmds.foldr .cons .nil)
+          st .str_in_re_from_int_nemp_dig_range [c.getChildren[0]!] [p]
+        | none =>
+          if c.isConst then st .str_in_re_eval [eqNode (mkNode .STRING_IN_REGEXP #[c, gc]) tt] []
+          else if c.getKind == .STRING_ITOS then st .str_in_re_from_int_dig_range [c.getChildren[0]!] []
+          else st .re_in_sigma_star [c] []
+      st .true_elim [] [e]                                  -- (str.in_re c gc)
+    let inG ← match mems with
+      | [p] => pure p
+      | ps => st .re_concat [] ps                           -- (str.in_re x g)
+    let e1 ← st .re_in_comp [x, r] []
+    let e2 ← st .symm [] [e1]
+    let inComp ← st .eq_resolve [] [a, e2]                  -- (str.in_re x (re.comp r))
+    let inInter ← st .re_inter [] [inG, inComp]
+    let incl ← st .re_inter_inclusion [eqNode inter reNone] []
+    let rx ← st .refl [x] []
+    let cg ← st .cong [mkNode .STRING_IN_REGEXP #[x, inter]] [rx, incl]
+    let ie ← st .re_in_empty [x] []
+    let tr ← st .trans [] [cg, ie]
+    let f ← st .eq_resolve [] [inInter, tr]                 -- false
+    let sc ← Proof.push ⟨.scope, [], [f], .pop⟩             -- (=> (not n) false)
+    let nn ← st .process_scope [.const (.boolean false)] [sc]  -- (not (not n))
+    let dn ← st .bool_double_not_elim [n] []
+    let m ← st .eq_resolve [] [nn, dn]
+    st .true_intro [] [m]                                   -- (= n true)
+  let (_, s) ← (run.run {}).toOption
+  applyCmds ((Proof.toCmds s.steps).foldr .cons .nil) n
+
+/-- cvc5's `rewriteMembership`. -/
 def rewriteMembership (n : Node) : Option (Rw n) :=
   match n.getChildren with
   | #[x, r] =>
@@ -1279,8 +1378,8 @@ def rewriteMembership (n : Node) : Option (Rw n) :=
     match byKind with
     | some (some rw) => some rw
     | some none => none
-    -- `RE_SIMPLE_CONSUME`
-    | none => inReConsume n
+    -- `RE_SIMPLE_CONSUME`, then `RE_IN_INCLUSION`
+    | none => (inReConsume n).orElse fun _ => inReInclusion n
   | _ => none
 
 /-- The value of a string operator applied to constants. -/

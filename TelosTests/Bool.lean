@@ -67,7 +67,8 @@ def rw (n : Node) : String := (rewrite n).toSmtLib
 -- The then-branch is an ITE on another condition: the else-branch is still checked.
 #guard rw (iteNode b (iteNode (notNode (eqNode x (.const (.integer 1)))) mkTrue
     (eqNode x (.const (.integer 1)))) (iteNode b c (mkNode .AND #[b, mkTrue, b]))) == "b"
--- Under a binder
-#guard rw (forallNode #[q] (notNode (notNode q))) == "(forall ((q Bool)) q)"
+-- Under a binder: the body is rewritten to `q`, which then eliminates `q`
+-- (as cvc5 does)
+#guard rw (forallNode #[q] (notNode (notNode q))) == "false"
 
 end TelosTests.Bool

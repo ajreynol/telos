@@ -67,16 +67,13 @@ def opTable : Std.TreeMap Term OpInfo termCmp :=
                                isBinder := d.binder.isSome, argList }
     | none => m
 
-/-- Names for the uninterpreted sorts and constants of a problem, which Logos
-numbers. -/
+/-- Names for the uninterpreted sorts of a problem, which Logos numbers, and
+for datatype constructors and selectors. Declared constants are numbered by
+their names (`constId`), and variables are bound: they are printed as
+`(@var "x" T)` outside their binder (the signature's
+`(define @var ((s String) (T Type)) (eo::var s T))`). -/
 structure Names where
   sort : Nat → Option String := fun _ => none
-  const : Nat → Option String := fun _ => none
-  /-- Whether a variable of this name is a declared constant. telos represents
-  declared constants as variables (`Node.var`); other variables are bound, and
-  are printed as `(@var "x" T)` outside their binder (the signature's
-  `(define @var ((s String) (T Type)) (eo::var s T))`). -/
-  isConst : String → Bool := fun _ => false
   /-- The names of datatype constructors and selectors. -/
   dt : DtNames := {}
 
@@ -120,7 +117,8 @@ partial def printIn (N : Names) (bound : List Term) (t : Term) : String :=
   | .Binary w v => if w == 0 then "@bv_empty" else binaryLit w v
   | .Var (.String s) T =>
     let x := nativeStringToString s
-    if bound.contains t || N.isConst x then symbol x
+    -- Declared constants are `UConst`s, so a variable is bound.
+    if bound.contains t then symbol x
     else s!"(@var {stringLit s} {print N T})"
   | .Bool => "Bool"
   | .Type => "Type"
@@ -140,7 +138,8 @@ partial def printIn (N : Names) (bound : List Term) (t : Term) : String :=
   -- as the signature does: `(as set.empty (Set Int))`.
   | .UOp1 UserOp1.set_empty T => s!"(as set.empty {print N T})"
   | .UOp1 UserOp1.seq_empty T => s!"(as seq.empty {print N T})"
-  | .UConst i _ => symbol ((N.const i).getD s!"@const{i}")
+  -- Declared constants are numbered by their names (`constId`).
+  | .UConst i _ => symbol (Telos.Node.constName i)
   | .Apply .. =>
     let (h, xs) := eoSpine t
     match opTable.get? (headKey h) with

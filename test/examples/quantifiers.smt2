@@ -1,7 +1,8 @@
 ; Quantifiers (cvc5's QuantifiersRewriter): exists elimination, prenex merging,
 ; constant bodies, the NNF of bodies, miniscoping (and, ite, splitting
 ; disjunctions by free variables), unused variables, variable elimination
-; (equalities, Boolean variables, linear equations) and conditional splitting.
+; (equalities, Boolean variables, linear equations, one-literal inequalities)
+; and conditional splitting.
 ; cvc5 prints the variables of miniscoped quantifiers with fresh names.
 (set-logic ALL)
 (declare-const a Bool)
@@ -47,3 +48,15 @@
 (simplify (forall ((y Int) (z Int)) (or (not (= y x)) (R y z))))
 (simplify (forall ((y Int) (z Int)) (or (not (= z y)) (R y z))))
 (simplify (forall ((y Int)) (not (= y x))))
+(declare-const y Int)
+(simplify (forall ((qx Int) (qy Int)) (not (= qx qy))))
+(simplify (forall ((qy Int)) (forall ((qx Int)) (not (= qx qy)))))
+(simplify (forall ((qx Int)) (not (= qx x))))
+(simplify (forall ((z Int)) (>= z 1)))
+(simplify (forall ((z Int)) (or (>= z 1) a)))
+(simplify (forall ((z Int)) (= y z)))
+(simplify (forall ((z Int)) (not (>= (+ x (* -1 z)) 1))))
+(simplify (forall ((z Int) (w Int)) (or (>= z x) (P w))))
+(simplify (forall ((z Int)) (or (= z x) (P x) a)))
+(simplify (forall ((qx Int) (qy Int)) (>= (+ qx (* -1 qy)) 1)))
+(simplify (forall ((qx Int) (qy Int)) (not (>= qy qx))))

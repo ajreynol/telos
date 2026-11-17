@@ -19,7 +19,9 @@ the wrong thing, so review them as specifications, not as code.
 - `Telos/Node/ToEo.lean`: the translation of `Node` to Logos terms. It assigns
   every node its meaning, so it must match how cvc5 prints that node in CPC. The
   per-operator part is a table (`Kind.eoShape`, `indexedEoShape`, `nodeEoShape`)
-  giving each operator's CPC head symbol and arity. The nil terminator of
+  giving each operator's CPC head symbol and arity. A declared constant
+  (`Node.var`) is a `Term.UConst`, numbered by its name (`constId`, injective),
+  and a bound variable a `Term.Var`. The nil terminator of
   `+`, `*`, the bit-vector operators, `str.++` and `distinct` depends on the type
   of the elements; it is a hand-written table (`typedNilOfType`) over the SMT
   type of the first element, given by `__smtx_typeof`. Datatype types

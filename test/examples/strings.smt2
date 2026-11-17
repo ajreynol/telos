@@ -88,3 +88,10 @@
 (simplify (str.<= (str.++ "ab" s) (str.++ "ac" t)))
 (simplify (str.<= (str.++ "b" s) (str.++ "abc" t)))
 (simplify (str.< s t))
+; regular expression inclusion
+(simplify (str.in_re (str.++ "ab" s) (re.++ (str.to_re "a") (re.* re.allchar))))
+(simplify (str.in_re (str.++ s "ab" t) (re.++ (re.* re.allchar) (str.to_re "b") (re.* re.allchar))))
+(simplify (str.in_re (str.++ "a" (str.from_int (str.len s))) (re.++ (str.to_re "a") (re.+ (re.range "0" "9")))))
+(simplify (str.in_re s (re.++ (str.to_re "a") (re.* re.allchar))))
+(simplify (re.inter (re.++ (str.to_re "a") (re.* re.allchar)) (re.comp (re.* re.allchar)) (str.to_re t)))
+(simplify (re.union (re.comp (str.to_re "a")) (re.++ (str.to_re "a") (re.* re.allchar)) r))

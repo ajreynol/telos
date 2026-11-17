@@ -46,7 +46,7 @@ def results : Option (List (Except String String × Bool)) := do
   some "(and (not a) b)",
   some "(= x 0)",
   some "(f x)",
-  some "(forall ((y Int)) (= x y))",  -- cvc5: false (quantifier rewriting is not ported)
+  some "false",  -- as cvc5 (inequality elimination)
   some "true",  -- by the UF rewriter (`eq-refl`)
   some "a",
   some "(str.len s)"]

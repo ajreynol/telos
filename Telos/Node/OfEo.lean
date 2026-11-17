@@ -138,6 +138,16 @@ partial def vars : Node → List Node
         | _ => []
       opVars ++ cs.toList.flatMap vars
 
+/-- The name of the declared constant numbered `n` (the inverse of `constId`). -/
+partial def constName (n : Nat) : String :=
+  go n []
+where
+  go (n : Nat) (acc : List Char) : String :=
+    if n == 0 then String.ofList acc
+    else
+      let d := (n - 1) % 0x110000 + 1
+      go ((n - d) / 0x110000) (Char.ofNat (d - 1) :: acc)
+
 /-- The node a Logos variable stands for: the variable of `env` with this
 translation, or a free variable. -/
 def varOfEo (env : List Node) (t : Term) (bound : Bool) : Option Node :=
@@ -157,6 +167,7 @@ partial def ofEo (env : List Node) (t : Term) : Option Node := do
   if let .DtCons s d i := t then return ← dtApp .APPLY_CONSTRUCTOR (← dtCons s d i) []
   if let some c := Const.ofEo t then return .const c
   if let .Var .. := t then return ← varOfEo env t false
+  if let .UConst i T := t then return .var (constName i) (← TypeNode.ofEo T)
   let (h, xs) := eoSpine t
   match h, xs with
   | .UOp UserOp.and, [x, _] => nary .AND x
@@ -210,6 +221,8 @@ partial def ofEo (env : List Node) (t : Term) : Option Node := do
   | .UOp op, _ => byShape op xs
   | f@(.Var ..), _ :: _ =>
       return .app (.node .APPLY_UF (← varOfEo env f false)) (← xs.mapM (ofEo env)).toArray
+  | .UConst i T, _ :: _ =>
+      return .app (.node .APPLY_UF (.var (constName i) (← TypeNode.ofEo T))) (← xs.mapM (ofEo env)).toArray
   | _, _ => none
 where
   app (k : Kind) (xs : List Term) : Option Node := do
