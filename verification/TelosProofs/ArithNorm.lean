@@ -1,5 +1,5 @@
 import TelosProofs.PolyNorm
-import Cpc.Proofs.RuleSupport.SubstituteTypeSupport
+import TelosProofs.LogosFacts
 
 /-!
 # Statically justified arithmetic normalization
@@ -19,25 +19,17 @@ namespace Telos
 
 open Arith
 
+variable [LogosFacts]
+
 theorem arithNorm_provesEq {n : Node} (h : ArithNormOk n (polyOf n) (arithNorm n)) :
     ProvesEq (StaticProc.arithNormCmds n) n (arithNorm n) := by
   apply PolyNorm.arithNorm_provesEq_of_typeof h
-  have hBool : __smtx_typeof (__eo_to_smt (eqFormula n (arithNorm n))) = SmtType.Bool := h.2.1
-  apply SubstituteSupport.eo_typeof_eq_of_smt_type_eq _ _
-  · show __smtx_typeof (__eo_to_smt (eqFormula n (arithNorm n))) ≠ SmtType.None
-    rw [hBool]; simp
-  · simp [__eo_to_smt_type, __smtx_type_wf, __smtx_type_wf_component, __smtx_type_wf_rec, SmtEval.native_and]
-  · rw [hBool]; rfl
+  exact LogosFacts.eo_typeof_bool _ h.2.1
 
 /-- The Eunoia type of a well-typed equation of nodes is `Bool`. -/
 theorem eo_typeof_eqFormula {a b : Node} (h : __smtx_typeof (__eo_to_smt (eqFormula a b)) = SmtType.Bool) :
-    __eo_typeof (eqFormula a b) = Term.Bool := by
-  apply SubstituteSupport.eo_typeof_eq_of_smt_type_eq _ _
-  · show __smtx_typeof (__eo_to_smt (eqFormula a b)) ≠ SmtType.None
-    rw [h]; simp
-  · simp [__eo_to_smt_type, __smtx_type_wf, __smtx_type_wf_component, __smtx_type_wf_rec,
-      SmtEval.native_and]
-  · rw [h]; rfl
+    __eo_typeof (eqFormula a b) = Term.Bool :=
+  LogosFacts.eo_typeof_bool _ h
 
 theorem arithRel_provesEq {n m a b : Node} (h : ArithRelOk n m a b) :
     ProvesEq (StaticProc.arithRelCmds n m a b) n m :=

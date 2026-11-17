@@ -1,6 +1,5 @@
 import TelosProofs.Spec
-import Cpc.Proofs.CommonBoolOps
-import Cpc.Proofs.TypePreservation.CoreArith
+import TelosProofs.LogosFacts
 
 /-!
 # The algebra of `Node.Equiv`
@@ -12,7 +11,7 @@ semantic relation on SMT terms:
 `t.Equiv s ↔ t.WellTyped ∧ SmtEquiv t.toSmt s.toSmt`
 
 where `SmtEquiv a b` says that `a` and `b` have the same SMT type and related
-values (`smt_value_rel`: equal, or extensionally equal regular languages) in every
+values (`SmtValueRel`: equal, or extensionally equal regular languages) in every
 well-formed model. `SmtEquiv` is an equivalence relation and asks for no typing,
 which makes it the convenient relation for congruence proofs.
 -/
@@ -20,25 +19,26 @@ which makes it the convenient relation for congruence proofs.
 open Eo
 open Smtm
 open SmtEval
-open RuleProofs
 
 namespace Telos
 
 /-- Same SMT type, and related values in every well-formed model. -/
 def SmtEquiv (a b : SmtTerm) : Prop :=
   __smtx_typeof a = __smtx_typeof b ∧
-  ∀ M, model_wf M → smt_value_rel (__smtx_model_eval M a) (__smtx_model_eval M b)
+  ∀ M, model_wf M → SmtValueRel (__smtx_model_eval M a) (__smtx_model_eval M b)
 
 namespace SmtEquiv
 
+variable [LogosFacts]
+
 theorem refl (a : SmtTerm) : SmtEquiv a a :=
-  ⟨rfl, fun _ _ => smt_value_rel_refl _⟩
+  ⟨rfl, fun _ _ => LogosFacts.value_rel_refl _⟩
 
 theorem symm {a b : SmtTerm} (h : SmtEquiv a b) : SmtEquiv b a :=
-  ⟨h.1.symm, fun M hM => smt_value_rel_symm _ _ (h.2 M hM)⟩
+  ⟨h.1.symm, fun M hM => LogosFacts.value_rel_symm _ _ (h.2 M hM)⟩
 
 theorem trans {a b c : SmtTerm} (h₁ : SmtEquiv a b) (h₂ : SmtEquiv b c) : SmtEquiv a c :=
-  ⟨h₁.1.trans h₂.1, fun M hM => smt_value_rel_trans _ _ _ (h₁.2 M hM) (h₂.2 M hM)⟩
+  ⟨h₁.1.trans h₂.1, fun M hM => LogosFacts.value_rel_trans _ _ _ (h₁.2 M hM) (h₂.2 M hM)⟩
 
 end SmtEquiv
 
@@ -51,8 +51,8 @@ theorem eval_eq_boolean (v w : SmtValue) : ∃ b, __smtx_model_eval_eq v w = Smt
 
 theorem eval_not_eq_false_iff (v w : SmtValue) :
     __smtx_model_eval_not (__smtx_model_eval_eq v w) = SmtValue.Boolean false ↔
-      smt_value_rel v w := by
-  rw [smt_value_rel_iff_model_eval_eq_true]
+      SmtValueRel v w := by
+  unfold SmtValueRel
   obtain ⟨b, hb⟩ := eval_eq_boolean v w
   rw [hb]
   cases b <;> simp [__smtx_model_eval_not, native_not]
@@ -72,7 +72,7 @@ theorem Node.equiv_iff (t s : Node) :
   have hTy : __smtx_typeof (__eo_to_smt (eqFormula t s)) =
       __smtx_typeof_eq t.smtType s.smtType := typeof_eq_eq _ _
   have hSat : eo_satisfiability (eoApp1 UserOp.not (eqFormula t s)) false ↔
-      ∀ M, model_wf M → smt_value_rel (__smtx_model_eval M t.toSmt)
+      ∀ M, model_wf M → SmtValueRel (__smtx_model_eval M t.toSmt)
         (__smtx_model_eval M s.toSmt) := by
     change smt_satisfiability (SmtTerm.not (SmtTerm.eq t.toSmt s.toSmt)) false ↔ _
     rw [smt_satisfiability_false_iff]
@@ -97,6 +97,8 @@ theorem wellTyped_right {t s : Node} (h : t.Equiv s) : s.WellTyped := by
 /-- Equivalent nodes have the same type. -/
 theorem smtType_eq {t s : Node} (h : t.Equiv s) : t.smtType = s.smtType :=
   ((Node.equiv_iff t s).1 h).2.1
+
+variable [LogosFacts]
 
 theorem refl (t : Node) (h : t.WellTyped) : t.Equiv t :=
   (Node.equiv_iff t t).2 ⟨h, SmtEquiv.refl _⟩

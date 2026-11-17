@@ -75,10 +75,10 @@ text, and are not covered by it:
 No `sorry` and no declared `axiom`. `Telos.rewrite_correct` is proved in
 `verification/TelosFull/Main.lean` (`lake -d verification build TelosFull`). The
 default build, which CI runs, proves `Telos.rewrite_correct_of_logos`, which
-takes Logos's checker soundness as the hypothesis `LogosCheckerSound`
-(`verification/TelosProofs/LogosSound.lean`); `TelosFull` proves that hypothesis
-from Logos's `proven_from_empty_valid`. Both builds fail if the theorem they
-prove uses any axiom other than:
+takes the Logos theorems it uses as the hypothesis `[LogosFacts]`
+(`verification/TelosProofs/LogosFacts.lean`); `TelosFull` proves the instance
+from Logos's proofs. Both builds fail if the theorem they prove uses any axiom
+other than:
 
 - `propext`, `Classical.choice` and `Quot.sound`; and
 - the auxiliary axioms created by `native_decide` (43 at present). Each asserts
@@ -86,5 +86,6 @@ prove uses any axiom other than:
   the **Lean compiler** in addition to the kernel. They come from Logos's proofs,
   which use `native_decide` throughout (577 uses, including its checker core),
   and enter through Logos's checker soundness proof (every CPC rule) and the
-  congruence lemmas reused from `Cpc/Proofs/RuleSupport/Cong/`. Trusting them
-  was decided on 2026-11-12.
+  congruence lemmas reused from `Cpc/Proofs/RuleSupport/Cong/`, so only into
+  `Telos.rewrite_correct` (`TelosFull`): `rewrite_correct_of_logos` uses none.
+  Trusting them was decided on 2026-11-12.

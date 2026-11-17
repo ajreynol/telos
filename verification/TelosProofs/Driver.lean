@@ -13,18 +13,17 @@ and the fuel.
 namespace Telos
 
 section
-variable (hL : LogosCheckerSound)
-include hL
+variable [LogosFacts]
 
 /-- **Correctness of the driver**, for any theory rewriters. -/
 theorem rewriteWith_sound (R : TheoryId → TheoryRewriter) (fuel : Nat) (n : Node)
     (h : n.WellTyped) : n.Equiv (rewriteWith R fuel n).1 :=
-  (rewriteWith R fuel n).2.equiv hL h
+  (rewriteWith R fuel n).2.equiv h
 
 /-- Every theory rewriter returns equivalent nodes: its responses are certified. -/
 theorem TheoryRewriter.correct (R : TheoryRewriter) (n : Node) (h : n.WellTyped) :
     n.Equiv (R.preRewrite n).node ∧ n.Equiv (R.postRewrite n).node :=
-  ⟨(R.preRewrite n).cert.equiv hL h, (R.postRewrite n).cert.equiv hL h⟩
+  ⟨(R.preRewrite n).cert.equiv h, (R.postRewrite n).cert.equiv h⟩
 
 end
 

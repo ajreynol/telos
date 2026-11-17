@@ -188,15 +188,17 @@ proofs. The driver chains the certificates, so it is correct by construction
 too.
 
 The certificate depends on all of Logos's rule proofs, since the checker's
-soundness does: most of Logos's proof code (888 of the 889 modules telos's
-proofs import). So the default build of `verification/` takes that one theorem
-as a hypothesis: `LogosCheckerSound` (`TelosProofs/LogosSound.lean`) restates
-`proven_from_empty_valid`, and `Certified.equiv`, the driver's theorems and
-`Telos.rewrite_correct_of_logos` take it as an argument. That build needs only
-Logos's definitions and its support lemmas (62 modules), and runs in CI.
-`lake -d verification build TelosFull` imports the rule proofs, proves
-`LogosCheckerSound` from `proven_from_empty_valid` (so the restatement cannot
-drift from the pinned Logos), and derives the unconditional
+soundness does, and the other Logos lemmas telos uses (spine congruence, typing
+and value facts) rest on its type preservation development. So the default build
+of `verification/` imports none of Logos's proofs (`Cpc/Proofs/`), only its
+definitions. The Logos theorems telos uses (checker soundness, spine congruence,
+`eq_valid_iff`, the laws of `smt_value_rel` and three typing facts) are restated
+over those definitions as the fields of the class `LogosFacts`
+(`TelosProofs/LogosFacts.lean`), and the theorems that need them take
+`[LogosFacts]`, up to `Telos.rewrite_correct_of_logos`. That build runs in CI.
+`lake -d verification build TelosFull` imports Logos's proofs, proves the
+instance field by field from the Logos theorem each restates (so the
+restatements cannot drift from the pinned Logos), and derives the unconditional
 `Telos.rewrite_correct`. Run it after changing the Logos pin.
 
 The cost is speed. Every step translates to `Eo.Term` and runs a Logos program.
@@ -338,17 +340,17 @@ theorem Telos.rewrite_correct (t : Node) (h : t.WellTyped) : t.Equiv (rewrite t)
   `Node.Equiv.congr_binder` (quantifiers, in their body). Both reuse Logos's
   soundness proof of the CPC `cong` rule, which is generic over application
   spines, so there is one case per `AppShape` and new kinds need no new proof.
-- `LogosSound.lean`: `LogosCheckerSound`, Logos's checker soundness
-  (`proven_from_empty_valid`) as a proposition.
+- `LogosFacts.lean`: the class `LogosFacts`, the Logos theorems telos uses,
+  restated over Logos's definitions.
 - `Certified.lean`: `Certified.equiv`, from Logos's checker soundness.
 - `Driver.lean`: `rewriteWith_sound`, for any theory rewriters: the driver's
   result is certified, so this is an instance of `Certified.equiv`.
 - `Rewriter.lean`: `Telos.rewrite_correct_of_logos`, the theorem given
-  `LogosCheckerSound`.
+  `LogosFacts`.
 - `Axioms.lean`: the axiom audit (`TRUSTED.md`).
 - `TelosFull/Main.lean` (`lake build TelosFull`, not a default target): proves
-  `LogosCheckerSound` from Logos's theorem, and so `Telos.rewrite_correct`, and
-  audits its axioms.
+  the `LogosFacts` instance from Logos's theorems, and so `Telos.rewrite_correct`,
+  and audits its axioms.
 
 Upstream requests to Logos are collected in `../logos/telos-upstream-requests.md`
 (untracked, a brief for an agent working there).

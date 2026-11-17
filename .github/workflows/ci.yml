@@ -44,8 +44,8 @@ jobs:
           done
 
 
-  # telos's proofs, against Logos's checker soundness as a hypothesis
-  # (`LogosCheckerSound`), so that Logos's proofs of the CPC rules are not built.
+  # telos's proofs, against the Logos theorems they use as a hypothesis
+  # (`LogosFacts`), so that none of Logos's proofs are built.
   # `lake build TelosFull` in `verification/` discharges it with Logos's theorem.
   verification:
     runs-on: ubuntu-latest

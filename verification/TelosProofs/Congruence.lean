@@ -1,11 +1,4 @@
 import TelosProofs.Equiv
-import Cpc.Proofs.RuleSupport.Cong.Spine
-import Cpc.Proofs.RuleSupport.SpineArgsSupport
-import Cpc.Proofs.Translation.Inversions
-import Cpc.Proofs.Translation.EoTypeof
-import Cpc.Proofs.TypePreservation.BitVecPrep
-import Cpc.Proofs.RuleSupport.SubstituteTypeSupport
-import Cpc.Proofs.TypePreservation.Full
 
 /-!
 # Congruence
@@ -15,7 +8,7 @@ This is what lets the rewriter rewrite under operators.
 
 The proof reuses Logos's model-free spine congruence `cong_spine_valid`
 (`Cpc/Proofs/RuleSupport/Cong/Spine.lean`, from its proof of the CPC `cong`
-rule), which is generic over application spines `(f x₁ … xₙ)` and covers every
+rule; `LogosFacts.cong_spine` here), which is generic over application spines `(f x₁ … xₙ)` and covers every
 operator in the signature. What this file adds is
 the adapter: our translation (`Telos/Node/ToEo.lean`) produces only a few
 `AppShape`s, and each is a spine, or a nest of spines for `:right-assoc-nil`
@@ -29,34 +22,36 @@ list (`Node.Equiv.congr_binder`).
 open Eo
 open Smtm
 open SmtEval
-open RuleProofs
-open CongSupport
 
 namespace Telos
+
+-- Most theorems here use Logos's facts (`LogosFacts`); the others ignore them.
+set_option linter.unusedSectionVars false
+
+variable [LogosFacts]
 
 /-! ## Term-level equivalence -/
 
 /-- What `Node.Equiv` says about translations: `(= a b)` is well typed and true in
 every well-formed model. -/
-def TermEquiv (a b : Term) : Prop :=
-  eo_has_bool_type (mkEq a b) ∧ ∀ M, model_wf M → eo_interprets M (mkEq a b) true
+def TermEquiv (a b : Term) : Prop := Valid (mkEq a b)
 
 theorem termEquiv_iff (a b : Term) :
     TermEquiv a b ↔
       (__smtx_typeof (__eo_to_smt a) ≠ SmtType.None ∧
         __smtx_typeof (__eo_to_smt a) = __smtx_typeof (__eo_to_smt b)) ∧
       ∀ M, model_wf M →
-        smt_value_rel (__smtx_model_eval M (__eo_to_smt a)) (__smtx_model_eval M (__eo_to_smt b)) :=
-  eq_valid_iff a b
+        SmtValueRel (__smtx_model_eval M (__eo_to_smt a)) (__smtx_model_eval M (__eo_to_smt b)) :=
+  LogosFacts.eq_valid_iff a b
 
 theorem Node.equiv_iff_termEquiv (t s : Node) : t.Equiv s ↔ TermEquiv t.toEo s.toEo := by
   rw [Node.equiv_iff, termEquiv_iff]
   exact ⟨fun ⟨hw, he, hv⟩ => ⟨⟨hw, he⟩, hv⟩, fun ⟨⟨hw, he⟩, hv⟩ => ⟨hw, he, hv⟩⟩
 
-theorem TermEquiv.refl (a : Term) (h : eo_has_smt_translation a) : TermEquiv a a :=
-  (termEquiv_iff a a).2 ⟨⟨h, rfl⟩, fun _ _ => smt_value_rel_refl _⟩
+theorem TermEquiv.refl (a : Term) (h : HasSmtType a) : TermEquiv a a :=
+  (termEquiv_iff a a).2 ⟨⟨h, rfl⟩, fun _ _ => LogosFacts.value_rel_refl _⟩
 
-theorem TermEquiv.translation {a b : Term} (h : TermEquiv a b) : eo_has_smt_translation a :=
+theorem TermEquiv.translation {a b : Term} (h : TermEquiv a b) : HasSmtType a :=
   ((termEquiv_iff a b).1 h).1.1
 
 /-! ## Spines -/
@@ -65,29 +60,26 @@ theorem TermEquiv.translation {a b : Term} (h : TermEquiv a b) : eo_has_smt_tran
 `(head y₁ … yₙ)` are equivalent when the arguments are pairwise equivalent and the
 first is well typed. -/
 theorem termEquiv_spine (head : Term) {xs ys : List Term} (h : List.Forall₂ TermEquiv xs ys)
-    (ht : eo_has_smt_translation (xs.foldl Term.Apply head)) :
+    (ht : HasSmtType (xs.foldl Term.Apply head)) :
     TermEquiv (xs.foldl Term.Apply head) (ys.foldl Term.Apply head) :=
-  cong_spine_valid head xs ys ht h
+  LogosFacts.cong_spine head xs ys ht h
 
 /-! ## Right-associative operators -/
 
 /-- The tail of a well-typed `(and x r)` or `(or x r)` is well typed. -/
 theorem translation_rest {op : UserOp} (hop : op = UserOp.and ∨ op = UserOp.or) {x r : Term}
-    (h : eo_has_smt_translation (eoApp2 op x r)) : eo_has_smt_translation r := by
-  have hHead : SpineArgsSupport.SpineArgsHead (Term.UOp op) [x, r].length := by
-    rcases hop with rfl | rfl
-    exacts [.and, .or]
-  exact SpineArgsSupport.spine_args_have_smt_translation _ [x, r] hHead h r (by simp)
+    (h : HasSmtType (eoApp2 op x r)) : HasSmtType r :=
+  LogosFacts.and_or_rest op x r hop h
 
 /-- The tail of a well-typed `(+ x r)` or `(* x r)` is well typed. -/
 theorem translation_rest_arith {op : UserOp} (hop : op = UserOp.plus ∨ op = UserOp.mult)
-    {x r : Term} (h : eo_has_smt_translation (eoApp2 op x r)) : eo_has_smt_translation r := by
+    {x r : Term} (h : HasSmtType (eoApp2 op x r)) : HasSmtType r := by
   have key : ∀ {T U : SmtType}, __smtx_typeof_arith_overload_op_2 T U ≠ SmtType.None →
       U ≠ SmtType.None := by
     intro T U h hU
     subst hU
     cases T <;> exact h rfl
-  unfold eo_has_smt_translation at h ⊢
+  unfold HasSmtType at h ⊢
   rcases hop with rfl | rfl
   · change __smtx_typeof (SmtTerm.plus _ _) ≠ _ at h
     rw [typeof_plus_eq] at h
@@ -133,9 +125,9 @@ theorem concat_args {T U : SmtType} (h : __smtx_typeof_concat T U ≠ SmtType.No
 /-- A well-typed application of a `:right-assoc-nil` bit-vector operator has a
 bit-vector first argument and a well-typed tail. -/
 theorem bv_nary_args {op : UserOp} (hop : op.isBvNary = true) {x r : Term}
-    (h : eo_has_smt_translation (eoApp2 op x r)) :
-    (∃ w, __smtx_typeof (__eo_to_smt x) = SmtType.BitVec w) ∧ eo_has_smt_translation r := by
-  unfold eo_has_smt_translation at h ⊢
+    (h : HasSmtType (eoApp2 op x r)) :
+    (∃ w, __smtx_typeof (__eo_to_smt x) = SmtType.BitVec w) ∧ HasSmtType r := by
+  unfold HasSmtType at h ⊢
   simp only [UserOp.isBvNary, Bool.or_eq_true, beq_iff_eq] at hop
   rcases hop with ((((rfl | rfl) | rfl) | rfl) | rfl) | rfl
   · change __smtx_typeof (SmtTerm.concat _ _) ≠ _ at h
@@ -164,25 +156,25 @@ theorem seq_op_2_args {T U : SmtType} (h : __smtx_typeof_seq_op_2 T U ≠ SmtTyp
 /-- A well-typed application of a typed-nil operator (`isTypedNary`) has a first
 argument of a well-formed type, and a well-typed tail. -/
 theorem typed_nary_args {op : UserOp} (hop : op.isTypedNary = true) {x r : Term}
-    (h : eo_has_smt_translation (eoApp2 op x r)) :
-    __smtx_type_wf (__smtx_typeof (__eo_to_smt x)) = true ∧ eo_has_smt_translation r := by
+    (h : HasSmtType (eoApp2 op x r)) :
+    __smtx_type_wf (__smtx_typeof (__eo_to_smt x)) = true ∧ HasSmtType r := by
   simp only [UserOp.isTypedNary, Bool.or_eq_true, beq_iff_eq] at hop
   rcases hop with hbv | rfl
   · obtain ⟨⟨w, hw⟩, hr⟩ := bv_nary_args hbv h
     refine ⟨?_, hr⟩
     rw [hw]; simp [__smtx_type_wf, __smtx_type_wf_component, __smtx_type_wf_rec, SmtEval.native_and]
-  · unfold eo_has_smt_translation at h ⊢
+  · unfold HasSmtType at h ⊢
     change __smtx_typeof (SmtTerm.str_concat _ _) ≠ _ at h
     rw [typeof_str_concat'] at h
     obtain ⟨⟨A, hA⟩, hU⟩ := seq_op_2_args h
     refine ⟨?_, hU⟩
     rw [hA]
-    exact smt_term_seq_type_wf_of_non_none _ (by unfold term_has_non_none_type; rw [hA]; simp) hA
+    exact LogosFacts.seq_type_wf _ _ (by rw [hA]; simp) hA
 
 /-- The tail of a well-typed `re.++`, `re.inter` or `re.union` is well typed. -/
 theorem translation_rest_re {op : UserOp} (hop : op.isReNary = true) {x r : Term}
-    (h : eo_has_smt_translation (eoApp2 op x r)) : eo_has_smt_translation r := by
-  unfold eo_has_smt_translation at h ⊢
+    (h : HasSmtType (eoApp2 op x r)) : HasSmtType r := by
+  unfold HasSmtType at h ⊢
   simp only [UserOp.isReNary, Bool.or_eq_true, beq_iff_eq] at hop
   intro hr
   apply h
@@ -195,9 +187,9 @@ theorem translation_rest_re {op : UserOp} (hop : op.isReNary = true) {x r : Term
     rw [__smtx_typeof.eq_def]; simp only; rw [hr]; simp [native_ite, native_Teq]
 
 theorem termEquiv_rightAssocNil (op : UserOp) (nil : Term)
-    (hrest : ∀ {x r : Term}, eo_has_smt_translation (eoApp2 op x r) → eo_has_smt_translation r)
+    (hrest : ∀ {x r : Term}, HasSmtType (eoApp2 op x r) → HasSmtType r)
     {xs ys : List Term} (h : List.Forall₂ TermEquiv xs ys)
-    (ht : eo_has_smt_translation (eoRightAssocNil op nil xs)) :
+    (ht : HasSmtType (eoRightAssocNil op nil xs)) :
     TermEquiv (eoRightAssocNil op nil xs) (eoRightAssocNil op nil ys) := by
   induction h with
   | nil => exact TermEquiv.refl _ ht
@@ -208,11 +200,11 @@ theorem termEquiv_rightAssocNil (op : UserOp) (nil : Term)
 
 /-! ## Nodes -/
 
-theorem not_translation_stuck : ¬ eo_has_smt_translation Term.Stuck := by
-  simp [eo_has_smt_translation]; rfl
+theorem not_translation_stuck : ¬ HasSmtType Term.Stuck := by
+  simp [HasSmtType]; rfl
 
 theorem shape_congr (sh : AppShape) (hsh : sh.isChildCongruent = true) {xs ys : List Term}
-    (h : List.Forall₂ TermEquiv xs ys) (ht : eo_has_smt_translation (sh.toEo xs)) :
+    (h : List.Forall₂ TermEquiv xs ys) (ht : HasSmtType (sh.toEo xs)) :
     TermEquiv (sh.toEo xs) (sh.toEo ys) := by
   have hlen := h.length_eq
   cases sh with
@@ -237,8 +229,8 @@ theorem shape_congr (sh : AppShape) (hsh : sh.isChildCongruent = true) {xs ys : 
           | nil => simp at hle
           | cons hxy _ => exact (typedNil_congr op hxy).symm
       rw [hnil]
-      have hrest : ∀ {x r : Term}, eo_has_smt_translation (eoApp2 op x r) →
-          eo_has_smt_translation r := by
+      have hrest : ∀ {x r : Term}, HasSmtType (eoApp2 op x r) →
+          HasSmtType r := by
         cases nil with
         | const _ =>
           simp only [AppShape.isChildCongruent, Bool.or_eq_true, beq_iff_eq] at hsh
@@ -266,7 +258,7 @@ theorem Node.Equiv.congr {op : Op} (hop : op.eoShape.isChildCongruent = true)
     (h : List.Forall₂ Node.Equiv cs.toList ds.toList) :
     (Node.app op cs).Equiv (Node.app op ds) := by
   rw [Node.equiv_iff_termEquiv, Node.toEo_app, Node.toEo_app]
-  have hwt' : eo_has_smt_translation (op.eoShape.toEo (cs.toList.map Node.toEo)) := by
+  have hwt' : HasSmtType (op.eoShape.toEo (cs.toList.map Node.toEo)) := by
     have := hwt
     unfold Node.WellTyped Node.smtType Node.toSmt at this
     rw [Node.toEo_app] at this

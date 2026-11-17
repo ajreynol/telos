@@ -1,5 +1,4 @@
 import TelosProofs.Congruence
-import TelosProofs.LogosSound
 import TelosProofs.Static
 import TelosProofs.ChildTyping
 
@@ -11,8 +10,7 @@ accepted by Logos's checker from the empty state with last proven fact `(= n m)`
 Logos proves that such a fact is well typed and true in every well-formed model
 (`proven_from_empty_valid`, from its checker soundness proof for every CPC rule).
 Hence `Certified n m` implies `n.Equiv m` (`Certified.equiv`), with no proof per
-rule. The theorems below take Logos's theorem as the hypothesis `hL`
-(`LogosCheckerSound`, `TelosProofs/LogosSound.lean`).
+rule. That theorem is `LogosFacts.checker_sound` here (`TelosProofs/LogosFacts.lean`).
 -/
 
 open Eo
@@ -37,19 +35,18 @@ theorem forall₂_of_getElem {R : Node → Node → Prop} {cs ds : Array Node}
   exact ⟨by simpa using hsize, fun i h₁ h₂ => by simpa using h i (by simpa using h₁)⟩
 
 section
-variable (hL : LogosCheckerSound)
-include hL
+variable [LogosFacts]
 
 theorem ProvesEq.equiv {cs : CCmdList} {n m : Node} (h : ProvesEq cs n m) : n.Equiv m := by
   rw [Node.equiv_iff_termEquiv]
-  exact hL cs _ h.1 h.2.1 h.2.2
+  exact LogosFacts.checker_sound cs _ h.1 h.2.1 h.2.2
 
 /-- **Certified rewrites are equivalences.** -/
 theorem Certified.equiv {n m : Node} (h : Certified n m) (hn : n.WellTyped) : n.Equiv m := by
   induction h with
   | refl n => exact Node.Equiv.refl n hn
   | step cs hs _ ih =>
-    have h₁ := ProvesEq.equiv hL hs
+    have h₁ := ProvesEq.equiv hs
     exact h₁.trans (ih h₁.wellTyped_right)
   | @congrArg op cs m i c' hi hop hwt' _ _ ihc ih =>
     have hwt := hwt'.elim (fun hc => ChildTyping.children_wellTyped hc hn) id
@@ -67,7 +64,7 @@ theorem Certified.equiv {n m : Node} (h : Certified n m) (hn : n.WellTyped) : n.
     have h₁ := Node.Equiv.congr hop hn hch
     exact h₁.trans (ih h₁.wellTyped_right)
   | static p h _ ih =>
-    have h₁ := ProvesEq.equiv hL (StaticProc.provesEq p _ _ h)
+    have h₁ := ProvesEq.equiv (StaticProc.provesEq p _ _ h)
     exact h₁.trans (ih h₁.wellTyped_right)
   | @congrBody k vs body body' m pats hk hb _ _ ihb ih =>
     have hk' : k = .FORALL ∨ k = .EXISTS := by cases k <;> simp_all [Kind.isQuantifier]
