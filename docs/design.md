@@ -1107,6 +1107,14 @@ tested:
       --quantifiers`). The examples match cvc5 up to bound variable names and
       orientation. The other modes are unchanged.
 
+14. **Preprocessing.** A port of cvc5's `ProcessAssertions`, in stages
+    (`docs/preprocessor-plan.md`, `Telos/Preprocess/`, `test/preprocess/`). The
+    assertion pipeline is the conjunction of the assertions, certified equivalent
+    to the input conjunction (`Telos.preprocess_correct`). Ported: splitting
+    top-level conjunctions (`push_back`), the `rewrite` pass, conflicts;
+    `define-fun`s are macros. Benchmarks in, `-o post-asserts` out
+    (`telos --post-asserts`), compared with cvc5 by `scripts/fuzz-pp.py`.
+
 ## Working conventions
 
 - Small commits; each commit builds both projects and passes

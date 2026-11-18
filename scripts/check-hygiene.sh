@@ -46,6 +46,7 @@ layer_check() {  # dir, pattern of forbidden imports
 }
 layer_check Telos/Core 'Telos\.(Rewriter|Frontend|Preprocess)\b'
 layer_check Telos/Rewriter 'Telos\.(Frontend|Preprocess)\b'
+layer_check Telos/Preprocess 'Telos\.Frontend\b'
 layer_check verification/TelosProofs/Core '(Telos\.(Rewriter|Frontend|Preprocess)|TelosProofs\.(Rewriter|Preprocess))\b|Telos$'
 
 [ "${status}" -eq 0 ] && echo "Hygiene check passed (${#files[@]} Lean files)."

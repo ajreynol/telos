@@ -6,8 +6,9 @@ import Telos.Core.Proof.Eunoia
 /-!
 # SMT-LIB scripts
 
-Reads an SMT-LIB script of declarations and `(simplify t)` commands, as cvc5
-accepts. `Telos/Frontend/Simplify.lean` rewrites each `t`.
+Reads an SMT-LIB script of declarations, `(simplify t)` and `(assert t)` commands,
+as cvc5 accepts. `Telos/Frontend/Simplify.lean` rewrites each simplified `t`;
+`Telos/Frontend/PostAsserts.lean` preprocesses the assertions.
 
 Terms are read by Logos's parser, so they mean exactly what they mean in a CPC
 proof. The script is rewritten into a Eunoia input that Logos's parser accepts:
@@ -18,8 +19,13 @@ replays that numbering to map constants back to their names, so that they become
 `Node.var`s (which `Node.toEo` numbers by name, `constId`).
 
 Supported commands: `declare-const`, `declare-fun`, `declare-sort`,
-`declare-datatypes` and `declare-datatype` (not parametric) and `simplify`;
-`set-logic`, `set-option`, `set-info`, `check-sat` and `exit` are ignored.
+`declare-datatypes` and `declare-datatype`, `define-fun`, `simplify`, `assert`,
+`check-sat` and `set-logic`; `set-option`, `set-info` and `exit` are ignored.
+Scripts of `simplify` queries have no assertions; a benchmark for the
+preprocessor has assertions and one `check-sat` after them (incremental scripts
+are not supported).
+A `define-fun` is a macro, as Eunoia's `define`: its uses are expanded when the
+script is read, and it is not recorded.
 Everything else is an error. Logos's datatypes have no constructor or selector
 names; the front end reads them from the declarations, for printing
 (`DtNames`).
@@ -38,6 +44,20 @@ structure Query where
   /-- The term as a node, or why it could not be read. -/
   node : Except String Node
 
+/-- One `(assert t)` of a script, read back, with defined functions expanded. -/
+structure Assertion where
+  /-- The term as written. -/
+  source : String
+  /-- The term as a node, or why it could not be read. -/
+  node : Except String Node
+
+/-- A declared symbol: its name and its declaration as cvc5 prints it in a
+benchmark (`declare-fun`, `declare-sort`, `declare-datatypes`). A datatype
+declaration declares several names. -/
+structure Symbol where
+  names : List String
+  decl : String
+
 /-- A script, read. -/
 structure Script where
   /-- The declarations, as written; they head each printed proof. -/
@@ -45,8 +65,13 @@ structure Script where
   names : Eunoia.Names
   queries : List Query
   dtNames : DtNames := {}
+  assertions : List Assertion := []
+  /-- The logic of `set-logic`. -/
+  logic : Option String := none
+  /-- The declared sorts, datatypes and constants, in order. -/
+  symbols : List Symbol := []
 
-def ignored : List String := ["set-logic", "set-option", "set-info", "check-sat", "exit"]
+def ignored : List String := ["set-option", "set-info", "exit"]
 
 /-- A declared field type, over the parameters `ps` of a parametric datatype. -/
 partial def typeTemplate (ps : List String) : Sexp → TypeTemplate
@@ -61,6 +86,10 @@ its selectors' names and declared types, and the names of its parameters. -/
 structure DtDeclared where
   cons : Array (String × Array (String × Sexp))
   params : List String := []
+
+/-- The names of the constructors and selectors of a declaration. -/
+def DtDeclared.consNames (dd : DtDeclared) : List String :=
+  dd.cons.toList.flatMap fun (c, ss) => c :: ss.toList.map (·.1)
 
 /-- The constructors of a datatype declaration, `((C (s T) …) …)`, or
 `(par (P …) ((C (s T) …) …))` for a parametric one. -/
@@ -125,37 +154,51 @@ def readScript (input : String) : Except String Script := do
   let ss ← Sexp.Parser.manySexps!.run input
   let mut decls := #[]
   let mut eunoia := #[]
-  let mut sources := #[]
   let mut consts : Array String := #[]
   let mut sorts : Array String := #[]
   let mut dts : Array (String × DtDeclared) := #[]
+  -- the sources of the `simplify` (`true`) and `assert` (`false`) commands, in order
+  let mut items : Array (Bool × String) := #[]
+  let mut logic : Option String := none
+  let mut symbols : Array Symbol := #[]
+  let mut checkSat := false
   for s in ss do
     match s with
     | .expr (.atom c :: _) =>
       if ignored.contains c then continue
       match s with
+      | .expr [.atom "set-logic", .atom l] => logic := some l
+      | .expr [.atom "check-sat"] => checkSat := true
       | .expr [.atom "declare-const", .atom x, ty] =>
         if ty == .atom "Type" then sorts := sorts.push x else consts := consts.push x
         decls := decls.push s.serialize
         eunoia := eunoia.push s.serialize
+        symbols := symbols.push ⟨[x], (Sexp.expr [.atom "declare-fun", .atom x, .expr [], ty]).serialize⟩
       | .expr [.atom "declare-fun", .atom x, .expr args, ret] =>
         consts := consts.push x
         -- Eunoia has no `declare-fun`; a function is a constant of arrow type.
         let ty := if args.isEmpty then ret else .expr (.atom "->" :: args ++ [ret])
         decls := decls.push (Sexp.expr [.atom "declare-const", .atom x, ty]).serialize
         eunoia := eunoia.push s.serialize
+        symbols := symbols.push ⟨[x], s.serialize⟩
       | .expr [.atom "declare-sort", .atom x, _] =>
         sorts := sorts.push x
         decls := decls.push s.serialize
         eunoia := eunoia.push s.serialize
+        symbols := symbols.push ⟨[x], s.serialize⟩
       | .expr [.atom "declare-datatypes", .expr ds, .expr bodies] =>
         if ds.length != bodies.length then throw s!"bad datatype declaration: {s.serialize}"
+        let mut names : List String := []
         for (d, body) in ds.zip bodies do
           match d with
-          | .expr [.atom name, .atom _] => dts := dts.push (name, ← readConstructors body)
+          | .expr [.atom name, .atom _] =>
+            let dd ← readConstructors body
+            dts := dts.push (name, dd)
+            names := names ++ name :: dd.consNames
           | _ => throw s!"bad datatype declaration: {s.serialize}"
         decls := decls.push s.serialize
         eunoia := eunoia.push s.serialize
+        symbols := symbols.push ⟨names, s.serialize⟩
       | .expr [.atom "declare-datatype", .atom name, body] =>
         let dd ← readConstructors body
         dts := dts.push (name, dd)
@@ -164,10 +207,19 @@ def readScript (input : String) : Except String Script := do
         let s' := Sexp.expr [.atom "declare-datatypes", .expr [.expr [.atom name, arity]], .expr [body]]
         decls := decls.push s'.serialize
         eunoia := eunoia.push s'.serialize
+        symbols := symbols.push ⟨name :: dd.consNames, s'.serialize⟩
+      -- A macro, as Eunoia's `define` (without the return type).
+      | .expr [.atom "define-fun", .atom f, .expr args, _, body] =>
+        eunoia := eunoia.push (Sexp.expr [.atom "define", .atom f, .expr args, body]).serialize
       | .expr [.atom "simplify", t] =>
         let t := t.serialize
-        eunoia := eunoia.push s!"(assume @s{sources.size} (= {t} {t}))"
-        sources := sources.push t
+        eunoia := eunoia.push s!"(assume @s{items.size} (= {t} {t}))"
+        items := items.push (true, t)
+      | .expr [.atom "assert", t] =>
+        if checkSat then throw "incremental scripts are not supported: an assertion after check-sat"
+        let t := t.serialize
+        eunoia := eunoia.push s!"(assume @s{items.size} {t})"
+        items := items.push (false, t)
       | _ => throw s!"unsupported command: {s.serialize}"
     | _ => throw s!"unsupported command: {s.serialize}"
   let (assums, _) ← parseProof ("\n".intercalate eunoia.toList)
@@ -175,7 +227,15 @@ def readScript (input : String) : Except String Script := do
   let dtNames := { mkDtNames dts with sort := fun i => sorts[i - 1]? }
   let names : Eunoia.Names :=
     { sort := fun i => sorts[i - 1]?, dt := dtNames }
-  let queries := (sources.toList.zip assums).map fun (src, t) => ⟨src, toNode constName t⟩
-  return { decls := decls.toList, names, queries, dtNames }
+  let read := items.toList.zip assums
+  let queries := read.filterMap fun ((simp, src), t) =>
+    if simp then some ⟨src, toNode constName t⟩ else none
+  let assertions := read.filterMap fun ((simp, src), t) =>
+    if simp then none
+    else some ⟨src, match Node.ofEo [] (nameConsts constName t) with
+      | some n => .ok n
+      | none => .error "the term uses an operator telos does not support yet"⟩
+  return { decls := decls.toList, names, queries, dtNames, assertions, logic,
+           symbols := symbols.toList }
 
 end Telos.Frontend

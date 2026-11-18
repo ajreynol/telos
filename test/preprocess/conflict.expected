@@ -1,0 +1,5 @@
+;; post-asserts start
+(set-logic ALL)
+(assert false)
+(check-sat)
+;; post-asserts end

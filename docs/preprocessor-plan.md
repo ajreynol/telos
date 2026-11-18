@@ -125,6 +125,26 @@ at the level of assertion lists.
   assertions and definitions as conclusions, checked by Ethos as the rewriter's
   proofs are.
 
+## Status
+
+Phase 1 is done, without the definitions, as `define-fun`s are macros
+(expanded when the script is read, not recorded or printed). The pipeline is one
+node, the conjunction of the assertions, as a certified rewrite (`Rw`) of the
+conjunction of the input assertions and `true` (`Telos/Preprocess/Pipeline.lean`).
+So the theorem, `Telos.preprocess_correct`, is `Certified.equiv` and needed no
+new proof, and so far the step forms are those of rewrites: `aci_norm` (splitting
+conjunctions, `push_back`), congruence below `and` (the `rewrite` pass) and
+`absorb` (conflicts). Scripts are read with `assert` and `check-sat`
+(`Telos/Frontend/Script.lean`, non-incremental), and printed as cvc5 does
+(`Telos/Frontend/PostAsserts.lean`, `telos --post-asserts`). `scripts/fuzz-pp.py`
+compares with `cvc5 -o post-asserts --simplification=none --no-static-learning`:
+on 150 random benchmarks of 1 to 4 assertions, the Boolean and UF ones are all
+identical up to the orientation of equalities. In the other modes a third to
+three quarters differ, by the passes cvc5 always runs: `theory-preprocess`
+(`ite` removal, `to_int` and `div` elimination, datatype updaters,
+constructor equalities split into conjunctions) and `static-rewrite` (arith
+normalizes equalities, `rewriteEqualityExt`). These are phase 2.
+
 ## Phases
 
 Each phase ends with fuzzing and benchmark agreement against cvc5, with the

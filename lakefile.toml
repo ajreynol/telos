@@ -15,6 +15,7 @@ rev = "58c89a48005fac77e7af10029bd16927507128b5"
 # - `TelosCore` (`Telos/Core/`): nodes, their translation to Logos terms,
 #   certified rewrites (`Rw`) and CPC proof output;
 # - `TelosRewriter` (`Telos/Rewriter/`): the rewriter;
+# - `TelosPreprocess` (`Telos/Preprocess/`): the preprocessor;
 # - `TelosFrontend` (`Telos/Frontend/`): SMT-LIB scripts in, results out.
 # `Telos` is the root module, importing them all.
 [[lean_lib]]
@@ -27,6 +28,12 @@ moreLeanArgs = ["-DwarningAsError=true"]
 name = "TelosRewriter"
 roots = []
 globs = ["Telos.Rewriter.+"]
+moreLeanArgs = ["-DwarningAsError=true"]
+
+[[lean_lib]]
+name = "TelosPreprocess"
+roots = []
+globs = ["Telos.Preprocess.+"]
 moreLeanArgs = ["-DwarningAsError=true"]
 
 [[lean_lib]]

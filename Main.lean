@@ -1,10 +1,11 @@
 import Telos
 
 /-!
-# `telos`: a verified SMT rewriter
+# `telos`: a verified SMT rewriter and preprocessor
 
 ```
 telos [--proof] [--proof-dir DIR] [--profile] FILE
+telos --post-asserts [--profile] FILE
 ```
 
 Reads an SMT-LIB script of declarations and `(simplify t)` commands (`-` for
@@ -19,6 +20,11 @@ With `--profile`, a table of where the time went is printed to standard error
 
 Every result is equivalent to its input (`Telos.rewrite_correct`), with or
 without proofs.
+
+With `--post-asserts`, `FILE` is a benchmark (declarations, assertions and
+`check-sat`), and telos prints its assertions after preprocessing, as cvc5 does
+with `-o post-asserts` (`Telos/Frontend/PostAsserts.lean`). Their conjunction is
+equivalent to that of the input assertions (`Telos.preprocess_correct`).
 -/
 
 open Telos Telos.Frontend
@@ -28,11 +34,13 @@ structure Options where
   proofDir : Option String := none
   file : Option String := none
   profile : Bool := false
+  postAsserts : Bool := false
 
 def parseArgs : List String → Options → Except String Options
   | [], o => .ok o
   | "--proof" :: rest, o => parseArgs rest { o with proof := true }
   | "--profile" :: rest, o => parseArgs rest { o with profile := true }
+  | "--post-asserts" :: rest, o => parseArgs rest { o with postAsserts := true }
   | "--proof-dir" :: d :: rest, o => parseArgs rest { o with proofDir := some d }
   | ["--proof-dir"], _ => .error "--proof-dir needs a directory"
   | f :: rest, o =>
@@ -40,7 +48,8 @@ def parseArgs : List String → Options → Except String Options
     else if o.file.isSome then .error "only one input file is accepted"
     else parseArgs rest { o with file := some f }
 
-def usage : String := "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE"
+def usage : String :=
+  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [--profile] FILE"
 
 def main (args : List String) : IO UInt32 := do
   let opts ← match parseArgs args {} with
@@ -51,6 +60,12 @@ def main (args : List String) : IO UInt32 := do
   if opts.profile then Profile.enable
   let sc ← match ← Profile.measure "frontend" "parse script" fun _ => readScript input with
     | .ok sc => pure sc
+    | .error e => IO.eprintln s!"telos: {e}"; return 1
+  if opts.postAsserts then
+    let r ← Profile.measure "total" "preprocess" fun _ => postAsserts sc
+    if opts.profile then Profile.report
+    match r with
+    | .ok out => IO.print out; return 0
     | .error e => IO.eprintln s!"telos: {e}"; return 1
   if let some d := opts.proofDir then IO.FS.createDirAll d
   let mut status : UInt32 := 0

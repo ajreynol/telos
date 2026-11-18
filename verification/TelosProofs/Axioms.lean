@@ -1,4 +1,5 @@
 import TelosProofs.Rewriter.Rewriter
+import TelosProofs.Preprocess.Preprocess
 
 /-!
 # Axiom audit
@@ -28,6 +29,8 @@ elab "#assert_axioms " id:ident : command => do
   let native := (axioms.filter (!standard.contains ·)).size
   logInfo m!"'{name}': standard axioms, plus {native} native_decide axioms from Logos"
 
--- The default build checks the theorem that takes Logos's checker soundness as a
--- hypothesis; `TelosFull/Main.lean` checks the unconditional `rewrite_correct`.
+-- The default build checks the theorems that take Logos's checker soundness as a
+-- hypothesis; `TelosFull/Main.lean` checks the unconditional `rewrite_correct`
+-- and `preprocess_correct`.
 #assert_axioms Telos.rewrite_correct_of_logos
+#assert_axioms Telos.preprocess_correct_of_logos

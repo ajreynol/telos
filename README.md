@@ -27,6 +27,7 @@ is a step toward it.
 lake build telos
 .lake/build/bin/telos test/examples/bool.smt2            # rewritten terms
 .lake/build/bin/telos --proof test/examples/bool.smt2    # ... each with a CPC proof
+.lake/build/bin/telos --post-asserts test/preprocess/basic.smt2   # preprocessed assertions
 ```
 
 The input is an SMT-LIB script of `declare-const`, `declare-fun`, `declare-sort`
@@ -53,6 +54,14 @@ See [`docs/design.md`](docs/design.md) for the architecture and roadmap,
 [`docs/theory-rewriters.md`](docs/theory-rewriters.md) for how to port another theory,
 [`docs/solver-plan.md`](docs/solver-plan.md) for the original, broader plan for a
 verified solver, and [`TRUSTED.md`](TRUSTED.md) for what the theorem relies on.
+
+With `--post-asserts`, the input is a benchmark (declarations, `define-fun`s,
+assertions and `check-sat`), and telos prints its assertions after
+preprocessing, as cvc5 does with `-o post-asserts`, with the theorem
+`Telos.preprocess_correct`: the conjunction of the output is equivalent to that
+of the input. The preprocessor is at its first stage (`docs/preprocessor-plan.md`):
+top-level conjunctions are split and the assertions rewritten; `define-fun`s
+are macros. `python3 scripts/fuzz-pp.py --cvc5 PATH` compares it with cvc5.
 
 ## Layout
 

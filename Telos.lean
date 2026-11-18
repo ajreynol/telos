@@ -27,5 +27,9 @@ import Telos.Rewriter.Rewrite
 import Telos.Core.RuleNames
 import Telos.Core.Proof.Eunoia
 import Telos.Core.Proof.Emit
+import Telos.Preprocess.Pipeline
+import Telos.Preprocess.Passes.Rewrite
+import Telos.Preprocess.Preprocess
 import Telos.Frontend.Script
 import Telos.Frontend.Simplify
+import Telos.Frontend.PostAsserts
