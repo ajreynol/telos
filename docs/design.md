@@ -87,8 +87,9 @@ cannot make telos unsound.
   `Kind.theoryId` (cvc5's `kindToTheoryId`).
 - `TypeNode`: Bool, Int, Real, String, RegLan, `BitVec w`, arrays, sequences,
   sets, function types (curried, as in Logos; `mkFunctionType`/`getArgTypes` give
-  cvc5's flat view) and uninterpreted sorts (numbered, as in Logos). Datatypes
-  and tuples come later.
+  cvc5's flat view), uninterpreted sorts (numbered, as in Logos), datatypes
+  (`datatype`, `typeRef`) and tuples (`unitTuple`, `tuple head rest`, as
+  Eunoia's `:right-assoc-nil` `Tuple`).
 - `Const`: constant payloads (cvc5's `getConst<T>()`).
 - `Node` and `Op` (mutual), following cvc5's metakinds:
 
@@ -962,10 +963,10 @@ tested:
       above. Ethos accepts all proofs (`check-proofs.py --fuzz 500 --sets`).
       The other modes are unchanged.
 
-12. **Datatypes.** Inductive datatypes, as in cvc5's safe mode (no
-    codatatypes, `match` or nullables), not yet parametric, and not yet tuples.
+12. **Datatypes.** Inductive datatypes, parametric datatypes and tuples, as in
+    cvc5's safe mode (no codatatypes, `match` or nullables).
     `DatatypesRewriter` is ported (`Telos/Theory/Datatypes.lean`,
-    `test/examples/datatypes.smt2`).
+    `test/examples/datatypes.smt2`, `test/examples/datatypes-par.smt2`).
     - Representation, mirroring Logos: `TypeNode.datatype name decl`, with the
       block `decl` (`DtDecl`, `Dt`, `DtCons`: datatypes, constructors, field
       types, `typeRef` for the block's own datatypes), as Logos's
@@ -992,12 +993,40 @@ tested:
       `dt-cons-eq-clash`, since `evaluate` does not decide it.
     - Term order: nullary constructors come after constants and before
       variables, as their node ids usually do in cvc5 (`(= nil x)`).
+    - Parametric datatypes need no representation of their own: Logos's parser
+      instantiates them, each instance `(D T₁ … Tₙ)` a monomorphic datatype
+      named `.par_k_D`, so the rewriter handles them as any datatype. The front
+      end reads `par` declarations and records each one's parameters and
+      declared field types (`DtNames.template`), from which the printer recovers
+      an instance's parameters by matching its field types
+      (`DtNames.instArgs`). Results are printed as cvc5 prints them, with
+      `(as C (D T₁ … Tₙ))` for constructors; proofs as cvc5 writes them, with
+      `as` only on nullary constructors (applied ones, and the constructor of a
+      tester, are bare). Ethos's `$dt_eq_cons` then finds the tester's bare
+      `C` and the tested `(as C T)` different, so `(is C (as C T))` for a
+      nullary `C` is certified by `dt-inst` and `eq-refl` instead of
+      `dt-collapse-tester` (Logos accepts both).
+    - Tuples follow Eunoia rather than cvc5 (where they are datatypes):
+      `TUPLE` is binary, `(TUPLE a r)` the tuple with first field `a` and the
+      fields of `r` after it, ending in `TUPLE_UNIT`; `TUPLE_SELECT` and
+      `TUPLE_UPDATE` are indexed. All are spines, so their congruence needs no
+      new proof; Logos's SMT type of a tuple is the datatype `@Tuple`, read
+      back as a tuple type (`TypeNode.ofSmt`). Selectors and updaters of a
+      tuple are `dt-collapse-selector` and `dt-collapse-updater` (whose tuple
+      case evaluates), clashes `dt-cons-eq-clash` (`checkClash` compares the
+      fields). Tuples print as `(tuple a₁ … aₙ)`, `tuple.unit`,
+      `(_ tuple.select i)` and `(_ tuple.update i)`. A tuple tester
+      `(_ is tuple)` is not supported (cvc5 does not parse it either).
     - Fuzzing (`scripts/fuzz.py --datatypes`, 3000 terms of depth 3, over a list
       datatype and an enumeration), against cvc5 main `9d7d9ee04b`: 79.4%
       identical, all others identical up to the orientation of equalities (node
       ids of compound terms), no semantic disagreements. Ethos accepts all
       proofs (`check-proofs.py --fuzz 500 --datatypes`). The other modes are
-      unchanged.
+      unchanged. With a parametric pair `(Pair Int Color)`, a parametric list
+      `(PL Int)` and tuples `(Tuple Int Color)`, `(Tuple Int Int)` added, against
+      `~/bin/cvc5` (main `a307c0f79e`), on 1500 terms of depth 2 and 3: 80.7%
+      and 72.9% identical, all others up to the orientation of equalities, no
+      semantic disagreements; Ethos accepts all of 800 proofs.
 
 13. **Quantifiers.** `QuantifiersRewriter` is ported in part
     (`Telos/Theory/Quantifiers.lean`, `Telos/Theory/Nnf.lean`,

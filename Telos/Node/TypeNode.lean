@@ -6,8 +6,9 @@ import Telos.Node.Kind
 cvc5 represents types as `TypeNode`s, which are nodes of type kinds
 (`BOOLEAN_TYPE`, `BITVECTOR_TYPE`, `FUNCTION_TYPE`, `SORT_TYPE`, …). Here they are a
 separate inductive with one constructor per type kind, so a type cannot be confused
-with a term. The constructors cover the types that Logos gives a semantics to,
-except tuples and parametric datatypes, which come later.
+with a term. The constructors cover the types that Logos gives a semantics to.
+Parametric datatypes need no constructor: Logos's parser instantiates them, and
+each instance is a datatype of its own (named `.par_k_D`).
 
 Datatypes mirror Logos's `Term.DatatypeType` exactly: a datatype is its name and
 the whole block of (mutually recursive) datatypes it was declared in, each a list
@@ -46,6 +47,12 @@ inductive TypeNode where
   /-- Inside a block, a reference to one of its datatypes (Logos's
   `Term.DatatypeTypeRef`). -/
   | typeRef (name : String)
+  /-- The tuple type with no fields (Logos's `UnitTuple`). -/
+  | unitTuple
+  /-- The tuple type with first field `head` and the fields of the tuple type
+  `rest` after it, as Eunoia writes `(Tuple T₁ … Tₙ)`: `(Tuple T₁ (Tuple T₂ …
+  UnitTuple))` (Logos's `Tuple`, a `:right-assoc-nil` type constructor). -/
+  | tuple (head : TypeNode) (rest : TypeNode)
 
 /-- A block of datatypes, by name (Logos's `DatatypeDecl`). -/
 inductive DtDecl where
@@ -121,6 +128,15 @@ def isDatatype : TypeNode → Bool
   | .datatype .. => true
   | _ => false
 
+/-- The field types of a tuple type. -/
+def tupleFields? : TypeNode → Option (List TypeNode)
+  | .unitTuple => some []
+  | .tuple h rest => (h :: ·) <$> rest.tupleFields?
+  | _ => none
+
+/-- The tuple type with these fields. -/
+def mkTuple (fields : List TypeNode) : TypeNode := fields.foldr .tuple .unitTuple
+
 /-- The constructors of a datatype type. -/
 def dtConstructors? : TypeNode → Option (List DtCons)
   | .datatype s decl => (decl.lookup? s).map Dt.toList
@@ -153,6 +169,6 @@ def TypeNode.theoryId : TypeNode → TheoryId
   | .array _ _ => .THEORY_ARRAYS
   | .set _ => .THEORY_SETS
   | .function _ _ | .sort _ => .THEORY_UF
-  | .datatype .. | .typeRef _ => .THEORY_DATATYPES
+  | .datatype .. | .typeRef _ | .unitTuple | .tuple .. => .THEORY_DATATYPES
 
 end Telos

@@ -127,13 +127,28 @@ partial def printIn (N : Names) (bound : List Term) (t : Term) : String :=
   | .__eo_List_nil => "@list.nil"
   | .__eo_List_cons => "@list"
   | .USort i => symbol ((N.sort i).getD s!"@sort{i}")
-  | .DatatypeType s _ | .DatatypeTypeRef s => symbol (nativeStringToString s)
-  | .DtCons s _ i =>
+  -- An instance of a parametric datatype (`.par_k_D`) is written `(D T₁ … Tₙ)`.
+  | .DatatypeType s _ =>
     let d := nativeStringToString s
-    symbol ((N.dt.cons d i).getD s!"{d}.c{i}")
+    match parInstanceOf d with
+    | some base =>
+      match TypeNode.ofEo t >>= N.dt.instArgs 8 with
+      | some (a :: as) => "(" ++ " ".intercalate (symbol base :: (a :: as).map (print N ∘ TypeNode.toEo)) ++ ")"
+      | _ => symbol base
+    | none => symbol d
+  | .DatatypeTypeRef s => symbol (DtNames.baseName (nativeStringToString s))
+  -- A nullary constructor of a parametric datatype is written with its type,
+  -- `(as C (D T₁ … Tₙ))`, as cvc5 does, so that the parser can pick the
+  -- instance; applied, or as the argument of a tester, it is bare (`consSym`,
+  -- `printIndex`).
+  | .DtCons s d i =>
+    let c := consSym s i
+    match TypeNode.ofEo (.DatatypeType s d) with
+    | some T => if N.dt.isParametric T then s!"(as {c} {print N (.DatatypeType s d)})" else c
+    | none => c
   | .DtSel s _ i j =>
     let d := nativeStringToString s
-    symbol ((N.dt.sel d i j).getD s!"{d}.c{i}.s{j}")
+    symbol ((N.dt.sel (DtNames.baseName d) i j).getD s!"{d}.c{i}.s{j}")
   -- Constants whose (implicit) parameter is their type are written with `as`,
   -- as the signature does: `(as set.empty (Set Int))`.
   | .UOp1 UserOp1.set_empty T => s!"(as set.empty {print N T})"
@@ -175,10 +190,11 @@ partial def printIn (N : Names) (bound : List Term) (t : Term) : String :=
           -- An indexed operator takes its (opaque) indices as leading
           -- arguments, as the signature writes it: `(extract 1 0 x)`.
           if info.indexArity == 0 then app info.name xs
-          else app info.name (headIndices h ++ xs)
+          else s!"({info.name} {" ".intercalate ((headIndices h).map printIndex ++ xs.map (print N))})"
     | none =>
       match h with
-      | .Var .. | .UConst .. | .DtCons .. | .DtSel .. => app (print N h) xs
+      | .DtCons s _ i => app (consSym s i) xs
+      | .Var .. | .UConst .. | .DtSel .. => app (print N h) xs
       | _ => curried h xs
   | _ =>
     match opTable.get? (headKey t) with
@@ -186,9 +202,19 @@ partial def printIn (N : Names) (bound : List Term) (t : Term) : String :=
     | none => s!"<unprintable>"
 where
   print (_ : Names) (t : Term) : String := printIn N bound t
+  /-- The name of a constructor, without its type. -/
+  consSym (s : SmtEval.native_String) (i : Nat) : String :=
+    let name := nativeStringToString s
+    symbol ((N.dt.cons (DtNames.baseName name) i).getD s!"{name}.c{i}")
+  /-- An index of an indexed operator; the constructor of a tester is bare, as
+  cvc5 writes it (`dt-inst` needs it so in Ethos). -/
+  printIndex (t : Term) : String :=
+    match t with
+    | .DtCons s _ i => consSym s i
+    | t => print N t
   headName (info : OpInfo) (h : Term) : String :=
     if info.indexArity == 0 then info.name
-    else s!"(_ {info.name} {" ".intercalate ((headIndices h).map (print N))})"
+    else s!"(_ {info.name} {" ".intercalate ((headIndices h).map printIndex)})"
   app (f : String) (xs : List Term) : String :=
     s!"({f} {" ".intercalate (xs.map (print N))})"
   /-- Explicit curried application, `(_ f x)`, for spines that are not a plain

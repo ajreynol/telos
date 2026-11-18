@@ -74,6 +74,8 @@ def toEo : TypeNode → Term
   | .sort id => Term.USort id
   | .datatype s d => Term.DatatypeType (native_string_lit s) (DtDecl.toEo d)
   | .typeRef s => Term.DatatypeTypeRef (native_string_lit s)
+  | .unitTuple => Term.UOp UserOp.UnitTuple
+  | .tuple h rest => Term.Apply (Term.Apply (Term.UOp UserOp.Tuple) h.toEo) rest.toEo
 
 def _root_.Telos.DtDecl.toEo : DtDecl → DatatypeDecl
   | .nil => .nil
@@ -133,9 +135,20 @@ def ofSmt : SmtType → Option TypeNode
   | .Map i e => .array <$> ofSmt i <*> ofSmt e
   | .FunType a r => .function <$> ofSmt a <*> ofSmt r
   | .USort i => some (.sort i)
+  -- A tuple type is the datatype `@Tuple` with one constructor
+  -- (`__eo_to_smt_type`); no other datatype has that name.
+  | .Datatype s (.cons _ (.sum c .null) .nil) =>
+    if String.ofList (s.map Char.ofNat) == "@Tuple" then tupleOfSmt c
+    else .datatype (String.ofList (s.map Char.ofNat)) <$>
+      dtDeclOfSmt (.cons s (.sum c .null) .nil)
   | .Datatype s d => .datatype (String.ofList (s.map Char.ofNat)) <$> dtDeclOfSmt d
   | .TypeRef s => some (.typeRef (String.ofList (s.map Char.ofNat)))
   | _ => none
+
+/-- The tuple type with the fields of a constructor. -/
+def tupleOfSmt : SmtDatatypeCons → Option TypeNode
+  | .unit => some .unitTuple
+  | .cons f rest => .tuple <$> ofSmt f <*> tupleOfSmt rest
 
 def dtDeclOfSmt : SmtDatatypeDecl → Option DtDecl
   | .nil => some .nil
@@ -230,6 +243,8 @@ specification for operator kinds; keep it in line with `Cpc.eo`. -/
 def Kind.eoShape : Kind → AppShape
   | .EQUAL => .spine (Term.UOp UserOp.eq) (.exactly 2)
   | .NOT => .spine (Term.UOp UserOp.not) (.exactly 1)
+  | .TUPLE => .spine (Term.UOp UserOp.tuple) (.exactly 2)
+  | .TUPLE_UNIT => .spine (Term.UOp UserOp.tuple_unit) (.exactly 0)
   | .AND => .rightAssocNil UserOp.and (.const (Term.Boolean true))
   | .OR => .rightAssocNil UserOp.or (.const (Term.Boolean false))
   | .IMPLIES => .spine (Term.UOp UserOp.imp) (.exactly 2)
@@ -367,6 +382,8 @@ def indexedEoShape : Kind → List Int → AppShape
   | .REGEXP_LOOP, [i, j] =>
       .spine (Term.UOp2 UserOp2.re_loop (Term.Numeral i) (Term.Numeral j)) (.exactly 1)
   | .INT_TO_BITVECTOR, [i] => .spine (Term.UOp1 UserOp1.int_to_bv (Term.Numeral i)) (.exactly 1)
+  | .TUPLE_SELECT, [i] => .spine (Term.UOp1 UserOp1.tuple_select (Term.Numeral i)) (.exactly 1)
+  | .TUPLE_UPDATE, [i] => .spine (Term.UOp1 UserOp1.tuple_update (Term.Numeral i)) (.exactly 2)
   | .BITVECTOR_REPEAT, [i] => .spine (Term.UOp1 UserOp1.repeat (Term.Numeral i)) (.exactly 1)
   | .BITVECTOR_ZERO_EXTEND, [i] => .spine (Term.UOp1 UserOp1.zero_extend (Term.Numeral i)) (.exactly 1)
   | .BITVECTOR_SIGN_EXTEND, [i] => .spine (Term.UOp1 UserOp1.sign_extend (Term.Numeral i)) (.exactly 1)

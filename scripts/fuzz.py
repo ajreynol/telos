@@ -59,6 +59,12 @@ PRELUDE = """(set-logic ALL)
 (declare-const la Lst)
 (declare-const lb Lst)
 (declare-const co Color)
+(declare-datatypes ((Pair 2)) ((par (T S) ((pair (first T) (second S))))))
+(declare-datatypes ((PL 1)) ((par (T) ((pnil) (pcons (phd T) (ptl (PL T)))))))
+(declare-const pa (Pair Int Color))
+(declare-const pl (PL Int))
+(declare-const tp (Tuple Int Color))
+(declare-const tq (Tuple Int Int))
 """
 
 

@@ -5,8 +5,10 @@ import Telos.Rewriter.Rewriter
 # The datatypes rewriter
 
 A port of cvc5's `DatatypesRewriter` (`src/theory/datatypes/datatypes_rewriter.cpp`)
-for the datatypes of cvc5's safe mode: inductive datatypes, not parametric (yet),
-with no codatatypes, `match` or nullables. Each step is a CPC rule that takes the
+for the datatypes of cvc5's safe mode: inductive datatypes, parametric ones (which
+Logos's parser instantiates, so that each instance is a datatype of its own), and
+tuples (`TUPLE`, `TUPLE_SELECT`, `TUPLE_UPDATE`, in Eunoia's form), with no
+codatatypes, `match` or nullables. Each step is a CPC rule that takes the
 whole equation as its argument, with the result computed here:
 
 * a selector of a constructor application is the field it selects
@@ -65,12 +67,26 @@ def rewriteSelector (n : Node) : RewriteResponse n :=
     | none => .done n
   | _ => .done n
 
+/-- Whether a datatype is an instance of a parametric datatype (named
+`.par_k_D` by Logos's parser). -/
+def isParInstance : TypeNode → Bool
+  | .datatype s _ => s.startsWith ".par_"
+  | _ => false
+
 /-- cvc5's `rewriteTester`. -/
 def rewriteTester (n : Node) : RewriteResponse n :=
   match dtOp? n with
   | some (c@(.dtCons T i), #[t]) =>
     match consApp? t with
-    | some (_, k, _) => respond .REWRITE_DONE (checkBy .dt_collapse_tester n (mkBool (i == k)))
+    | some (_, k, _) =>
+      -- A nullary constructor of an instance of a parametric datatype tested
+      -- by its own tester: `dt-inst` and `eq-refl`. Ethos does not accept
+      -- `dt-collapse-tester` there: it writes the tester's constructor bare
+      -- and the tested one `(as C T)`, which `$dt_eq_cons` finds different.
+      if i == k && T.dtFields? i == some [] && isParInstance T then
+        respond .REWRITE_DONE <| (checkBy .dt_inst n (eqNode t t)).bind fun r =>
+          r.next? (byRule "eq-refl")
+      else respond .REWRITE_DONE (checkBy .dt_collapse_tester n (mkBool (i == k)))
     | none =>
       match T.dtFields? i, T.dtConstructors? with
       -- `((_ is nil) x)` is `(= x nil)`.
@@ -117,14 +133,55 @@ def rewriteUpdater (n : Node) : RewriteResponse n :=
     | none => .done n
   | _ => .done n
 
+/-- The fields of a tuple `(TUPLE a₁ (… (TUPLE aₙ TUPLE_UNIT)))`. -/
+def tupleElems? : Node → Option (List Node)
+  | .app (.kind .TUPLE_UNIT) #[] => some []
+  | .app (.kind .TUPLE) #[a, r] => (a :: ·) <$> tupleElems? r
+  | _ => none
+
+/-- The tuple with these fields. -/
+def mkTupleNode (es : List Node) : Node :=
+  es.foldr (fun a r => mkNode .TUPLE #[a, r]) (mkNode .TUPLE_UNIT #[])
+
+/-- The index of an indexed operator with one index. -/
+def index? : Node → Option Int
+  | .app (.indexed _ #[j]) _ => some j
+  | _ => none
+
+/-- cvc5's `rewriteSelector`, for tuples: `((_ tuple.select j) (tuple t₁ … tₙ))`
+is `t_j` (`dt-collapse-selector`). -/
+def rewriteTupleSelect (n : Node) : RewriteResponse n :=
+  match index? n, n.getChildren with
+  | some j, #[t] =>
+    match tupleElems? t >>= fun es => es[j.toNat]? with
+    | some f => if j ≥ 0 then respond .REWRITE_DONE (checkBy .dt_collapse_selector n f) else .done n
+    | none => .done n
+  | _, _ => .done n
+
+/-- cvc5's `rewriteUpdater`, for tuples: `((_ tuple.update j) (tuple t₁ … tₙ) u)`
+is the tuple with `u` for `t_j` (`dt-collapse-updater`). -/
+def rewriteTupleUpdate (n : Node) : RewriteResponse n :=
+  match index? n, n.getChildren with
+  | some j, #[t, u] =>
+    match tupleElems? t with
+    | some es =>
+      if j ≥ 0 && j.toNat < es.length then
+        respond .REWRITE_DONE (checkBy .dt_collapse_updater n (mkTupleNode (es.set j.toNat u)))
+      else .done n
+    | none => .done n
+  | _, _ => .done n
+
 /-- cvc5's `utils::checkClash`, with `checkNdtConst`: the two terms are
-constructor applications that differ in their constructor, or in distinct
-constants, at some position. -/
+constructor applications (or tuples) that differ in their constructor, or in
+distinct constants, at some position. -/
 partial def checkClash (a b : Node) : Bool :=
   match consApp? a, consApp? b with
   | some (_, i, as), some (_, j, bs) =>
     i != j || (as.zip bs).any fun (x, y) => checkClash x y
-  | _, _ => a != b && a.isConst && b.isConst
+  | _, _ =>
+    match tupleElems? a, tupleElems? b with
+    | some as, some bs => (as.zip bs).any fun (x, y) => checkClash x y
+    | _, _ => a != b && a.isConst && b.isConst
 
 /-- Equalities of datatypes (cvc5's `postRewrite`). -/
 def rewriteEqual (n : Node) : RewriteResponse n :=
@@ -143,11 +200,13 @@ def postRewrite (n : Node) : RewriteResponse n :=
   | .APPLY_SELECTOR => rewriteSelector n
   | .APPLY_TESTER => rewriteTester n
   | .APPLY_UPDATER => rewriteUpdater n
+  | .TUPLE_SELECT => rewriteTupleSelect n
+  | .TUPLE_UPDATE => rewriteTupleUpdate n
   | .EQUAL => rewriteEqual n
   | _ => .done n
 
 /-- cvc5's `preRewrite` only ascribes types to parametric constructors, which
-telos does not have yet. -/
+Logos's instances already have. -/
 def preRewrite (n : Node) : RewriteResponse n := .done n
 
 end DatatypesRewriter

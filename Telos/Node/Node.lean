@@ -147,6 +147,8 @@ def getNumChildren (n : Node) : Nat := n.getChildren.size
 def isConst : Node → Bool
   | .const _ => true
   | .app (.node .APPLY_CONSTRUCTOR _) cs => cs.attach.all fun ⟨c, _⟩ => isConst c
+  -- a tuple of constants (cvc5's tuples are datatypes)
+  | .app (.kind k) cs => (k == .TUPLE || k == .TUPLE_UNIT) && cs.attach.all fun ⟨c, _⟩ => isConst c
   | _ => false
 
 def isVar : Node → Bool

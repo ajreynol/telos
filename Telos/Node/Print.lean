@@ -21,6 +21,13 @@ def TypeNode.toSmtLib : TypeNode → String
   | .function a r => s!"(-> {a.toSmtLib} {r.toSmtLib})"
   | .sort i => s!"U{i}"
   | .datatype s _ | .typeRef s => s
+  | .unitTuple => "UnitTuple"
+  | .tuple h rest => s!"(Tuple {h.toSmtLib}{tail rest})"
+where
+  tail : TypeNode → String
+    | .tuple h rest => s!" {h.toSmtLib}{tail rest}"
+    | .unitTuple => ""
+    | T => s!" {T.toSmtLib}"
 
 def Const.toSmtLib : Const → String
   | .boolean b => if b then "true" else "false"
@@ -143,7 +150,16 @@ def Kind.smtLibName : Kind → String
   | .INTS_MODULUS_TOTAL => "mod_total"
   | .LT => "<" | .LEQ => "<=" | .GT => ">" | .GEQ => ">="
   | .TO_REAL => "to_real" | .TO_INTEGER => "to_int" | .IS_INTEGER => "is_int"
+  | .TUPLE => "tuple" | .TUPLE_UNIT => "tuple.unit" | .TUPLE_SELECT => "tuple.select"
+  | .TUPLE_UPDATE => "tuple.update"
   | k => toString (repr k)
+
+/-- A field type of a parametric datatype as declared: a parameter, or a sort
+applied to field types. -/
+inductive TypeTemplate where
+  | param (k : Nat)
+  | app (head : String) (args : List TypeTemplate)
+  deriving Inhabited
 
 /-- The names of datatype constructors and selectors, which `TypeNode` does not
 record (as in Logos): by datatype name and position. The front end fills it from
@@ -153,33 +169,119 @@ structure DtNames where
   sel : String → Nat → Nat → Option String := fun _ _ _ => none
   /-- The names of uninterpreted sorts, which Logos numbers. -/
   sort : Nat → Option String := fun _ => none
+  /-- For a parametric datatype, by name: its number of parameters, and the
+  field types of its constructors as declared, over the parameters. -/
+  template : String → Option (Nat × List (List TypeTemplate)) := fun _ => none
 
-/-- A type in SMT-LIB syntax, with `N` naming uninterpreted sorts. -/
-def TypeNode.toSmtLibWith (N : DtNames) : TypeNode → String
+/-- The datatype `D` that a Logos instance name `.par_k_D` instantiates (Logos's
+parser names the instances of parametric datatypes so). -/
+def parInstanceOf (s : String) : Option String :=
+  match s.toList with
+  | '.' :: 'p' :: 'a' :: 'r' :: '_' :: rest =>
+    let digits := rest.takeWhile Char.isDigit
+    match rest.drop digits.length with
+    | '_' :: d => if digits.isEmpty then none else some (String.ofList d)
+    | _ => none
+  | _ => none
+
+/-- The source name of a datatype, for an instance its parametric datatype's. -/
+def DtNames.baseName (s : String) : String := (parInstanceOf s).getD s
+
+/-- The parameters of an instance of a parametric datatype, found by matching
+the instance's field types with the declared ones (`fuel` bounds the instances
+of other datatypes looked into). A parameter that no field uses is not found. -/
+partial def DtNames.instArgs (N : DtNames) (fuel : Nat) (T : TypeNode) : Option (List TypeNode) := do
+  let .datatype s _ := T | none
+  let d ← parInstanceOf s
+  let (arity, cons) ← N.template d
+  let mut σ : Array (Option TypeNode) := Array.replicate arity none
+  for (fts, i) in cons.zipIdx do
+    let fs ← T.dtFields? i
+    for (tt, F) in fts.zip fs do
+      σ := unify fuel T σ tt F
+  σ.toList.mapM id
+where
+  unify (fuel : Nat) (self : TypeNode) (σ : Array (Option TypeNode)) :
+      TypeTemplate → TypeNode → Array (Option TypeNode)
+    | .param k, F => if (σ[k]?).join.isNone && k < σ.size then σ.set! k (some F) else σ
+    | .app h args, F =>
+      let sub : Option (List TypeNode) := match h, F with
+        | "Array", .array i e => some [i, e]
+        | "Set", .set e => some [e]
+        | "Seq", .sequence e => some [e]
+        | "Tuple", F => F.tupleFields?
+        | h, F@(.datatype s' _) =>
+          if F == self || fuel == 0 || parInstanceOf s' != some h then none
+          else N.instArgs (fuel - 1) F
+        | _, _ => none
+      match sub with
+      | some Fs => (args.zip Fs).foldl (fun σ (a, F) => unify fuel self σ a F) σ
+      | none => σ
+
+/-- A type in SMT-LIB syntax, with `N` naming uninterpreted sorts and the
+instances of parametric datatypes. -/
+partial def TypeNode.toSmtLibWith (N : DtNames) : TypeNode → String
   | .sort i => (N.sort i).getD s!"U{i}"
   | .array i e => s!"(Array {i.toSmtLibWith N} {e.toSmtLibWith N})"
   | .sequence e => s!"(Seq {e.toSmtLibWith N})"
   | .set e => s!"(Set {e.toSmtLibWith N})"
   | .function a r => s!"(-> {a.toSmtLibWith N} {r.toSmtLibWith N})"
+  | T@(.datatype s _) =>
+    match parInstanceOf s with
+    | some d =>
+      match N.instArgs 8 T with
+      | some [] | none => d
+      | some as => "(" ++ String.intercalate " " (d :: as.map (·.toSmtLibWith N)) ++ ")"
+    | none => s
+  | .typeRef s => DtNames.baseName s
+  | T@(.tuple ..) =>
+    match T.tupleFields? with
+    | some fs => "(" ++ String.intercalate " " ("Tuple" :: fs.map (·.toSmtLibWith N)) ++ ")"
+    | none => T.toSmtLib
   | T => T.toSmtLib
 
+/-- Whether a datatype is an instance of a parametric datatype with parameters,
+whose constructors cvc5 prints with their type, `(as C T)`. -/
+def DtNames.isParametric (N : DtNames) : TypeNode → Bool
+  | .datatype s _ => match parInstanceOf s >>= N.template with
+    | some (arity, _) => arity > 0
+    | none => false
+  | _ => false
+
 def DtNames.consName (N : DtNames) : TypeNode → Nat → String
-  | .datatype s _, i => (N.cons s i).getD s!"{s}.c{i}"
+  | .datatype s _, i => (N.cons (DtNames.baseName s) i).getD s!"{s}.c{i}"
   | _, i => s!"?.c{i}"
 
 def DtNames.selName (N : DtNames) : TypeNode → Nat → Nat → String
-  | .datatype s _, i, j => (N.sel s i j).getD s!"{s}.c{i}.s{j}"
+  | .datatype s _, i, j => (N.sel (DtNames.baseName s) i j).getD s!"{s}.c{i}.s{j}"
   | _, i, j => s!"?.c{i}.s{j}"
 
 /-- A node in SMT-LIB syntax, with `N` naming constructors and selectors. -/
 partial def Node.toSmtLibWith (N : DtNames) : Node → String
-  | .const (.dtCons T i) => N.consName T i
+  | .const (.dtCons T i) =>
+    if N.isParametric T then s!"(as {N.consName T i} {T.toSmtLibWith N})" else N.consName T i
+  -- `(tuple a₁ … aₙ)`, from `(TUPLE a₁ (… (TUPLE aₙ TUPLE_UNIT)))`
+  | n@(.app (.kind .TUPLE) #[_, _]) =>
+    let rec elems (fuel : Nat) : Node → List Node × Option Node
+      | .app (.kind .TUPLE) #[a, r] =>
+        if fuel == 0 then ([], some r) else
+        let (es, tl) := elems (fuel - 1) r
+        (a :: es, tl)
+      | .app (.kind .TUPLE_UNIT) #[] => ([], none)
+      | r => ([], some r)
+    let (es, tl) := elems 100000 n
+    let parts := es.map (·.toSmtLibWith N) ++ (tl.map (·.toSmtLibWith N)).toList
+    "(" ++ String.intercalate " " ("tuple" :: parts) ++ ")"
   | .const (.dtSel T i j) => N.selName T i j
   | .const c => c.toSmtLib
   | .var n _ | .boundVar n _ => n
   | .app (.node .APPLY_CONSTRUCTOR f) #[] => f.toSmtLibWith N
   | .app (.node .APPLY_TESTER f) cs =>
-    "(" ++ String.intercalate " " (s!"(_ is {f.toSmtLibWith N})" :: cs.toList.map (·.toSmtLibWith N)) ++ ")"
+    -- the constructor's name, without the type of a parametric datatype's
+    let c := match f with
+      | .const (.dtCons T i) => N.consName T i
+      | f => f.toSmtLibWith N
+    "(" ++ String.intercalate " " (s!"(_ is {c})" :: cs.toList.map (·.toSmtLibWith N)) ++ ")"
   | .app (.node .APPLY_UPDATER f) cs =>
     "(" ++ String.intercalate " " (s!"(_ update {f.toSmtLibWith N})" :: cs.toList.map (·.toSmtLibWith N)) ++ ")"
   | .app (.kind .BOUND_VAR_LIST) vs =>

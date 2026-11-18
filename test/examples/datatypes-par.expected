@@ -1,0 +1,38 @@
+x
+(tl (as nl (Lst Int)))
+(= (as nl (Lst Int)) l)
+true
+false
+(= l ((as cns (Lst Int)) x (as nl (Lst Int))))
+x
+(= p ((as pair (Pair Int Bool)) 1 false))
+((as pair (Pair Int Bool)) 3 true)
+false
+(second q)
+(= red (first q))
+(= q ((as pair (Pair Color (Lst Int))) blue (as nl (Lst Int))))
+p
+(= (as none (Opt (Pair Int Bool))) o)
+((_ is some) o)
+(= lb ((as cns (Lst Bool)) true lb))
+((as cns (Lst Int)) x l)
+true
+true
+false
+false
+x
+((_ tuple.select 1) t)
+(= t (tuple 1 false))
+false
+(= (tuple 1 true) (tuple x true))
+(tuple 3 true)
+((_ tuple.update 0) t 3)
+true
+(tuple x (tuple y))
+true
+false
+(= (tuple x y) (tuple y x))
+((_ tuple.select 0) ((_ tuple.update 1) u 5))
+(+ 1 y)
+(= ((_ tuple.select 0) u) ((_ tuple.select 1) u))
+(ite (= x 0) (tuple x y) u)

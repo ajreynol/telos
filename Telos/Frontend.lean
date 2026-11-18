@@ -48,24 +48,48 @@ structure Script where
 
 def ignored : List String := ["set-logic", "set-option", "set-info", "check-sat", "exit"]
 
-/-- The constructors of a datatype declaration, `((C (s T) …) …)`: each
-constructor's name and its selectors' names. -/
-def readConstructors (cs : Sexp) : Except String (Array (String × Array String)) := do
+/-- A declared field type, over the parameters `ps` of a parametric datatype. -/
+partial def typeTemplate (ps : List String) : Sexp → TypeTemplate
+  | .atom a => match ps.idxOf? a with
+    | some k => .param k
+    | none => .app a []
+  | .expr (.atom h :: args) => .app h (args.map (typeTemplate ps))
+  | s => .app s.serialize []
+
+/-- A datatype declaration as read: its constructors, each with its name and
+its selectors' names and declared types, and the names of its parameters. -/
+structure DtDeclared where
+  cons : Array (String × Array (String × Sexp))
+  params : List String := []
+
+/-- The constructors of a datatype declaration, `((C (s T) …) …)`, or
+`(par (P …) ((C (s T) …) …))` for a parametric one. -/
+def readConstructors (cs : Sexp) : Except String DtDeclared := do
   let .expr cs := cs | throw s!"bad datatype constructors: {cs.serialize}"
-  if let .atom "par" :: _ := cs then throw "parametric datatypes are not supported yet"
-  cs.toArray.mapM fun c => match c with
+  let (params, cs) ← match cs with
+    | [.atom "par", .expr ps, .expr cs] =>
+      pure (← ps.mapM fun | .atom p => pure p | p => throw s!"bad parameter: {p.serialize}", cs)
+    | .atom "par" :: _ => throw s!"bad parametric datatype: {(Sexp.expr cs).serialize}"
+    | cs => pure ([], cs)
+  let cons ← cs.toArray.mapM fun c => match c with
     | .atom c => pure (c, #[])
     | .expr (.atom c :: sels) => do
       let sels ← sels.toArray.mapM fun
-        | .expr [.atom s, _] => pure s
+        | .expr [.atom s, ty] => pure (s, ty)
         | s => throw s!"bad selector: {s.serialize}"
       pure (c, sels)
     | c => throw s!"bad constructor: {c.serialize}"
+  return { cons, params }
 
-/-- The names of datatype constructors and selectors, by datatype. -/
-def mkDtNames (dts : Array (String × Array (String × Array String))) : DtNames where
-  cons d i := (dts.find? (·.1 == d)) >>= fun (_, cs) => cs[i]? |>.map (·.1)
-  sel d i j := (dts.find? (·.1 == d)) >>= fun (_, cs) => cs[i]? >>= fun (_, ss) => ss[j]?
+/-- The names of datatype constructors and selectors, by datatype, and the
+templates of the parametric ones. -/
+def mkDtNames (dts : Array (String × DtDeclared)) : DtNames where
+  cons d i := (dts.find? (·.1 == d)) >>= fun (_, dd) => dd.cons[i]? |>.map (·.1)
+  sel d i j := (dts.find? (·.1 == d)) >>= fun (_, dd) => dd.cons[i]? >>= fun (_, ss) => ss[j]? |>.map (·.1)
+  template d := (dts.find? (·.1 == d)) >>= fun (_, dd) =>
+    if dd.params.isEmpty then none
+    else some (dd.params.length,
+      dd.cons.toList.map fun (_, ss) => ss.toList.map fun (_, ty) => typeTemplate dd.params ty)
 
 /-- Renumber the constants the parser numbered in declaration order by their
 names (`constId`), as `Node.toEo` numbers them. -/
@@ -104,7 +128,7 @@ def readScript (input : String) : Except String Script := do
   let mut sources := #[]
   let mut consts : Array String := #[]
   let mut sorts : Array String := #[]
-  let mut dts : Array (String × Array (String × Array String)) := #[]
+  let mut dts : Array (String × DtDeclared) := #[]
   for s in ss do
     match s with
     | .expr (.atom c :: _) =>
@@ -128,15 +152,16 @@ def readScript (input : String) : Except String Script := do
         if ds.length != bodies.length then throw s!"bad datatype declaration: {s.serialize}"
         for (d, body) in ds.zip bodies do
           match d with
-          | .expr [.atom name, .atom "0"] => dts := dts.push (name, ← readConstructors body)
-          | .expr [.atom _, _] => throw "parametric datatypes are not supported yet"
+          | .expr [.atom name, .atom _] => dts := dts.push (name, ← readConstructors body)
           | _ => throw s!"bad datatype declaration: {s.serialize}"
         decls := decls.push s.serialize
         eunoia := eunoia.push s.serialize
       | .expr [.atom "declare-datatype", .atom name, body] =>
-        dts := dts.push (name, ← readConstructors body)
+        let dd ← readConstructors body
+        dts := dts.push (name, dd)
         -- As `declare-datatypes`, which Logos's parser reads.
-        let s' := Sexp.expr [.atom "declare-datatypes", .expr [.expr [.atom name, .atom "0"]], .expr [body]]
+        let arity := Sexp.atom (toString dd.params.length)
+        let s' := Sexp.expr [.atom "declare-datatypes", .expr [.expr [.atom name, arity]], .expr [body]]
         decls := decls.push s'.serialize
         eunoia := eunoia.push s'.serialize
       | .expr [.atom "simplify", t] =>

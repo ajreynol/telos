@@ -228,15 +228,39 @@ def lstT : TypeNode :=
 def colorT : TypeNode :=
   .datatype "Color" (.cons "Color" (.sum .unit (.sum .unit (.sum .unit .null))) .nil)
 
+/-- `(Pair Int Color)`, for
+`(declare-datatypes ((Pair 2)) ((par (T S) ((pair (first T) (second S))))))`,
+as Logos's parser instantiates it (`.par_k_Pair`). -/
+def pairT : TypeNode :=
+  .datatype ".par_1_Pair" (.cons ".par_1_Pair" (.sum (.cons .integer (.cons colorT .unit)) .null) .nil)
+
+/-- `(PL Int)`, for
+`(declare-datatypes ((PL 1)) ((par (T) ((pnil) (pcons (phd T) (ptl (PL T)))))))`. -/
+def plT : TypeNode :=
+  .datatype ".par_2_PL" (.cons ".par_2_PL"
+    (.sum .unit (.sum (.cons .integer (.cons (.typeRef ".par_2_PL") .unit)) .null)) .nil)
+
+/-- `(Tuple Int Color)` and `(Tuple Int Int)`. -/
+def tupT : TypeNode := .mkTuple [.integer, colorT]
+def tupII : TypeNode := .mkTuple [.integer, .integer]
+
 def dtNames : DtNames where
   cons d i := match d, i with
     | "Lst", 0 => some "nil" | "Lst", 1 => some "cons"
     | "Color", 0 => some "red" | "Color", 1 => some "green" | "Color", 2 => some "blue"
+    | "Pair", 0 => some "pair"
+    | "PL", 0 => some "pnil" | "PL", 1 => some "pcons"
     | _, _ => none
   sel d i j := match d, i, j with
     | "Lst", 1, 0 => some "head" | "Lst", 1, 1 => some "tail"
+    | "Pair", 0, 0 => some "first" | "Pair", 0, 1 => some "second"
+    | "PL", 1, 0 => some "phd" | "PL", 1, 1 => some "ptl"
     | _, _, _ => none
   sort i := if i == 0 then some "U" else none
+  template d := match d with
+    | "Pair" => some (2, [[.param 0, .param 1]])
+    | "PL" => some (1, [[], [.param 0, .app "PL" [.param 0]]])
+    | _ => none
 
 def dtApp (k : Kind) (c : Const) (cs : Array Node) : Node := .app (.node k (.const c)) cs
 def lstNil : Node := dtApp .APPLY_CONSTRUCTOR (.dtCons lstT 0) #[]
@@ -271,14 +295,84 @@ def genColor : GenM Node := do
   | 3 => return .var "co" colorT
   | i => return dtApp .APPLY_CONSTRUCTOR (.dtCons colorT i) #[]
 
+mutual
+/-- A random `(Pair Int Color)`: `pa`, `pair`, an updater, or a tuple's field
+as an integer. -/
+partial def genPair : Nat → GenM Node
+  | 0 => do
+    if (← pick 2) == 0 then return .var "pa" pairT
+    else return dtApp .APPLY_CONSTRUCTOR (.dtCons pairT 0) #[← genIdx, ← genColor]
+  | d + 1 => do
+    match ← pick 4 with
+    | 0 => genPair 0
+    | 1 => return dtApp .APPLY_CONSTRUCTOR (.dtCons pairT 0) #[← genDtInt d, ← genColor]
+    | 2 => return dtApp .APPLY_UPDATER (.dtSel pairT 0 0) #[← genPair d, ← genDtInt d]
+    | _ => return dtApp .APPLY_UPDATER (.dtSel pairT 0 1) #[← genPair d, ← genColor]
+
+/-- A random `(PL Int)`. -/
+partial def genPL : Nat → GenM Node
+  | 0 => do
+    match ← pick 3 with
+    | 0 => return .var "pl" plT
+    | 1 => return dtApp .APPLY_CONSTRUCTOR (.dtCons plT 0) #[]
+    | _ => return dtApp .APPLY_CONSTRUCTOR (.dtCons plT 1) #[← genIdx, .var "pl" plT]
+  | d + 1 => do
+    match ← pick 4 with
+    | 0 => genPL 0
+    | 1 | 2 => return dtApp .APPLY_CONSTRUCTOR (.dtCons plT 1) #[← genDtInt d, ← genPL d]
+    | _ => return dtApp .APPLY_SELECTOR (.dtSel plT 1 1) #[← genPL d]
+
+/-- A random `(Tuple Int Color)`: `tp`, a tuple, or an update. -/
+partial def genTup : Nat → GenM Node
+  | 0 => do
+    if (← pick 2) == 0 then return .var "tp" tupT
+    else return DatatypesRewriter.mkTupleNode [← genIdx, ← genColor]
+  | d + 1 => do
+    match ← pick 4 with
+    | 0 => genTup 0
+    | 1 => return DatatypesRewriter.mkTupleNode [← genDtInt d, ← genColor]
+    | 2 => return mkIndexedNode .TUPLE_UPDATE #[0] #[← genTup d, ← genDtInt d]
+    | _ => return mkIndexedNode .TUPLE_UPDATE #[1] #[← genTup d, ← genColor]
+
+/-- A random `(Tuple Int Int)`. -/
+partial def genTupII : Nat → GenM Node
+  | 0 => do
+    if (← pick 2) == 0 then return .var "tq" tupII
+    else return DatatypesRewriter.mkTupleNode [← genIdx, ← genIdx]
+  | d + 1 => do
+    match ← pick 3 with
+    | 0 => genTupII 0
+    | 1 => return DatatypesRewriter.mkTupleNode [← genDtInt d, ← genDtInt d]
+    | _ => return mkIndexedNode .TUPLE_UPDATE #[← pick 2] #[← genTupII d, ← genDtInt d]
+
+/-- A random integer from these datatypes: an index, a selector, or a tuple's
+field. -/
+partial def genDtInt : Nat → GenM Node
+  | 0 => genIdx
+  | d + 1 => do
+    match ← pick 5 with
+    | 0 | 1 => genIdx
+    | 2 => return dtApp .APPLY_SELECTOR (.dtSel pairT 0 0) #[← genPair d]
+    | 3 => return mkIndexedNode .TUPLE_SELECT #[0] #[← genTup d]
+    | _ => return mkIndexedNode .TUPLE_SELECT #[← pick 2] #[← genTupII d]
+end
+
 /-- A random datatype predicate. -/
 def genDtAtom : GenM Node := do
-  match ← pick 6 with
+  match ← pick 14 with
   | 0 | 1 => return eqNode (← genLst 2) (← genLst 2)
   | 2 => return dtApp .APPLY_TESTER (.dtCons lstT (← pick 2)) #[← genLst 3]
   | 3 => return eqNode (← genLstInt 3) (← genIdx)
   | 4 => return eqNode (← genColor) (← genColor)
-  | _ => return dtApp .APPLY_TESTER (.dtCons colorT (← pick 3)) #[← genColor]
+  | 5 => return dtApp .APPLY_TESTER (.dtCons colorT (← pick 3)) #[← genColor]
+  | 6 => return eqNode (← genPair 2) (← genPair 2)
+  | 7 => return eqNode (dtApp .APPLY_SELECTOR (.dtSel pairT 0 1) #[← genPair 2]) (← genColor)
+  | 8 => return eqNode (← genPL 2) (← genPL 2)
+  | 9 => return dtApp .APPLY_TESTER (.dtCons plT (← pick 2)) #[← genPL 3]
+  | 10 => return eqNode (dtApp .APPLY_SELECTOR (.dtSel plT 1 0) #[← genPL 2]) (← genDtInt 2)
+  | 11 => return eqNode (← genTup 2) (← genTup 2)
+  | 12 => return eqNode (mkIndexedNode .TUPLE_SELECT #[1] #[← genTup 2]) (← genColor)
+  | _ => return eqNode (← genTupII 2) (← genTupII 2)
 
 /-! ## Quantifiers -/
 

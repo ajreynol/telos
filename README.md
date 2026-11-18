@@ -36,8 +36,8 @@ arithmetic (`+`, `-`, `*`, `/`, `div`, `mod`, `abs`, `to_real`, `to_int`,
 `is_int` and the comparisons), equality over uninterpreted sorts and
 `distinct` (cvc5's UF rewriter), bit-vectors, arrays (`select`, `store`),
 strings (partly), finite sets (the operators of cvc5's safe mode: no
-`set.card` or relations), inductive datatypes (`declare-datatypes`, not yet
-parametric or tuples), and quantifiers as far as they are Boolean.
+`set.card` or relations), inductive datatypes (`declare-datatypes`, also
+parametric) and tuples, and quantifiers as far as they are Boolean.
 Terms
 with other operators are reported as unsupported, and rewriting of the supported
 ones is incomplete.

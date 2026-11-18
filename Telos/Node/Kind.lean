@@ -175,6 +175,17 @@ inductive Kind where
   | APPLY_SELECTOR
   | APPLY_TESTER
   | APPLY_UPDATER
+  /-- Tuples. cvc5 makes them datatypes, applying the tuple type's constructor
+  and selectors (`APPLY_CONSTRUCTOR`, …); telos follows Eunoia instead, where
+  `tuple` is a `:right-assoc-nil` operator: `(TUPLE a r)` is the tuple with
+  first field `a` and the fields of the tuple `r` after it, ending in
+  `TUPLE_UNIT`, so `(tuple a b)` is `(TUPLE a (TUPLE b TUPLE_UNIT))`. -/
+  | TUPLE
+  | TUPLE_UNIT
+  /-- `((_ tuple.select i) t)` (indexed by `i`). -/
+  | TUPLE_SELECT
+  /-- `((_ tuple.update i) t u)` (indexed by `i`). -/
+  | TUPLE_UPDATE
   -- theory/quantifiers
   | FORALL
   | EXISTS
@@ -306,7 +317,8 @@ def Kind.theoryId : Kind → TheoryId
   | .REGEXP_COMPLEMENT => .THEORY_STRINGS
   | .REGEXP_REPEAT => .THEORY_STRINGS
   | .REGEXP_LOOP => .THEORY_STRINGS
-  | .APPLY_CONSTRUCTOR | .APPLY_SELECTOR | .APPLY_TESTER | .APPLY_UPDATER => .THEORY_DATATYPES
+  | .APPLY_CONSTRUCTOR | .APPLY_SELECTOR | .APPLY_TESTER | .APPLY_UPDATER
+  | .TUPLE | .TUPLE_UNIT | .TUPLE_SELECT | .TUPLE_UPDATE => .THEORY_DATATYPES
   | .FORALL | .EXISTS | .BOUND_VAR_LIST | .INST_PATTERN_LIST => .THEORY_QUANTIFIERS
 
 /-- The quantifier kinds, whose congruence is in their body only. -/
