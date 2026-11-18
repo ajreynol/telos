@@ -19,14 +19,44 @@ theorem Telos.preprocess_correct (as : List Node) (h : (Preprocess.inputNode as)
 `preprocessCert as` the conjunction of the preprocessed ones, as certified
 rewrites of it.
 
-The semantics come from [Logos](https://github.com/ajreynol/logos), the CPC proof
-checker, so "equivalent" means the same thing that a CPC proof would establish.
-Every step is an instance of a CPC rule (a RARE rewrite, a theory rewrite, or a
-preprocessing rule such as `skolem_intro` or `arith_reduction`), checked by
-Logos's verified rule programs; one theorem about certified steps covers the
-rewriter and the preprocessor alike, so no rewrite or pass needs a proof of its
-own. Which rule to apply, and when, follows cvc5's C++ and is tested against
-cvc5 by differential fuzzing.
+### How it is verified
+
+**CPC is the basis.** The semantics come from
+[Logos](https://github.com/ajreynol/logos), the verified CPC proof checker, so
+"equivalent" means what a CPC proof of `(= t s)` would establish: the same value
+in every model. The rules of CPC (RARE rewrites, theory rewrites, preprocessing
+rules such as `skolem_intro` or `arith_reduction`) are the vocabulary in which
+each step is justified, and Logos proves each of them sound.
+
+**Proof checking is the baseline algorithm, not the only one.** The simplest
+way to justify a step is to build its CPC proof and run Logos's checker on it;
+one theorem about checked steps then covers every rewrite and every pass, with
+no proof of its own. telos does this where it is cheap: a rewrite rule applied
+to one term. But checking re-does, in Logos's tree-recursive programs, work that
+telos has already done, and on large or highly shared terms it is far too slow.
+So the rewriter and the preprocessor use faster methods wherever it matters,
+and each such method comes with a Lean proof, done once, that it is equivalent to
+what a checked proof would establish:
+
+- *static* steps (`Telos/Core/Static.lean`): a cheap side condition, with a
+  theorem that the checker would accept the step (arithmetic normalization);
+- *semantic* steps (`Telos/Core/Semantic.lean`): a side condition decided on
+  telos's own terms, with a theorem that it implies equivalence (reorganizing the
+  pipeline's conjunction, with substitution and Boolean propagation to follow).
+
+Terms are always shared as DAGs: nodes carry their hash, compare in constant
+time when they are the same in memory, and the fast methods never traverse
+shared terms as trees.
+
+**Proof production is a goal for external auditing.** Printing CPC proofs
+(`--proof`, checked by Ethos) lets anyone audit a result without trusting telos
+or Lean. It is kept as a goal, not as the mechanism of verification: today the
+rewriter prints proofs, and the steps that are justified by a Lean theorem
+instead of a checked proof are to get proof production of their own.
+
+Which rule to apply, and when, follows cvc5's C++ and is tested against cvc5 by
+differential fuzzing; that part needs no proof, since every step is justified
+either way.
 
 ## The name
 
@@ -58,9 +88,9 @@ with other operators are reported as unsupported, and rewriting of the supported
 ones is incomplete.
 
 With `--proof` (or `--proof-dir DIR`, one file per query), each result comes with
-a CPC proof of `(= t result)`, as a refutation of `(not (= t result))`, in
-parentheses as cvc5's `get-proof` prints it. telos prints only proofs that
-Logos's checker accepts. To check one with Ethos, drop the outer parentheses and
+a CPC proof of `(= t result)`, for external auditing (see *How it is
+verified*), as a refutation of `(not (= t result))`, in parentheses as cvc5's
+`get-proof` prints it. telos prints only proofs that Logos's checker accepts. To check one with Ethos, drop the outer parentheses and
 run `ethos --include=.lake/packages/Cpc/install/defs/Cpc.cached.eo FILE`, or run
 `python3 scripts/check-proofs.py --fuzz 500`, which does both.
 
@@ -105,8 +135,9 @@ Two Lake projects, so the rewriter and preprocessor build without Mathlib:
   a library that imports only the ones above it (`scripts/check-hygiene.sh`
   checks this):
   - `Telos/Core/` (`TelosCore`): `Node` (with skolems, `SkolemId`) and its
-    translation to Logos terms (`Node/`), certified rewrites (`Certified.lean`,
-    `Static.lean`, `PolyNorm.lean`), and CPC proof output (`Proof/`);
+    translation to Logos terms (`Node/`), certified rewrites (`Certified.lean`:
+    checked CPC steps, static steps `Static.lean`, `PolyNorm.lean`, and
+    semantic steps `Semantic.lean`), and CPC proof output (`Proof/`);
   - `Telos/Rewriter/` (`TelosRewriter`): the rewriter: the driver, the
     generated rule table (`Rules/`) and the theory rewriters (`Theory/`,
     `Strings/`);
