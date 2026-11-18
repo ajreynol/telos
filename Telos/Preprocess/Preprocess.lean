@@ -1,6 +1,7 @@
 import Telos.Preprocess.Passes.Rewrite
 import Telos.Preprocess.Passes.StaticRewrite
 import Telos.Preprocess.Passes.TheoryPreprocess
+import Telos.Preprocess.Passes.NonClausalSimp
 
 /-!
 # The preprocessor
@@ -24,15 +25,19 @@ the conjunction `inputNode as` of the input assertions and `true`
 namespace Telos.Preprocess
 
 /-- cvc5's `ProcessAssertions::apply`, on the assertions `as`. -/
-def preprocessCert (as : List Node) : Pipeline (inputNode as) :=
+def preprocessCert (as : List Node) (simplify : Bool := true) : Pipeline (inputNode as) :=
   let p := Pipeline.init as
-  -- `rewrite`: assertions must be rewritten here (cvc5 rewrites again before
-  -- `static-rewrite`, which changes nothing).
+  let p := Pipeline.rewrite p
+  -- `simplifyAssertions`: non-clausal simplification (`static-learning`, which
+  -- follows, is not ported)
+  let p := if simplify then Pipeline.nonClausalSimp p else p
   let p := Pipeline.rewrite p
   let p := Pipeline.staticRewrite p
   Pipeline.theoryPreprocess p
 
-/-- The preprocessed assertions. -/
-def preprocess (as : List Node) : Array Node := Pipeline.assertions (preprocessCert as)
+/-- The preprocessed assertions, and the definitions of the solved variables. -/
+def preprocess (as : List Node) (simplify : Bool := true) : Array Node × List Node :=
+  let p := preprocessCert as simplify
+  (Pipeline.assertions p, Pipeline.defs p)
 
 end Telos.Preprocess

@@ -195,12 +195,16 @@ form, then the lemmas added. -/
 def Pipeline.theoryPreprocess {input : Node} (p : Pipeline input) : Pipeline input :=
   if Pipeline.inConflict p then p
   else
-    match h : p.1 with
-    | .app (.kind .AND) cs =>
-      let (⟨rs, hrs⟩, st) := (mapChildren preprocessAssertion cs.toList).run {}
-      let r : Rw (.app (.kind .AND) cs) := Rw.congrList (.kind .AND) cs rs hrs rfl (.inl rfl)
-      let q := p.trans (h ▸ r)
-      Pipeline.conflict? (Pipeline.pushLemmas q (st.allLemmas.toList.flatMap splitLemma))
-    | _ => p
+    -- the assertions in order (not the definitions slot), with the state threaded
+    let as := (Pipeline.assertions p).toList
+    let (rs, st) := (as.mapM fun a => do
+      let r ← preprocessAssertion a
+      pure (⟨a, r⟩ : (c : Node) × Rw c)).run {}
+    let rs := rs.toArray
+    let q := Pipeline.mapConjuncts p fun i c =>
+      match rs[i]? with
+      | some ⟨a, r⟩ => if h : a = c then h ▸ r else Rw.id c
+      | none => Rw.id c
+    Pipeline.conflict? (Pipeline.pushLemmas q (st.allLemmas.toList.flatMap splitLemma))
 
 end Telos.Preprocess

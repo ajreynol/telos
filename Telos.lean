@@ -32,8 +32,11 @@ import Telos.Preprocess.Pipeline
 import Telos.Preprocess.Passes.Rewrite
 import Telos.Preprocess.Passes.StaticRewrite
 import Telos.Preprocess.Passes.TheoryPreprocess
+import Telos.Preprocess.Passes.NonClausalSimp
 import Telos.Preprocess.SkolemSteps
 import Telos.Preprocess.Conjunctions
+import Telos.Preprocess.ConjProof
+import Telos.Preprocess.CircuitPropagator
 import Telos.Preprocess.Theory.ArithPreprocess
 import Telos.Preprocess.Theory.BVPreprocess
 import Telos.Preprocess.Theory.DatatypesPreprocess

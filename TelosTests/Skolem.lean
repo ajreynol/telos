@@ -49,7 +49,7 @@ def rw (n : Node) : String := (rewrite n).toSmtLib
 def a : Node := .var "a" .boolean
 def y : Node := .var "y" .integer
 def three : Node := .const (.integer 3)
-def pp (as : List Node) : List String := (Preprocess.preprocess as).toList.map (·.toSmtLib)
+def pp (as : List Node) : List String := (Preprocess.preprocess as (simplify := false)).1.toList.map (·.toSmtLib)
 
 -- A non-Boolean `ite` is purified, with its lemma after the `true` placeholder.
 #guard pp [mkNode .GT #[iteNode a x y, three]] ==
@@ -80,5 +80,21 @@ def c : Node := .var "c" .boolean
     (mkNode .AND #[a, mkTrue, mkTrue, mkTrue])).map (·.1)) == some (mkNode .AND #[a, mkTrue, mkTrue, mkTrue])
 -- not the same conjuncts: no proof
 #guard (Preprocess.andReorg (mkNode .AND #[a, b]) (mkNode .AND #[a, c])).isNone
+
+/-! ## Non-clausal simplification -/
+
+def ppD (as : List Node) : List String × List String :=
+  let (out, defs) := Preprocess.preprocess as
+  (out.toList.map (·.toSmtLib), defs.map (·.toSmtLib))
+
+def z : Node := .var "z" .integer
+-- `x := (+ 1 y)`, applied; the assertion becomes `true`
+#guard ppD [eqNode x (mkNode .ADD #[y, .const (.integer 1)]), mkNode .GT #[x, three]] ==
+  (["true", "(>= y 3)", "true"], ["(= x (+ 1 y))"])
+-- `a := true` learned, then `(= x 1)` by the circuit propagator through the `ite`
+#guard ppD [iteNode a (eqNode x (.const (.integer 1))) (eqNode x (.const (.integer 2))), a] ==
+  (["true", "true", "true"], ["(= a true)", "(= x 1)"])
+-- a conflict
+#guard (ppD [a, notNode a]).1 == ["false"]
 
 end TelosTests.Skolem

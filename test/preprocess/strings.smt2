@@ -2,7 +2,7 @@
 ; equal and constant ends unified, constant clashes, non-containment, and the
 ; str.replace cases; and theory-preprocess of str.from_code (a purification
 ; skolem with its eager reduction lemma). Matches cvc5 -o post-asserts
-; --simplification=none --no-static-learning up to the orientation of
+; --no-static-learning up to the orientation of
 ; equalities.
 (set-logic ALL)
 (declare-const x String)

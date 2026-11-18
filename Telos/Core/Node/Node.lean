@@ -161,8 +161,10 @@ def getNumChildren (n : Node) : Nat := n.getChildren.size
 def isConst : Node → Bool
   | .const _ => true
   | .app (.node .APPLY_CONSTRUCTOR _) cs => cs.attach.all fun ⟨c, _⟩ => isConst c
-  -- a tuple of constants (cvc5's tuples are datatypes)
-  | .app (.kind k) cs => (k == .TUPLE || k == .TUPLE_UNIT) && cs.attach.all fun ⟨c, _⟩ => isConst c
+  -- a tuple of constants (cvc5's tuples are datatypes), and a singleton set of
+  -- a constant (a set value, which cvc5 treats as a constant)
+  | .app (.kind k) cs =>
+    (k == .TUPLE || k == .TUPLE_UNIT || k == .SET_SINGLETON) && cs.attach.all fun ⟨c, _⟩ => isConst c
   | _ => false
 
 /-- cvc5's `isVar`: a node of metakind `VARIABLE`, so a free or bound variable, or

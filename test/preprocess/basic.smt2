@@ -1,7 +1,7 @@
 ; Preprocessing (cvc5's ProcessAssertions) as ported so far: top-level
 ; conjunctions split (AssertionPipeline::push_back), the rewrite pass, conflicts,
 ; and define-fun as a macro. Matches cvc5 -o post-asserts with
-; --simplification=none --no-static-learning, apart from cvc5's define-fun lines
+; --no-static-learning, apart from cvc5's define-fun lines
 ; and the (assert true) it keeps in their place.
 (set-logic ALL)
 (declare-sort U 0)

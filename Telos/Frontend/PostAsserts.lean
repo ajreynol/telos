@@ -15,6 +15,10 @@ symbols. cvc5 numbers them in the order it creates them, from a counter it
 shares with other internal symbols; telos numbers them from 1 in the order
 they occur in the output, so the names agree only up to renaming.
 
+The definitions of the variables that non-clausal simplification solved are
+printed as `define-fun`s, as cvc5 prints its top-level substitutions, and the
+variables are not declared.
+
 Deviations from cvc5: `define-fun`s are macros, expanded when the script is
 read, so they are not printed, nor are the `(assert true)` that cvc5 keeps in
 their place.
@@ -73,19 +77,29 @@ def nameSkolems (N : DtNames) (ns : List Node) : List Node × List String :=
 
 /-- Preprocess the assertions of `sc`, and print the result as cvc5's
 `-o post-asserts` does. -/
-def postAsserts (sc : Script) : Except String String := do
+def postAsserts (sc : Script) (simplify : Bool := true) : Except String String := do
   let as ← sc.assertions.mapM fun a => match a.node with
     | .ok n =>
       if n.typeHint == some .boolean then pure n
       else throw s!"the assertion is not a well-typed formula: {a.source}"
     | .error e => throw s!"{e}: {a.source}"
-  let out := if as.isEmpty then #[] else Preprocess.preprocess as
-  let (out, skolemDecls) := nameSkolems sc.dtNames out.toList
+  let (out, defs) := if as.isEmpty then (#[], []) else Preprocess.preprocess as simplify
+  -- the definitions `(= x t)`, printed as `define-fun`s; skolems named in both
+  let defPairs := defs.filterMap fun
+    | .app (.kind .EQUAL) #[.var x T, t] => some (x, T, t)
+    | _ => none
+  let (named, skolemDecls) := nameSkolems sc.dtNames (out.toList ++ defPairs.map (·.2.2))
+  let k := out.size
+  let out := named.take k
+  let defLines := (defPairs.zip (named.drop k)).map fun ((x, T, _), t) =>
+    s!"(define-fun {x} () {T.toSmtLibWith sc.dtNames} {t.toSmtLibWith sc.dtNames})"
   let asserts := out.map fun n => s!"(assert {n.toSmtLibWith sc.dtNames})"
-  let decls := usedSymbols sc.symbols asserts
+  let defined := defPairs.map (·.1)
+  let decls := (usedSymbols sc.symbols (asserts ++ defLines)).filter fun s =>
+    !s.names.any defined.contains
   let isType (s : Symbol) := s.decl.startsWith "(declare-sort" || s.decl.startsWith "(declare-datatype"
   let lines := [";; post-asserts start", s!"(set-logic {sc.logic.getD "ALL"})"] ++
-    (decls.filter isType ++ decls.filter (!isType ·)).map (·.decl) ++ skolemDecls ++
+    (decls.filter isType ++ decls.filter (!isType ·)).map (·.decl) ++ defLines ++ skolemDecls ++
     asserts ++ ["(check-sat)", ";; post-asserts end"]
   return "\n".intercalate lines ++ "\n"
 

@@ -217,6 +217,30 @@ growing about linearly, mostly in the rewriter's type checks (Logos's
 translation and typing of every node checked) and the checking of the two
 `andReorg` steps.
 
+Phase 3 is under way: non-clausal simplification
+(`Telos/Preprocess/Passes/NonClausalSimp.lean`) with the circuit propagator
+(`CircuitPropagator.lean`), learned literals solved by the theories'
+`ppAssert` (Booleans, the default one, arithmetic) into substitutions, constant
+propagations, and learned literals re-added, as cvc5 does. The substitutions are
+cvc5's top-level substitutions: they are stored in the pipeline as its last
+conjunct (the definitions slot, `(= x t)` with `t` substituted to a fixed point)
+and printed as `define-fun`s. The theorem is unchanged: the conjunction it
+relates to the input now includes the definitions. The pass is one CPC proof of
+`(= C C')` (`ConjProof.lean`): assuming `C`, the propagator gives each
+assignment a fact (the parent's clause, `not_and`, `ite_elim1`, `equiv_elim2`,
+… or the CNF rules, resolved against the children's facts), each solved
+literal its equation, and each assertion its simplification (congruence with
+the equations at the leaves, then rewriting); assuming `C'`, the old conjuncts
+follow from the new ones and the definitions; resolution gives the equality.
+With cvc5's simplification on (`fuzz-pp.py` no longer passes
+`--simplification=none`), on 150 benchmarks per mode: the default and UF modes
+agree on all, arith on 144, bit-vectors 142, arrays 145, sets 145, strings 135.
+Not ported: bit-vector extract solving (`BvPpAssert`), static learning, and
+`repeat-simp`. Performance: solving many variables in one another expands
+terms, which cvc5 shares as a DAG and telos does not (a 36KB Certora benchmark
+gives 1.4MB of output, and its proof takes minutes); `--simplification=none`
+turns the pass off.
+
 ## Phases
 
 Each phase ends with fuzzing and benchmark agreement against cvc5, with the

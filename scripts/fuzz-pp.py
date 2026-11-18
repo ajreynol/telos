@@ -6,9 +6,11 @@ cvc5's passes that telos does not port yet switched off (`CVC5_OPTS` below), and
 compares the preprocessed assertions, in order, and the declarations, as a set.
 Assertions are compared as `fuzz.py` compares terms: identical, or up to the
 names of bound variables, the orientation of equalities, and the order of
-commutative arguments (which cvc5 takes from node ids). `define-fun`s are
-macros in telos (`Telos/Frontend/PostAsserts.lean`), so cvc5's `define-fun`
-lines are ignored, and for a benchmark with `define-fun`s so are the
+commutative arguments (which cvc5 takes from node ids). The `define-fun`s of
+the variables solved by non-clausal simplification are compared with the
+declarations, as a set. The input's `define-fun`s are macros in telos
+(`Telos/Frontend/PostAsserts.lean`), so for a benchmark with `define-fun`s
+cvc5's `define-fun` lines are ignored, and so are the
 `(assert true)` that cvc5 keeps in their place (all `(assert true)`, on both
 sides).
 
@@ -48,7 +50,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TELOS = ROOT / ".lake" / "build" / "bin" / "telos"
 # cvc5's passes that telos does not port yet, switched off. `theory-preprocess`
 # and `static-rewrite` cannot be: benchmarks they change differ.
-CVC5_OPTS = ["--simplification=none", "--no-static-learning"]
+CVC5_OPTS = ["--no-static-learning"]
 MODES = ["arith", "uf", "bv", "arrays", "mixed", "strings", "sets", "datatypes", "quantifiers"]
 
 
@@ -59,7 +61,7 @@ def post_asserts(text):
         lines = lines[lines.index(";; post-asserts start") + 1:lines.index(";; post-asserts end")]
     except ValueError:
         return None
-    decls = {l for l in lines if l.startswith("(declare-")}
+    decls = {l for l in lines if l.startswith("(declare-") or l.startswith("(define-fun")}
     asserts = [l[len("(assert "):-1] for l in lines if l.startswith("(assert ")]
     return decls, asserts
 
@@ -162,6 +164,8 @@ def main():
         if "define-fun" in path.read_text():
             oa = [x for x in oa if x != "true"]
             ta = [x for x in ta if x != "true"]
+            od = {d for d in od if not d.startswith("(define-fun")}
+            td = {d for d in td if not d.startswith("(define-fun")}
         verdict = compare(oa, ta)
         if verdict and od == td:
             counts[verdict] += 1
