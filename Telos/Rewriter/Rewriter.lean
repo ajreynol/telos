@@ -1,5 +1,5 @@
 import Std.Data.HashMap
-import Telos.Rewriter.Certified
+import Telos.Core.Certified
 
 /-!
 # Rewriter
@@ -32,7 +32,7 @@ Differences from cvc5:
   result, and need no proof of their own. The driver chains these certificates
   (`Rw`), so its result is certified too, and can be printed as a CPC proof.
 
-Correctness is `Telos.rewrite_correct` in `verification/TelosProofs/Rewriter.lean`.
+Correctness is `Telos.rewrite_correct` in `verification/TelosProofs/Rewriter/Rewriter.lean`.
 -/
 
 namespace Telos

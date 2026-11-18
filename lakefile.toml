@@ -10,6 +10,31 @@ name = "Cpc"
 git = "https://github.com/ajreynol/logos"
 rev = "58c89a48005fac77e7af10029bd16927507128b5"
 
+# One library per layer, each depending only on the ones above it
+# (`scripts/check-hygiene.sh` checks the imports):
+# - `TelosCore` (`Telos/Core/`): nodes, their translation to Logos terms,
+#   certified rewrites (`Rw`) and CPC proof output;
+# - `TelosRewriter` (`Telos/Rewriter/`): the rewriter;
+# - `TelosFrontend` (`Telos/Frontend/`): SMT-LIB scripts in, results out.
+# `Telos` is the root module, importing them all.
+[[lean_lib]]
+name = "TelosCore"
+roots = []
+globs = ["Telos.Core.+"]
+moreLeanArgs = ["-DwarningAsError=true"]
+
+[[lean_lib]]
+name = "TelosRewriter"
+roots = []
+globs = ["Telos.Rewriter.+"]
+moreLeanArgs = ["-DwarningAsError=true"]
+
+[[lean_lib]]
+name = "TelosFrontend"
+roots = []
+globs = ["Telos.Frontend.+"]
+moreLeanArgs = ["-DwarningAsError=true"]
+
 [[lean_lib]]
 name = "Telos"
 moreLeanArgs = ["-DwarningAsError=true"]

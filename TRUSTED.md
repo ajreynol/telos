@@ -16,7 +16,7 @@ the wrong thing, so review them as specifications, not as code.
   The Eunoia programs compiled from `Cpc.eo` (`Cpc/Logos.lean`: the rules, the
   checker, `__eo_typeof`, `__eo_nil`) are not part of it; Logos proves the
   checker sound against this specification.
-- `Telos/Node/ToEo.lean`: the translation of `Node` to Logos terms. It assigns
+- `Telos/Core/Node/ToEo.lean`: the translation of `Node` to Logos terms. It assigns
   every node its meaning, so it must match how cvc5 prints that node in CPC. The
   per-operator part is a table (`Kind.eoShape`, `indexedEoShape`, `nodeEoShape`)
   giving each operator's CPC head symbol and arity. A declared constant
@@ -32,7 +32,7 @@ the wrong thing, so review them as specifications, not as code.
   part of the specification. `ToEo.lean` does not
   import `Cpc/Logos.lean` (`scripts/check-hygiene.sh` checks this for every
   specification file).
-- `verification/TelosProofs/Spec.lean`: the definition of `Node.Equiv`.
+- `verification/TelosProofs/Core/Spec.lean`: the definition of `Node.Equiv`.
 
 ## Not trusted
 
@@ -41,19 +41,19 @@ step checked by Logos's checker, whose soundness Logos proves
 (`Certified.equiv`). A bug in any of the following can make telos miss a
 rewrite or differ from cvc5, but not return a non-equivalent node:
 
-- the theory strategies (`Telos/Theory/`) and the driver's control flow;
-- the generated rule table (`Telos/Rules/Generated.lean`), its generator
-  (`scripts/gen-rules.py`) and the matcher (`Telos/Rules/Match.lean`);
-- `Node.ofEo` (`Telos/Node/OfEo.lean`), the term order (`Telos/Node/Order.lean`)
-  and the printer (`Telos/Node/Print.lean`).
+- the theory strategies (`Telos/Rewriter/Theory/`) and the driver's control flow;
+- the generated rule table (`Telos/Rewriter/Rules/Generated.lean`), its generator
+  (`scripts/gen-rules.py`) and the matcher (`Telos/Rewriter/Rules/Match.lean`);
+- `Node.ofEo` (`Telos/Core/Node/OfEo.lean`), the term order (`Telos/Core/Node/Order.lean`)
+  and the printer (`Telos/Core/Node/Print.lean`).
 
 The theorem is about `Node`s. The following turn text into nodes and nodes into
 text, and are not covered by it:
 
-- the SMT-LIB front end (`Telos/Frontend.lean`) and Logos's parser, which is
+- the SMT-LIB front end (`Telos/Frontend/Simplify.lean`) and Logos's parser, which is
   unverified. A parsing bug can make telos rewrite a different term than the one
   written; the result is still equivalent to the term telos read.
-- proof output (`Telos/Proof/`, `Telos/Rules/RuleNames.lean`). A printed proof is
+- proof output (`Telos/Core/Proof/`, `Telos/Core/RuleNames.lean`). A printed proof is
   checked by Logos's checker before it is printed, and is meant to be checked
   again by its reader (Ethos or Logos).
 
@@ -63,7 +63,7 @@ text, and are not covered by it:
 
 ## `unsafe` / `@[extern]` / `implemented_by` in this repository
 
-- `Telos/Profile.lean`: the profiling probe `Profile.time cat key f`, whose
+- `Telos/Core/Profile.lean`: the profiling probe `Profile.time cat key f`, whose
   definition is `f ()`, is `implemented_by` an `unsafe` function that also reads
   the clock and records the time in a global table (`unsafeBaseIO`). The
   theorem is about the definition; the compiled rewriter runs the
@@ -78,7 +78,7 @@ No `sorry` and no declared `axiom`. `Telos.rewrite_correct` is proved in
 `verification/TelosFull/Main.lean` (`lake -d verification build TelosFull`). The
 default build, which CI runs, proves `Telos.rewrite_correct_of_logos`, which
 takes the Logos theorems it uses as the hypothesis `[LogosFacts]`
-(`verification/TelosProofs/LogosFacts.lean`); `TelosFull` proves the instance
+(`verification/TelosProofs/Core/LogosFacts.lean`); `TelosFull` proves the instance
 from Logos's proofs. Both builds fail if the theorem they prove uses any axiom
 other than:
 

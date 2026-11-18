@@ -72,16 +72,25 @@ Five layers, from the bottom:
 
 | Layer | Where | Trusted? | Proof cost per rule |
 |---|---|---|---|
-| `Node` and its semantics (`toEo`) | `Telos/Node/` | specification | — |
-| Certified rule step | `Telos/Rewriter/Certified.lean` | verified once | none |
-| Rule database | `Telos/Rules/` (generated) | untrusted | none |
-| Theory strategies | `Telos/Theory/` (hand-written) | untrusted | none |
+| `Node` and its semantics (`toEo`) | `Telos/Core/Node/` | specification | — |
+| Certified rule step | `Telos/Core/Certified.lean` | verified once | none |
+| Rule database | `Telos/Rewriter/Rules/` (generated) | untrusted | none |
+| Theory strategies | `Telos/Rewriter/Theory/` (hand-written) | untrusted | none |
 | Driver (`rewriteWith`) | `Telos/Rewriter/` | verified once | none |
 
 A wrong rule database or strategy can lose rewrites, or differ from cvc5. It
 cannot make telos unsound.
 
-### `Node` (`Telos/Node/`)
+The code is in Lake libraries by layer (`lakefile.toml`): `TelosCore`
+(`Telos/Core/`: nodes, their semantics, certified steps, proof output),
+`TelosRewriter` (`Telos/Rewriter/`: rule database, strategies, driver) and
+`TelosFrontend` (`Telos/Frontend/`). Each imports only the ones before it, and
+the proofs (`verification/TelosProofs/Core/`, `…/Rewriter/`) follow the same
+split; `scripts/check-hygiene.sh` checks both. The preprocessor
+(`preprocessor-plan.md`) is to be `Telos/Preprocess/`, using Core and the
+rewriter.
+
+### `Node` (`Telos/Core/Node/`)
 
 - `Kind`: cvc5's kind names (`EQUAL`, `NOT`, `AND`, …, `CONST_BOOLEAN`, …), and
   `Kind.theoryId` (cvc5's `kindToTheoryId`).
@@ -120,15 +129,15 @@ table. Speed will come from a cached hash, physical sharing (`ShareCommon`) and 
 rewrite cache keyed on the node. A table-backed `NodeManager` can be added
 underneath later without changing the specification.
 
-Equality is structural (`Telos/Node/DecEq.lean`, written by hand because Lean
+Equality is structural (`Telos/Core/Node/DecEq.lean`, written by hand because Lean
 cannot derive it for nested mutual inductives).
 
-`Node.ofEo` (`Telos/Node/OfEo.lean`) is the partial inverse of `toEo`. It turns the right-hand
+`Node.ofEo` (`Telos/Core/Node/OfEo.lean`) is the partial inverse of `toEo`. It turns the right-hand
 side of a rule's conclusion, an `Eo.Term`, back into a node. Its correctness is
 checked at run time, `(ofEo r).toEo == r`, so it needs no proof and can be
 incomplete.
 
-### Semantics (`Telos/Node/ToEo.lean`, `verification/TelosProofs/Spec.lean`)
+### Semantics (`Telos/Core/Node/ToEo.lean`, `verification/TelosProofs/Core/Spec.lean`)
 
 - `Node.toEo` translates a node to a Logos term, the way cvc5 prints it in CPC and
   Ethos elaborates it. Each operator has an `AppShape`, given by a table
@@ -157,7 +166,7 @@ incomplete.
   Logos evaluates `=` to a Boolean even on ill-typed arguments, so without it
   two ill-typed nodes would be "equivalent".
 
-### Certified rule steps (`Telos/Rewriter/Certified.lean`)
+### Certified rule steps (`Telos/Core/Certified.lean`)
 
 A rule step rewrites a node `n` to `m` by one CPC rule. Logos compiles every
 CPC rule into Lean (`Cpc/Logos.lean`). `__eo_prog_ite_true_cond x y` computes
@@ -167,7 +176,7 @@ proof (`invoke_cmd_list_preserves_stateInvariant`, `Cpc/Proofs/Checker.lean`)
 covers any command list run from the empty state. So telos does not compute
 right-hand sides, and does not prove anything per rule. A step:
 
-1. takes a rule and its arguments from a matcher (`Telos/Rules/`);
+1. takes a rule and its arguments from a matcher (`Telos/Rewriter/Rules/`);
 2. builds a short CPC command list. That is a step for each of the rule's
    premises, if any (`evaluate` by default, or a step the strategy chooses, such
    as `bool-double-not-elim` for `(= (not (not b)) b)`), then the rule itself;
@@ -213,7 +222,7 @@ checked at run time, and are justified by `Node.Equiv.congr` and
 `Node.Equiv.congr_binder`.
 
 `ProvesEq` is decidable, and is decided by running Logos's checker. In
-`verification/` (`TelosProofs/Certified.lean`):
+`verification/` (`TelosProofs/Core/Certified.lean`):
 
 ```lean
 theorem Certified.equiv : Certified n m → n.WellTyped → n.Equiv m
@@ -233,7 +242,7 @@ of `verification/` imports none of Logos's proofs (`Cpc/Proofs/`), only its
 definitions. The Logos theorems telos uses (checker soundness, spine congruence,
 `eq_valid_iff`, the laws of `smt_value_rel` and three typing facts) are restated
 over those definitions as the fields of the class `LogosFacts`
-(`TelosProofs/LogosFacts.lean`), and the theorems that need them take
+(`TelosProofs/Core/LogosFacts.lean`), and the theorems that need them take
 `[LogosFacts]`, up to `Telos.rewrite_correct_of_logos`. That build runs in CI.
 `lake -d verification build TelosFull` imports Logos's proofs, proves the
 instance field by field from the Logos theorem each restates (so the
@@ -246,7 +255,7 @@ non-stuck arguments, the program returns the instantiated template" (the shape
 Logos's own `prog_eq_of_nonstuck` lemmas take, proved by `cases <;> rfl`) can
 replace the run-time check for hot rules.
 
-### Rule database (`Telos/Rules/`, generated)
+### Rule database (`Telos/Rewriter/Rules/`, generated)
 
 For each rewrite rule, the database holds what is needed to *find* an
 application. That is the rule's `CRule` constructor, its `:args` variables, the
@@ -258,7 +267,7 @@ It is generated from `install/defs/Cpc.cached.eo` in the pinned Logos checkout,
 the same file Logos compiled. So bumping the Logos revision and regenerating
 keeps the two in sync. See "The rule extractor" below.
 
-One generic matcher (`Telos/Rules/Match.lean`) interprets the patterns. It
+One generic matcher (`Telos/Rewriter/Rules/Match.lean`) interprets the patterns. It
 handles:
 
 - variables, constants, and the operator encodings of `AppShape`;
@@ -281,12 +290,12 @@ theory rewrites of CPC (`ProofRewriteRule`). Examples are `aci_norm`,
 quantifier miniscoping and the string rules. Many of them take the whole
 equation as an argument and check it. For these, telos computes the right-hand
 side with ordinary, unverified code ported from cvc5, and the rule validates
-it (`checkBy`, `Telos/Theory/Common.lean`). The interface is the same. For
+it (`checkBy`, `Telos/Rewriter/Theory/Common.lean`). The interface is the same. For
 example, cvc5's `flattenNode` is computed as in C++ and certified by `aci_norm`
 (flattening, removing `true`/`false` and duplicates: both sides have the same
 sorted normal form) or, when the result is the zero element, by `absorb`.
 
-### Theory strategies (`Telos/Theory/`, hand-written)
+### Theory strategies (`Telos/Rewriter/Theory/`, hand-written)
 
 A rule says what a rewrite *may* do, not what it *should* do. `eq-symm` proves
 `(= (= t s) (= s t))`, so the rule database could flip any equality. cvc5 flips
@@ -301,7 +310,7 @@ knowledge. Each is a port of the control flow of a cvc5 theory rewriter
 
 **Term order.** cvc5 orders by node id, which depends on creation order and is
 not reproducible outside one cvc5 run. telos uses a fixed total order on `Node`
-(`Telos/Node/Order.lean`). Its first version is structural: kind, then
+(`Telos/Core/Node/Order.lean`). Its first version is structural: kind, then
 operator, then children lexicographically. It is used wherever cvc5 compares
 ids: orienting equalities, sorting the children of commutative operators
 (`aci_norm`), and choosing between symmetric rewrites. telos's normal forms will
@@ -317,9 +326,9 @@ work. Porting a theory rewriter is pure programming.
   `postRewrite`), as in cvc5.
 - `theoryOf`: cvc5's type-based `Theory::theoryOf`. Variables go to the theory of
   their type, `EQUAL` to the theory of its arguments' type, anything else to the
-  theory of its kind. `theoryRewriter` (`Telos/Rewrite.lean`) maps each theory
+  theory of its kind. `theoryRewriter` (`Telos/Rewriter/Rewrite.lean`) maps each theory
   to its rewriter: `THEORY_BOOL` to the port of `TheoryBoolRewriter`
-  (`Telos/Theory/Bool.lean`), the others to the identity so far.
+  (`Telos/Rewriter/Theory/Bool.lean`), the others to the identity so far.
 - `rewriteWith`: cvc5's `Rewriter::rewriteTo`, returning a certified rewrite
   (`Rw n`). Pre-rewrite until done and in the
   same theory, rewrite the children, post-rewrite. `REWRITE_AGAIN` post-rewrites
@@ -331,7 +340,7 @@ work. Porting a theory rewriter is pure programming.
   (`decide c.WellTyped`) that stands in for a proof that the children of a
   well-typed node are well typed. Under a quantifier only the body is rewritten.
 
-### Front end (`Telos/Frontend.lean`, `Main.lean`)
+### Front end (`Telos/Frontend/Simplify.lean`, `Main.lean`)
 
 `telos FILE` reads an SMT-LIB script of declarations (`declare-const`,
 `declare-fun`, `declare-sort`) and `(simplify t)` commands, and prints the
@@ -342,7 +351,7 @@ Logos's numbered `UConst`s; the front end replays the numbering to make them
 named `Node.var`s, and `Node.ofEo` reads the rest. A term with an operator that
 has no `Kind` yet is reported as unsupported.
 
-### Proof output (`Telos/Proof/`)
+### Proof output (`Telos/Core/Proof/`)
 
 With `--proof` (or `--proof-dir DIR`), each result comes with a CPC proof of
 `(= t result)`. `Proof.emitProof` flattens the certificate into one list of
@@ -404,7 +413,7 @@ everything that matters to soundness: the rule programs, the checker and their
 proofs. What telos needs is narrower, a *rule extractor*:
 
 ```
-Cpc.cached.eo (pinned Logos) ──scripts/gen-rules.py──▶ Telos/Rules/Generated.lean
+Cpc.cached.eo (pinned Logos) ──scripts/gen-rules.py──▶ Telos/Rewriter/Rules/Generated.lean
                                                         (data: RuleSpec table)
 ```
 
@@ -439,7 +448,7 @@ What needs care:
 1. **Symbol mapping.** The extractor maps Eunoia symbols to telos `Kind`s (or to
    the `Eo.Term` constructors eoc emits). This is the same table as
    `Kind.eoShape`, read in the other direction. To avoid keeping two copies, the
-   extractor reads the symbol names from a single table that `Telos/Node/ToEo.lean`
+   extractor reads the symbol names from a single table that `Telos/Core/Node/ToEo.lean`
    also uses (generated, or checked by a test).
 2. **Patterns on `Node` or on `Eo.Term`.** Matching on `Eo.Term` is closest to
    the source: patterns are the conclusion's left-hand side as written, and
@@ -485,10 +494,10 @@ tested:
 3. ~~Rule extractor and matcher.~~ Done: `scripts/gen-rules.py` (55 rules: the
    `bool-*`, `ite-*` and `eq-*` rules), `RuleSpec`, the matcher, the self-test
    (`TelosTests/Rules.lean`) and the CI sync check.
-4. ~~Booleans.~~ `TheoryBoolRewriter` is ported (`Telos/Theory/Bool.lean`, tests
+4. ~~Booleans.~~ `TheoryBoolRewriter` is ported (`Telos/Rewriter/Theory/Bool.lean`, tests
    in `TelosTests/Bool.lean`).
    - ~~UF.~~ `TheoryUfRewriter` is ported for the kinds telos has
-     (`Telos/Theory/UF.lean`, `test/examples/uf.smt2`): equalities over
+     (`Telos/Rewriter/Theory/UF.lean`, `test/examples/uf.smt2`): equalities over
      uninterpreted sorts and functions (`eq-refl`, orientation by `eq-symm`),
      and `distinct` (the new kind `DISTINCT`: `distinct-card-conflict`,
      `distinct-false`, `distinct-true`, and `distinct-elim` to pairwise
@@ -504,7 +513,7 @@ tested:
    - Open: equality rewriting of the theories not ported yet (strings, bit-vectors,
      arrays, sets), which cvc5 does in their own rewriters.
 5. **Front end and fuzzing.** The `telos` executable reads SMT-LIB scripts of
-   `(simplify t)` queries through Logos's parser (`Telos/Frontend.lean`).
+   `(simplify t)` queries through Logos's parser (`Telos/Frontend/Simplify.lean`).
    `telos-fuzz` (random Boolean terms over three Booleans and two integer
    equalities) and `scripts/fuzz.py` compare with cvc5's `(simplify t)`. On 6000
    terms of depth 4: about 94% identical to cvc5, every other result identical up
@@ -521,7 +530,7 @@ tested:
      `INTS_MODULUS`, their total versions, `ABS`, `LT`, `LEQ`, `GT`, `GEQ`,
      `TO_REAL`, `TO_INTEGER` and `IS_INTEGER`, with their congruence proof, and
      36 more generated rules.
-   - `Telos/Theory/Arith.lean` ports the core of cvc5's `ArithRewriter`:
+   - `Telos/Rewriter/Theory/Arith.lean` ports the core of cvc5's `ArithRewriter`:
      polynomial normal forms of terms (certified by `arith_poly_norm`), the
      normalization of `>=`, `<=`, `>` and `<` to `(>= sum c)` or
      `(not (>= sum c))` with integer tightening (`arith_poly_norm_rel`,
@@ -573,9 +582,9 @@ tested:
      congruence is proved (`bv_nary_args`, `typedNil_congr_bv`: equivalent
      bit-vector terms have the same Eunoia type, by Logos's
      `eo_typeof_eq_of_smt_type_eq`). The rule table has 141 of the 145
-     bit-vector and conversion rules (233 rules in all). `Telos/Theory/BV.lean`
+     bit-vector and conversion rules (233 rules in all). `Telos/Rewriter/Theory/BV.lean`
      ports cvc5's `TheoryBVRewriter` kind by kind, with RARE rules for cvc5's
-     rewrite rules and `evaluate` for constants. `Telos/Theory/BVNorm.lean`
+     rewrite rules and `evaluate` for constants. `Telos/Rewriter/Theory/BVNorm.lean`
      ports the rules over whole n-ary terms, computed natively and certified:
      the polynomial ones (`FlattenAssocCommut`, `AddCombineLikeTerms`,
      `MultSimplify`, `MultDistrib*`, `NegIdemp`, `NegSub`, `NegAdd`) by
@@ -593,7 +602,7 @@ tested:
    - Also: constant `bvcomp` (by `bv-comp-eliminate`, as Logos's `evaluate`
      does not reduce it), `bvumulo` and `bvsmulo` of constants (their
      `:requires` programs are extracted from Logos's compiled code into
-     `Telos/Rules/Programs.lean` by `gen-rules.py`), and the comparisons of
+     `Telos/Rewriter/Rules/Programs.lean` by `gen-rules.py`), and the comparisons of
      `sign_extend`/`zero_extend` with constants, in cvc5's order. Premises may
      equate two terms (both evaluated), and the `@bv` literals of premises are
      written as the rule writes them, `((_ int_to_bv w) v)`.
@@ -630,7 +639,7 @@ tested:
      comparisons and read-backs about 35%, RARE matching 18%.
    - cvc5 bug found while porting: `RewriteRule<NegMult>::applies` never holds
      (`cvc5-negmult-bug.md`).
-7. **Arrays.** `TheoryArraysRewriter` is ported (`Telos/Theory/Arrays.lean`,
+7. **Arrays.** `TheoryArraysRewriter` is ported (`Telos/Rewriter/Theory/Arrays.lean`,
    `test/examples/arrays.smt2`) for `select`, `store` and array equalities,
    with the six RARE rules for arrays (`array-read-over-write`,
    `array-read-over-write2`, `array-store-overwrite`, `array-store-self`,
@@ -670,7 +679,7 @@ tested:
    signature's `seq.*` aliases, nullary regular expressions and string
    literals: 168 of the 203 string rules. The rule self-test gives variables
    their declared types and accepts rules whose left-hand side matches but
-   whose premises do not hold on fresh variables. `Telos/Theory/Strings.lean`
+   whose premises do not hold on fresh variables. `Telos/Rewriter/Theory/Strings.lean`
    ports cvc5's `rewriteConcat` (by `aci_norm` and `evaluate`), parts of
    `rewriteLength`, `rewriteEquality`, `rewriteCharAt`, `rewritePrefixSuffix`
    (without arithmetic entailment), the eliminations of `re.opt`, `re.+`,
@@ -681,7 +690,7 @@ tested:
      (24.1% after the first step), no semantic disagreements; Ethos accepts all
      proofs. The largest gaps are `rewriteSubstr`, `rewriteMembership` and the
      regular expression rewrites, `rewriteReplace` and `rewriteContains`.
-   - **Arithmetic entailment** (`Telos/Strings/ArithEntail.lean`): cvc5's
+   - **Arithmetic entailment** (`Telos/Rewriter/Strings/ArithEntail.lean`): cvc5's
      `ArithEntail` as the strings rewriter uses it by default (no rewriter, no
      recursive approximations, so `rewriteArith` is `rewriteLengthIntro` and
      the polynomial normal form): `checkSimple`, `getArithApproximations`,
@@ -717,7 +726,7 @@ tested:
    - Fuzzing: 43.9% identical to cvc5 (from 27.6%), no semantic
      disagreements; Ethos accepts all proofs. (`fuzz.py` now gives each of
      cvc5's equivalence checks 2 seconds; 2 string checks time out.)
-   - **String entailment** (`Telos/Strings/StringsEntail.lean`): cvc5's
+   - **String entailment** (`Telos/Rewriter/Strings/StringsEntail.lean`): cvc5's
      `componentContains` (with remainders), `stripConstantEndpoints`,
      `getMultisetApproximation` and `checkMultisetSubset`, over words as lists
      of code points (`find`, `rfind`, `overlap`, `hasOverlap`).
@@ -868,18 +877,18 @@ tested:
    program-equals-template lemmas for hot rules; normalizers (first
    `arith_poly_norm`) proven to produce steps the checker accepts, so that
    their steps need no run-time check.
-   - Static steps share one interface, `StaticProc` (`Telos/Rewriter/Static.lean`,
-     `Certified.static`, `TelosProofs/Static.lean`); `docs/theory-rewriters.md`
+   - Static steps share one interface, `StaticProc` (`Telos/Core/Static.lean`,
+     `Certified.static`, `TelosProofs/Core/Static.lean`); `docs/theory-rewriters.md`
      says how to add one.
    - Static `arith_poly_norm`: done. `normalizeTerm` rewrites `n` to
-     `arithNorm n` (`Telos/Arith/PolyNorm.lean`) by `StaticProc.arithNorm`,
+     `arithNorm n` (`Telos/Core/PolyNorm.lean`) by `StaticProc.arithNorm`,
      whose step Logos's checker never runs. It is justified in `verification/`:
-     Logos's term order is a strict total order (`TelosProofs/TermOrder.lean`,
+     Logos's term order is a strict total order (`TelosProofs/Core/TermOrder.lean`,
      per-constructor part generated by `scripts/gen-term-order.py`); Logos's
      normal form is canonical, normal forms of `Int`/`Real` terms are not stuck,
      and telos's `polyOf`/`Poly.toNode` preserve the value of a term
-     (`TelosProofs/PolyNorm.lean`); so `[arith_poly_norm (= n (arithNorm n))]`
-     meets `ProvesEq` (`TelosProofs/ArithNorm.lean`), and `Certified.equiv`
+     (`TelosProofs/Core/PolyNorm.lean`); so `[arith_poly_norm (= n (arithNorm n))]`
+     meets `ProvesEq` (`TelosProofs/Core/ArithNorm.lean`), and `Certified.equiv`
      covers the step. Printed proofs contain that step, so `--proof` is
      unchanged. The run-time side conditions (`ArithNormOk`) are a type query:
      the equation's SMT type is `Bool`, `n` is `Int` or `Real`, and an integer
@@ -902,7 +911,7 @@ tested:
      checks at run time that the children are well typed. `Certified.congr` and
      `congrArg` accept that condition instead, and `Certified.equiv` derives
      the children's typing from the parent's
-     (`TelosProofs/ChildTyping.lean`, `children_wellTyped`). Other operators
+     (`TelosProofs/Core/ChildTyping.lean`, `children_wellTyped`). Other operators
      (`APPLY_UF`, `extract`) keep the check. Strategies' type queries (`isInt`,
      `theoryOf`) use `Node.typeHint`, a structural type that falls back to
      Logos's type checker; nothing proved depends on it. Arithmetic benchmark:
@@ -910,7 +919,7 @@ tested:
      remaining RARE, `evaluate` and `aci_norm` steps (run, read back, compare:
      about 28%).
    - Profiling: `--profile` on `telos` and `telos-fuzz` prints where the time
-     went (`Telos/Profile.lean`: probes on the checker's phases, per rule, on
+     went (`Telos/Core/Profile.lean`: probes on the checker's phases, per rule, on
      type queries, the RARE matcher and the arithmetic normal form);
      `scripts/profile.sh` is the standard benchmark. Baseline (3000 arithmetic
      terms of depth 4, 1.1s): running the checker 31%, of which
@@ -926,7 +935,7 @@ tested:
     sets, that is the operators below: safe mode excludes `set.card`, the
     relations, `set.universe`, `set.complement` and comprehensions, and
     `set.map`, `set.filter`, `set.fold`, `set.all` and `set.some` have no CPC
-    counterpart. `TheorySetsRewriter` is ported (`Telos/Theory/Sets.lean`,
+    counterpart. `TheorySetsRewriter` is ported (`Telos/Rewriter/Theory/Sets.lean`,
     `test/examples/sets.smt2`).
     - Kinds `SET_SINGLETON`, `SET_UNION`, `SET_INTER`, `SET_MINUS`, `SET_MEMBER`,
       `SET_SUBSET`, `SET_CHOOSE`, `SET_IS_EMPTY`, `SET_IS_SINGLETON` and
@@ -965,7 +974,7 @@ tested:
 
 12. **Datatypes.** Inductive datatypes, parametric datatypes and tuples, as in
     cvc5's safe mode (no codatatypes, `match` or nullables).
-    `DatatypesRewriter` is ported (`Telos/Theory/Datatypes.lean`,
+    `DatatypesRewriter` is ported (`Telos/Rewriter/Theory/Datatypes.lean`,
     `test/examples/datatypes.smt2`, `test/examples/datatypes-par.smt2`).
     - Representation, mirroring Logos: `TypeNode.datatype name decl`, with the
       block `decl` (`DtDecl`, `Dt`, `DtCons`: datatypes, constructors, field
@@ -1029,7 +1038,7 @@ tested:
       semantic disagreements; Ethos accepts all of 800 proofs.
 
 13. **Quantifiers.** `QuantifiersRewriter` is ported in part
-    (`Telos/Theory/Quantifiers.lean`, `Telos/Theory/Nnf.lean`,
+    (`Telos/Rewriter/Theory/Quantifiers.lean`, `Telos/Rewriter/Theory/Nnf.lean`,
     `test/examples/quantifiers.smt2`). cvc5 tries its steps in order, the first
     that changes the quantifier winning (`computeOperation`); telos follows that
     order. Ported, each certified by the CPC rules cvc5's elaboration uses:

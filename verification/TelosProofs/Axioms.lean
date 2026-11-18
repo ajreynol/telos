@@ -1,4 +1,4 @@
-import TelosProofs.Rewriter
+import TelosProofs.Rewriter.Rewriter
 
 /-!
 # Axiom audit

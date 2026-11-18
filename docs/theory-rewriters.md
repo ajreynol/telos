@@ -23,14 +23,14 @@ differential fuzzing, not proved.
 
 | Part | File | Trusted? |
 |---|---|---|
-| Operator kinds | `Telos/Node/Kind.lean` (`Kind`, `Kind.theoryId`) | no |
-| CPC form of each kind | `Telos/Node/ToEo.lean` (`Kind.eoShape`) | **yes, specification** |
-| Reading CPC terms back | `Telos/Node/OfEo.lean` | no |
-| Printing | `Telos/Node/Print.lean` | no (not covered by the theorem) |
-| Rule table | `scripts/gen-rules.py` → `Telos/Rules/Generated.lean` | no |
-| The rewriter | `Telos/Theory/<Theory>.lean` | no |
-| Registration | `Telos/Rewrite.lean` (`theoryRewriter`) | no |
-| Static steps (optional) | `Telos/<Theory>/…` below `Telos.Rewriter.Certified` | no; proved in `verification/` |
+| Operator kinds | `Telos/Core/Node/Kind.lean` (`Kind`, `Kind.theoryId`) | no |
+| CPC form of each kind | `Telos/Core/Node/ToEo.lean` (`Kind.eoShape`) | **yes, specification** |
+| Reading CPC terms back | `Telos/Core/Node/OfEo.lean` | no |
+| Printing | `Telos/Core/Node/Print.lean` | no (not covered by the theorem) |
+| Rule table | `scripts/gen-rules.py` → `Telos/Rewriter/Rules/Generated.lean` | no |
+| The rewriter | `Telos/Rewriter/Theory/<Theory>.lean` | no |
+| Registration | `Telos/Rewriter/Rewrite.lean` (`theoryRewriter`) | no |
+| Static steps (optional) | `Telos/Core/…` below `Telos.Core.Certified` | no; proved in `verification/` |
 
 ### New kinds
 
@@ -38,13 +38,13 @@ differential fuzzing, not proved.
 2. Add its CPC shape to `Kind.eoShape` (`spine` with an arity, `rightAssocNil`,
    …). This is the **specification**: it gives the node its meaning. Copy how cvc5
    prints the kind in CPC exactly, and review it like a definition, not like
-   code. Each shape's congruence is proved once (`TelosProofs/Congruence.lean`),
+   code. Each shape's congruence is proved once (`TelosProofs/Core/Congruence.lean`),
    so a new kind with an existing shape needs no proof. One exception: a
    `rightAssocNil` operator with a typed nil (like `bvand` or `bvadd`) must also
    be listed in `AppShape.isChildCongruent` (only `+` and `*` are now), with its
    case in `Congruence.lean`. A new shape also needs its case in
    `Congruence.lean` (trivial if it is not child-congruent), and the proof
-   printer (`Telos/Proof/Eunoia.lean`) must print it so that Logos's parser
+   printer (`Telos/Core/Proof/Eunoia.lean`) must print it so that Logos's parser
    reads it back as the same term: check with `scripts/check-proofs.py`, which
    fails when proofs are missing. `distinct`, an operator applied to a list
    built from its arguments, is the example.
@@ -58,9 +58,9 @@ differential fuzzing, not proved.
    literals) are not covered by the fresh-variable self-test
    (`TelosTests/Rules.lean`), so test them on concrete terms.
 4. Optionally add the kind to `Op.childrenTypedOfParent`
-   (`Telos/Rewriter/Certified.lean`). Then the driver skips the run-time check
+   (`Telos/Core/Certified.lean`). Then the driver skips the run-time check
    that its children are well typed. This needs the kind's case in
-   `verification/TelosProofs/ChildTyping.lean`: an application with an SMT type
+   `verification/TelosProofs/Core/ChildTyping.lean`: an application with an SMT type
    has arguments with SMT types. That is short for most operators, using the
    kind's typing rule. Leave the kind out for operators where it fails, such as
    partial applications or user functions.
@@ -74,7 +74,7 @@ meanings), the result, and its certificate. The driver (`rewriteWith`) handles
 children, fuel and theory changes. Follow the cvc5 source function by function,
 and say in comments which function each part ports and where it differs.
 
-Build rewrites with the combinators of `Telos/Theory/Common.lean`. Each returns
+Build rewrites with the combinators of `Telos/Rewriter/Theory/Common.lean`. Each returns
 `Option (Rw n)`, which is `none` when the step does not apply or the checker
 rejects it:
 
@@ -127,7 +127,7 @@ Rules of thumb:
   `docs/design.md`.
 - `python3 scripts/check-proofs.py --fuzz 500` checks printed proofs with Ethos.
 - `bash scripts/profile.sh` and `--profile` show where the time goes, per checker
-  phase and per rule (`Telos/Profile.lean`). Add probes (`Profile.time`) only in
+  phase and per rule (`Telos/Core/Profile.lean`). Add probes (`Profile.time`) only in
   untrusted code.
 - `bash scripts/check-hygiene.sh`, `lake build`, and `lake -d verification build`
   (`lake -d verification build TelosFull` after changing the Logos pin).
@@ -139,10 +139,10 @@ When the profile shows one rule dominating, usually a normalization rule like
 run. The procedure is then computed natively, and the CPC step is only printed.
 Do this only for hot steps: it costs a proof.
 
-The interface is `StaticProc` (`Telos/Rewriter/Static.lean`). To add a procedure:
+The interface is `StaticProc` (`Telos/Core/Static.lean`). To add a procedure:
 
-1. Its code, in a module below `Telos.Rewriter.Certified` (like
-   `Telos/Arith/PolyNorm.lean`), and a decidable side condition. Keep the side
+1. Its code, in a module below `Telos.Core.Certified` (like
+   `Telos/Core/PolyNorm.lean`), and a decidable side condition. Keep the side
    condition cheap and decide it at run time. Typical parts: the terms have the
    expected types, and a fast native check such as two polynomials being equal.
 2. A `StaticProc` constructor, its `Ok` case (the side condition) and its `cmds`
@@ -150,17 +150,17 @@ The interface is `StaticProc` (`Telos/Rewriter/Static.lean`). To add a procedure
 3. In the theory rewriter: `if h : decide (…) then some ⟨m, .static p h (.refl m)⟩`
    `else` the checked step, as a fallback.
 4. In `verification/`, the case of `StaticProc.provesEq`
-   (`TelosProofs/Static.lean`): the side condition implies
+   (`TelosProofs/Core/Static.lean`): the side condition implies
    `ProvesEq (p.cmds n m) n m`, that is, Logos's checker accepts the commands.
 
 For a normalization rule (`= a b` accepted when Logos's normal forms of `a` and
-`b` agree), the proof has the shape of `TelosProofs/PolyNorm.lean`:
+`b` agree), the proof has the shape of `TelosProofs/Core/PolyNorm.lean`:
 
 - **Logos side, once per rule:** read Logos's normal-form terms as values in a
   mathematical structure (polynomials, for arithmetic). Show that its operations
   compute the matching operations on values, that its outputs are well formed,
   and that well-formed outputs with equal values are equal terms (canonicity;
-  this needs `TelosProofs/TermOrder.lean`, the order laws of `native_tcmp`). Also
+  this needs `TelosProofs/Core/TermOrder.lean`, the order laws of `native_tcmp`). Also
   show that its normal form of a well-typed term is not stuck.
 - **telos side, once per algorithm:** telos's procedure preserves the value. Any
   data structure or algorithm can be used, as long as this can be shown.

@@ -12,7 +12,7 @@ equalities and `distinct` of terms of an uninterpreted sort `U` over `u`, `v`,
 contain comparisons of terms of sort `(_ BitVec 4)` over `bx`, `by` and `bz`.
 `scripts/fuzz.py` compares them against cvc5's rewriter. With `--profile`, a table
 of where the rewriting time went is printed to standard error
-(`Telos/Profile.lean`); `scripts/profile.sh` runs a standard benchmark.
+(`Telos/Core/Profile.lean`); `scripts/profile.sh` runs a standard benchmark.
 -/
 
 open Telos Telos.Node

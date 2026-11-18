@@ -15,7 +15,7 @@ instead. A proof is a refutation of `(not (= t result))`, in parentheses as
 cvc5's `get-proof` prints it; without the outer parentheses it is a Eunoia
 file, which Ethos and the `logos` executable check. telos prints only proofs that Logos's checker accepts.
 With `--profile`, a table of where the time went is printed to standard error
-(`Telos/Profile.lean`).
+(`Telos/Core/Profile.lean`).
 
 Every result is equivalent to its input (`Telos.rewrite_correct`), with or
 without proofs.

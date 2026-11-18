@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the per-constructor part of verification/TelosProofs/TermOrder.lean.
+"""Generate the per-constructor part of verification/TelosProofs/Core/TermOrder.lean.
 
 The proof that Logos's term order `termCmp` is lawful has one case per
 constructor of the mutual block `Term`, `DatatypeDecl`, `Datatype`,
@@ -15,7 +15,7 @@ Usage:
 import sys
 from pathlib import Path
 
-TARGET = Path(__file__).resolve().parent.parent / "verification" / "TelosProofs" / "TermOrder.lean"
+TARGET = Path(__file__).resolve().parent.parent / "verification" / "TelosProofs" / "Core" / "TermOrder.lean"
 BEGIN = "-- BEGIN GENERATED (scripts/gen-term-order.py)\n"
 END = "-- END GENERATED\n"
 

@@ -5,7 +5,7 @@
 # Usage: scripts/profile.sh [COUNT] [DEPTH] [SEED]   (defaults: 3000 4 1)
 #
 # Builds telos-fuzz first. The profile table goes to standard output; see
-# Telos/Profile.lean for what the probes measure.
+# Telos/Core/Profile.lean for what the probes measure.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 count="${1:-3000}"

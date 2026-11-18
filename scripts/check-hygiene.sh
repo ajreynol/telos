@@ -24,9 +24,9 @@ done < <(LC_ALL=C grep -nHE "(^|[^[:alnum:]_'])(unsafe|implemented_by)([^[:alnum
 # The specification (TRUSTED.md) builds only on Logos's specification, not on the
 # Eunoia programs compiled from Cpc.eo (Cpc.Logos: the rules, the checker,
 # __eo_typeof, __eo_nil). Its files import only each other and these modules.
-spec_files=(Telos/Node/Kind.lean Telos/Node/TypeNode.lean Telos/Node/Node.lean
-  Telos/Node/ToEo.lean verification/TelosProofs/Spec.lean)
-spec_imports='^(Telos\.Node\.(Kind|TypeNode|Node|ToEo)|Cpc\.(LogosTerm|SmtEval|SmtSyntax|SmtTyping|SmtTranslate|SmtModel|Spec))$'
+spec_files=(Telos/Core/Node/Kind.lean Telos/Core/Node/TypeNode.lean Telos/Core/Node/Node.lean
+  Telos/Core/Node/ToEo.lean verification/TelosProofs/Core/Spec.lean)
+spec_imports='^(Telos\.Core\.Node\.(Kind|TypeNode|Node|ToEo)|Cpc\.(LogosTerm|SmtEval|SmtSyntax|SmtTyping|SmtTranslate|SmtModel|Spec))$'
 while IFS=: read -r file line text; do
   mod=$(sed -E 's/^[[:space:]]*(public[[:space:]]+)?import[[:space:]]+(all[[:space:]]+)?//; s/[[:space:]]+$//' <<<"${text}")
   if ! LC_ALL=C grep -qE "${spec_imports}" <<<"${mod}"; then
@@ -34,6 +34,19 @@ while IFS=: read -r file line text; do
     status=1
   fi
 done < <(LC_ALL=C grep -nHE '^[[:space:]]*(public[[:space:]]+)?import[[:space:]]' "${spec_files[@]}")
+
+# Layers (lakefile.toml): Telos/Core imports only Core (and Logos, Lean), and
+# Telos/Rewriter does not import the front end; likewise the proofs of Core
+# (verification/TelosProofs/Core) import only Core.
+layer_check() {  # dir, pattern of forbidden imports
+  while IFS=: read -r file line text; do
+    echo "error: ${file}:${line}: ${text} crosses a layer (lakefile.toml)" >&2
+    status=1
+  done < <(find "$1" -name '*.lean' -print0 | xargs -0 grep -nHE "^[[:space:]]*(public[[:space:]]+)?import[[:space:]]+(all[[:space:]]+)?($2)" || true)
+}
+layer_check Telos/Core 'Telos\.(Rewriter|Frontend|Preprocess)\b'
+layer_check Telos/Rewriter 'Telos\.(Frontend|Preprocess)\b'
+layer_check verification/TelosProofs/Core '(Telos\.(Rewriter|Frontend|Preprocess)|TelosProofs\.(Rewriter|Preprocess))\b|Telos$'
 
 [ "${status}" -eq 0 ] && echo "Hygiene check passed (${#files[@]} Lean files)."
 exit "${status}"

@@ -10,7 +10,7 @@ import Cpc.Proofs.TypePreservation.Full
 
 The default build (`TelosProofs`) proves `Telos.rewrite_correct_of_logos`, which
 takes the Logos theorems it uses as the class `LogosFacts`
-(`TelosProofs/LogosFacts.lean`), so that it does not need Logos's proofs. This
+(`TelosProofs/Core/LogosFacts.lean`), so that it does not need Logos's proofs. This
 library, built with `lake build TelosFull`, imports them and proves the instance,
 each field from the Logos theorem it restates. So the restatements stay in sync
 with the pinned Logos. Then it derives the unconditional `Telos.rewrite_correct`

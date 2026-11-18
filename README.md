@@ -58,12 +58,26 @@ verified solver, and [`TRUSTED.md`](TRUSTED.md) for what the theorem relies on.
 
 Two Lake projects, so the rewriter builds without Mathlib:
 
-- `.` (package `Telos`): `Node`, its translation to Logos terms, the rewriter,
-  the SMT-LIB front end, proof output and the `telos` executable. Requires Logos's root package `Cpc`. `TelosTests/`
-  holds tests checked at build time.
+- `.` (package `Telos`), requiring Logos's root package `Cpc`, in layers, each
+  a library that imports only the ones above it (`scripts/check-hygiene.sh`
+  checks this):
+  - `Telos/Core/` (`TelosCore`): `Node` and its translation to Logos terms
+    (`Node/`), certified rewrites (`Certified.lean`, `Static.lean`,
+    `PolyNorm.lean`), and CPC proof output (`Proof/`);
+  - `Telos/Rewriter/` (`TelosRewriter`): the rewriter: the driver, the
+    generated rule table (`Rules/`) and the theory rewriters (`Theory/`,
+    `Strings/`);
+  - `Telos/Frontend/` (`TelosFrontend`): SMT-LIB scripts (`Script.lean`) and
+    `simplify` queries (`Simplify.lean`);
+  - `Main.lean`: the `telos` executable. `TelosTests/` holds tests checked at
+    build time.
 - `verification/` (package `TelosVerification`): the specification `Node.Equiv`
-  and the correctness proofs. Requires `Telos`, Logos's `LogosVerification` and
+  and the correctness proofs, in the same layers (`TelosProofs/Core/`,
+  `TelosProofs/Rewriter/`). Requires `Telos`, Logos's `LogosVerification` and
   Mathlib.
+
+The verified preprocessor (`docs/preprocessor-plan.md`) will be a further layer,
+`Telos/Preprocess/`, between the rewriter and the front end.
 
 ## Building
 
@@ -73,15 +87,15 @@ lake -d verification exe cache get      # Mathlib binaries (once)
 lake -d verification build              # proofs, with the Logos theorems they use as a hypothesis (CI)
 lake -d verification build TelosFull    # also Logos's proofs: the unconditional theorem
 bash scripts/check-hygiene.sh           # no sorry/axiom; trusted code is listed
-python3 scripts/gen-rules.py            # regenerate Telos/Rules/Generated.lean
-python3 scripts/gen-term-order.py       # regenerate the generated part of TelosProofs/TermOrder.lean
+python3 scripts/gen-rules.py            # regenerate Telos/Rewriter/Rules/Generated.lean
+python3 scripts/gen-term-order.py       # regenerate the generated part of TelosProofs/Core/TermOrder.lean
 lake build telos-fuzz && python3 scripts/fuzz.py --cvc5 PATH   # compare with cvc5
 python3 scripts/check-proofs.py --fuzz 500                      # proofs, with Ethos
 python3 scripts/loc-summary.py                                  # lines: spec, rewriter, proofs
 bash scripts/profile.sh                                         # where rewriting time goes
 ```
 
-The rule table `Telos/Rules/Generated.lean` is generated from the CPC signature in
+The rule table `Telos/Rewriter/Rules/Generated.lean` is generated from the CPC signature in
 the pinned Logos checkout. After changing the Logos `rev`, regenerate it; CI
 fails when it is out of date (`--check`).
 

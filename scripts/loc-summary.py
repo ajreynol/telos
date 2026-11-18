@@ -36,14 +36,14 @@ ROOT = Path(__file__).resolve().parent.parent
 LOGOS = ROOT / ".lake" / "packages" / "Cpc"
 
 SPEC = [
-    "Telos/Node/Kind.lean",
-    "Telos/Node/TypeNode.lean",
-    "Telos/Node/Node.lean",
-    "Telos/Node/ToEo.lean",
-    "verification/TelosProofs/Spec.lean",
+    "Telos/Core/Node/Kind.lean",
+    "Telos/Core/Node/TypeNode.lean",
+    "Telos/Core/Node/Node.lean",
+    "Telos/Core/Node/ToEo.lean",
+    "verification/TelosProofs/Core/Spec.lean",
 ]
-GENERATED = ["Telos/Rules/Generated.lean", "Telos/Rules/RuleNames.lean"]
-FRONTEND = ["Telos/Frontend.lean", "Telos/Proof/", "Main.lean"]
+GENERATED = ["Telos/Rewriter/Rules/Generated.lean", "Telos/Core/RuleNames.lean"]
+FRONTEND = ["Telos/Frontend/", "Telos/Core/Proof/", "Main.lean"]
 TESTS = ["TelosTests/", "FuzzMain.lean"]
 PROOFS = ["verification/TelosProofs/", "verification/TelosFull/"]
 REWRITER = ["Telos/", "Telos.lean"]

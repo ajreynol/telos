@@ -32,7 +32,7 @@ moreLeanArgs = ["-DmaxHeartbeats=10000000", "-DwarningAsError=true"]
 
 # Not a default target: it imports Logos's proofs, which are most of the build.
 # `lake build TelosFull` proves the unconditional `Telos.rewrite_correct` (see
-# `TelosProofs/LogosFacts.lean`).
+# `TelosProofs/Core/LogosFacts.lean`).
 [[lean_lib]]
 name = "TelosFull"
 roots = []
