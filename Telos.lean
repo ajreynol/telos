@@ -6,6 +6,7 @@ import Telos.Core.Node.DecEq
 import Telos.Core.Node.Order
 import Telos.Core.Node.Key
 import Telos.Core.Node.Print
+import Telos.Core.Node.PrintLet
 import Telos.Core.Node.ToEo
 import Telos.Core.Node.OfEo
 import Telos.Core.Node.FastType

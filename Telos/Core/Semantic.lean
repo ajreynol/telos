@@ -1,4 +1,5 @@
-import Telos.Core.Node.Node
+import Std.Data.HashSet
+import Telos.Core.Node.Key
 
 /-!
 # Semantically justified steps
@@ -6,9 +7,10 @@ import Telos.Core.Node.Node
 A `Certified.semantic p` step rewrites `n` to `m` without CPC and without
 Logos's checker. `p : SemProc` names the procedure, and:
 
-* `p.Ok n m` is its side condition, which telos decides on its own nodes (with
-  `Node.decEq`, constant time on shared subterms, so nothing is traversed as a
-  tree);
+* `p.Ok n m` is its side condition, which telos decides on its own nodes by
+  `p.check n m`, in linear time (`SemProc.check_ok`): hash sets of nodes, which
+  hash and compare in constant time on shared subterms, so nothing is traversed
+  as a tree;
 * `verification/TelosProofs/Core/Semantic.lean` proves
   `p.Ok n m → n.WellTyped → n.Equiv m` (`SemProc.equiv`) once, from Logos's
   semantics, so `Certified.equiv` covers the step.
@@ -62,5 +64,41 @@ def SemProc.Ok : SemProc → Node → Node → Prop
 
 instance (p : SemProc) (n m : Node) : Decidable (p.Ok n m) := by
   cases p <;> unfold SemProc.Ok <;> infer_instance
+
+instance : LawfulBEq Key where
+  eq_of_beq {a b} h := by
+    cases a; cases b
+    simp only [BEq.beq, decide_eq_true_eq] at h
+    rw [h]
+  rfl {a} := by simp [BEq.beq]
+
+instance : LawfulHashable Key where
+  hash_eq {a b} h := by rw [eq_of_beq h]
+
+/-- Whether every node of `as` is one of `bs`, by a hash set of `bs`. -/
+def subsetBy (as bs : List Node) : Bool :=
+  let s : Std.HashSet Key := Std.HashSet.ofList (bs.map Key.mk)
+  as.all fun c => s.contains ⟨c⟩
+
+theorem subsetBy_mem {as bs : List Node} (h : subsetBy as bs = true) : ∀ c ∈ as, c ∈ bs := by
+  intro c hc
+  simp only [subsetBy, List.all_eq_true, Std.HashSet.contains_ofList] at h
+  have := h c hc
+  simp only [List.contains_iff_mem, List.mem_map] at this
+  obtain ⟨d, hd, e⟩ := this
+  cases e
+  exact hd
+
+/-- The side condition of `p`, decided in linear time. -/
+def SemProc.check : SemProc → Node → Node → Bool
+  | .reorg, n, m =>
+    n.isAndApp && m.isAndApp && n.andShapeOk && m.andShapeOk &&
+      (let cn := n.conjuncts; let cm := m.conjuncts; subsetBy cm cn && subsetBy cn cm)
+
+theorem SemProc.check_ok {p : SemProc} {n m : Node} (h : p.check n m = true) : p.Ok n m := by
+  cases p
+  simp only [SemProc.check, Bool.and_eq_true] at h
+  obtain ⟨⟨⟨⟨h₁, h₂⟩, h₃⟩, h₄⟩, h₅, h₆⟩ := h
+  exact ⟨h₁, h₂, h₃, h₄, subsetBy_mem h₅, subsetBy_mem h₆⟩
 
 end Telos

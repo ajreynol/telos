@@ -1,4 +1,5 @@
 import Telos.Frontend.Script
+import Telos.Core.Node.PrintLet
 import Telos.Rewriter.Rewrite
 import Telos.Core.Proof.Emit
 
@@ -44,6 +45,6 @@ def simplify (sc : Script) (q : Query) (withProof : Bool) : Result :=
           | .ok _ => throw "internal error: Logos does not accept the printed proof"
           | .error e => throw s!"internal error: Logos cannot parse the printed proof: {e}")
         else none
-      { source := q.source, output := .ok (r.1.toSmtLibWith sc.dtNames), proof }
+      { source := q.source, output := .ok (r.1.toSmtLibLet sc.dtNames), proof }
 
 end Telos.Frontend

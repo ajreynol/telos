@@ -11,7 +11,7 @@
 (assert (= l @purify_1))
 (assert true)
 (assert (= #b1 ((_ extract 4 4) (bvadd (concat #b0 a) (concat #b0 b)))))
-(assert (= #b1 (bvor (bvor (bvand (bvor ((_ extract 1 1) (bvxor a ((_ sign_extend 3) ((_ extract 3 3) a)))) ((_ extract 2 2) (bvxor a ((_ sign_extend 3) ((_ extract 3 3) a))))) ((_ extract 2 2) (bvxor b ((_ sign_extend 3) ((_ extract 3 3) b))))) (bvand ((_ extract 1 1) (bvxor b ((_ sign_extend 3) ((_ extract 3 3) b)))) ((_ extract 2 2) (bvxor a ((_ sign_extend 3) ((_ extract 3 3) a)))))) (bvxor ((_ extract 3 3) (bvmul ((_ sign_extend 1) a) ((_ sign_extend 1) b))) ((_ extract 4 4) (bvmul ((_ sign_extend 1) a) ((_ sign_extend 1) b)))))))
+(assert (let ((_let_1 (bvmul ((_ sign_extend 1) a) ((_ sign_extend 1) b)))) (let ((_let_2 (bvxor a ((_ sign_extend 3) ((_ extract 3 3) a))))) (let ((_let_3 ((_ extract 2 2) _let_2))) (let ((_let_4 (bvxor b ((_ sign_extend 3) ((_ extract 3 3) b))))) (= #b1 (bvor (bvor (bvand (bvor ((_ extract 1 1) _let_2) _let_3) ((_ extract 2 2) _let_4)) (bvand ((_ extract 1 1) _let_4) _let_3)) (bvxor ((_ extract 3 3) _let_1) ((_ extract 4 4) _let_1)))))))))
 (assert (and (not (= #b1111 b)) (not (bvult b a))))
 (assert true)
 (assert (ite ((_ is cons) l) (= (cons x (tail l)) @purify_1) (= l @purify_1)))

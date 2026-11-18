@@ -108,10 +108,10 @@ def removeTermFormulas (n : Node) (inTerm : Bool) : TppM (Option (Rw n)) := do
   let isIte := n.getKind == .ITE && !isBool
   let isPurify := match n with | .skolem .PURIFY _ => true | _ => false
   if !isIte && !(isBool && inTerm && !isPurify) then return none
-  let some step := purifyStep n | return none
+  let some step := Profile.time "tpp" (fun _ => "purifyStep") fun _ => purifyStep n | return none
   if !(← get).purified.contains ⟨n⟩ then
     updPurified (·.insert ⟨n⟩)
-    addLemma <| if isIte then
+    addLemma <| Profile.time "tpp" (fun _ => "lemma") fun _ => if isIte then
         -- `ite_eq` proves `(ite c (= n t₁) (= n t₂))`; then `n` is purified
         (lemmaBy [stepWith .ite_eq [n.toEo]]).map fun l => l.trans (replaceRw n step l.1)
       else lemmaBy [stepWith .skolem_intro [(mkPurifySkolem n).toEo]]
@@ -157,7 +157,7 @@ partial def theoryPreprocess (n : Node) (val : Nat) : TppM (Rw n) := do
       -- cvc5 rewrites `ret` here, a cache hit when the children did not change
       -- (`n` is then a subterm of a rewritten term); telos's rewriter has no
       -- cache across calls, so it rewrites only a changed node.
-      let r₂ : Rw ret := if traverse && ret != n then rewriteCert ret else Rw.id ret
+      let r₂ : Rw ret := if traverse && ret != n then Profile.time "tpp" (fun _ => "rewrite") fun _ => rewriteCert ret else Rw.id ret
       let r₂ ← if r₂.1 == ret then preprocessWithProof ret else pure r₂
       if r₂.1 == ret then pure r₁
       else
@@ -205,6 +205,7 @@ def Pipeline.theoryPreprocess {input : Node} (p : Pipeline input) : Pipeline inp
       match rs[i]? with
       | some ⟨a, r⟩ => if h : a = c then h ▸ r else Rw.id c
       | none => Rw.id c
-    Pipeline.conflict? (Pipeline.pushLemmas q (st.allLemmas.toList.flatMap splitLemma))
+    let lems := Profile.time "tpp" (fun _ => "splitLemma") fun _ => st.allLemmas.toList.flatMap splitLemma
+    Pipeline.conflict? (Pipeline.pushLemmas q lems)
 
 end Telos.Preprocess

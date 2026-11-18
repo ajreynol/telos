@@ -256,8 +256,10 @@ def DtNames.selName (N : DtNames) : TypeNode → Nat → Nat → String
   | .datatype s _, i, j => (N.sel (DtNames.baseName s) i j).getD s!"{s}.c{i}.s{j}"
   | _, i, j => s!"?.c{i}.s{j}"
 
-/-- A node in SMT-LIB syntax, with `N` naming constructors and selectors. -/
-partial def Node.toSmtLibWith (N : DtNames) : Node → String
+/-- The top of a node in SMT-LIB syntax, with `N` naming constructors and
+selectors, and `pc` printing its subterms (`toSmtLibWith`, or the let printer's
+names for shared subterms). -/
+def Node.toSmtLibTop (N : DtNames) (pc : Node → String) : Node → String
   | .const (.dtCons T i) =>
     if N.isParametric T then s!"(as {N.consName T i} {T.toSmtLibWith N})" else N.consName T i
   -- `(tuple a₁ … aₙ)`, from `(TUPLE a₁ (… (TUPLE aₙ TUPLE_UNIT)))`
@@ -270,34 +272,38 @@ partial def Node.toSmtLibWith (N : DtNames) : Node → String
       | .app (.kind .TUPLE_UNIT) #[] => ([], none)
       | r => ([], some r)
     let (es, tl) := elems 100000 n
-    let parts := es.map (·.toSmtLibWith N) ++ (tl.map (·.toSmtLibWith N)).toList
+    let parts := es.map pc ++ (tl.map pc).toList
     "(" ++ String.intercalate " " ("tuple" :: parts) ++ ")"
   | .const (.dtSel T i j) => N.selName T i j
   | .const c => c.toSmtLib
   | .var n _ | .boundVar n _ => n
   | .skolem id #[] => id.name
   | .skolem id cs =>
-    "(" ++ String.intercalate " " (id.name :: cs.toList.map (·.toSmtLibWith N)) ++ ")"
-  | .app (.node .APPLY_CONSTRUCTOR f) #[] => f.toSmtLibWith N
+    "(" ++ String.intercalate " " (id.name :: cs.toList.map pc) ++ ")"
+  | .app (.node .APPLY_CONSTRUCTOR f) #[] => pc f
   | .app (.node .APPLY_TESTER f) cs =>
     -- the constructor's name, without the type of a parametric datatype's
     let c := match f with
       | .const (.dtCons T i) => N.consName T i
-      | f => f.toSmtLibWith N
-    "(" ++ String.intercalate " " (s!"(_ is {c})" :: cs.toList.map (·.toSmtLibWith N)) ++ ")"
+      | f => pc f
+    "(" ++ String.intercalate " " (s!"(_ is {c})" :: cs.toList.map pc) ++ ")"
   | .app (.node .APPLY_UPDATER f) cs =>
-    "(" ++ String.intercalate " " (s!"(_ update {f.toSmtLibWith N})" :: cs.toList.map (·.toSmtLibWith N)) ++ ")"
+    "(" ++ String.intercalate " " (s!"(_ update {pc f})" :: cs.toList.map pc) ++ ")"
   | .app (.kind .BOUND_VAR_LIST) vs =>
     "(" ++ String.intercalate " " (vs.toList.map fun
       | .boundVar n T => s!"({n} {T.toSmtLibWith N})"
-      | v => v.toSmtLibWith N) ++ ")"
+      | v => pc v) ++ ")"
   | .app (.kind k) #[] => k.smtLibName
   | .app op cs =>
     let head := match op with
       | .kind k => k.smtLibName
       | .indexed k is => s!"(_ {k.smtLibName} {String.intercalate " " (is.toList.map toString)})"
-      | .node _ f => f.toSmtLibWith N
-    "(" ++ String.intercalate " " (head :: cs.toList.map (·.toSmtLibWith N)) ++ ")"
+      | .node _ f => pc f
+    "(" ++ String.intercalate " " (head :: cs.toList.map pc) ++ ")"
+
+/-- A node in SMT-LIB syntax, with `N` naming constructors and selectors. -/
+partial def Node.toSmtLibWith (N : DtNames) (n : Node) : String :=
+  n.toSmtLibTop N (Node.toSmtLibWith N)
 
 /-- A node in SMT-LIB syntax, with placeholder names for datatype constructors and
 selectors. -/

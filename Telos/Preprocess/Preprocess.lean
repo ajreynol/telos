@@ -26,14 +26,15 @@ namespace Telos.Preprocess
 
 /-- cvc5's `ProcessAssertions::apply`, on the assertions `as`. -/
 def preprocessCert (as : List Node) (simplify : Bool := true) : Pipeline (inputNode as) :=
-  let p := Pipeline.init as
-  let p := Pipeline.rewrite p
+  let pass {α : Type} (name : String) (f : Unit → α) : α := Profile.time "pass" (fun _ => name) f
+  let p := pass "init" fun _ => Pipeline.init as
+  let p := pass "rewrite" fun _ => Pipeline.rewrite p
   -- `simplifyAssertions`: non-clausal simplification (`static-learning`, which
   -- follows, is not ported)
-  let p := if simplify then Pipeline.nonClausalSimp p else p
-  let p := Pipeline.rewrite p
-  let p := Pipeline.staticRewrite p
-  Pipeline.theoryPreprocess p
+  let p := if simplify then pass "non-clausal-simp" fun _ => Pipeline.nonClausalSimp p else p
+  let p := pass "rewrite (2)" fun _ => Pipeline.rewrite p
+  let p := pass "static-rewrite" fun _ => Pipeline.staticRewrite p
+  pass "theory-preprocess" fun _ => Pipeline.theoryPreprocess p
 
 /-- The preprocessed assertions, and the definitions of the solved variables. -/
 def preprocess (as : List Node) (simplify : Bool := true) : Array Node × List Node :=

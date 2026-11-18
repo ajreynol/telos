@@ -603,5 +603,5 @@ def main (args : List String) : IO Unit := do
     let (t, r) := (genBool arith uf bv arr mixed str sets dt quant depth).run rng
     rng := r
     let r ← Profile.measure "total" "rewrite" fun _ => rewrite t
-    IO.println s!"{t.toSmtLibWith dtNames}\t{r.toSmtLibWith dtNames}"
+    IO.println s!"{t.toSmtLibWith dtNames}\t{r.toSmtLibLet dtNames}"
   if profile then Profile.report

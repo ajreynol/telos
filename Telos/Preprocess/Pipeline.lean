@@ -13,7 +13,8 @@ a certified rewrite (`Rw`) of the conjunction of the input assertions. A pass is
 then a rewrite of the conjunction, made of CPC-checked steps (rewriting an
 assertion is congruence below `and`; splitting a conjunction is `aci_norm`;
 adding a lemma `L` is `aci_norm` to add a conjunct `true`, then a rewrite
-`true → L`, `pushLemmas`), and
+`true → L`, `pushLemmas`; the reorganizations are semantic steps,
+`SemProc.reorg`), and
 the preprocessed assertions are equivalent to the input ones by the theorem that
 covers every certified rewrite (`Certified.equiv`). No pass needs a proof of its
 own.
@@ -71,17 +72,21 @@ def inConflict {input : Node} (p : Pipeline input) : Bool := p.1 == mkFalse
 
 /-- The pipeline with the assertions `as` in place of the current ones, if the
 two conjunctions have the same conjuncts, up to nested conjunctions, `true` and
-duplicates: by `andReorg`, linear, or else `aci_norm`. -/
+duplicates: by a semantic step (`SemProc.reorg`, decided in linear time with
+hash sets), or else by a CPC proof, `andReorg` or `aci_norm`. -/
 def rearrange {input : Node} (p : Pipeline input) (as : List Node) : Option (Pipeline input) :=
   let target := mkNode .AND (as ++ [slot p]).toArray
   if target == p.1 then some p
-  else p.next? fun m => (andReorg m target).orElse fun _ => checkBy .aci_norm m target
+  else Profile.time "pipeline" (fun _ => "rearrange") fun _ =>
+    if h : SemProc.reorg.check p.1 target = true then
+      some (p.trans ⟨target, .semantic .reorg (SemProc.check_ok h) (.refl target)⟩)
+    else p.next? fun m => (andReorg m target).orElse fun _ => checkBy .aci_norm m target
 
 /-- `markConflict`: if an assertion is `false`, the pipeline is `false`
 (`absorb`). -/
 def conflict? {input : Node} (p : Pipeline input) : Pipeline input :=
   if !inConflict p && (assertions p).contains mkFalse then
-    (p.next? fun m => checkBy .absorb m mkFalse).getD p
+    Profile.time "pipeline" (fun _ => "conflict") fun _ => (p.next? fun m => checkBy .absorb m mkFalse).getD p
   else p
 
 /-- The conjunct at each position `i` rewritten by `g i`, in one congruence
@@ -95,7 +100,8 @@ def mapConjuncts {input : Node} (p : Pipeline input) (g : Nat → (c : Node) →
     have hrs : rs.map (·.1) = cs.toList := by
       simp only [rs, List.map_map]
       exact List.zipIdx_map_fst 0 _
-    p.trans (h ▸ Rw.congrList (.kind .AND) cs rs hrs rfl (.inl rfl))
+    Profile.time "pipeline" (fun _ => "mapConjuncts") fun _ =>
+      p.trans (h ▸ Rw.congrList (.kind .AND) cs rs hrs rfl (.inl rfl))
   | _ => p
 
 /-- The number of conjuncts, with the definitions slot. -/

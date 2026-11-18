@@ -104,7 +104,7 @@ def compare(ours, theirs):
     """`same`, `renamed`, `oriented`, `ordered` or None."""
     if ours == theirs:
         return "same"
-    o, t = [fuzz.alpha_free(fuzz.parse_sexpr(x)) for x in ours], [fuzz.alpha_free(fuzz.parse_sexpr(x)) for x in theirs]
+    o, t = [fuzz.alpha_free(fuzz.read_term(x)) for x in ours], [fuzz.alpha_free(fuzz.read_term(x)) for x in theirs]
     if o == t:
         return "renamed"
     if [fuzz.orient_free(x) for x in o] == [fuzz.orient_free(x) for x in t]:
@@ -129,7 +129,7 @@ def main():
     a = ap.parse_args()
     if not TELOS.exists():
         sys.exit("error: build telos first: lake build telos telos-fuzz")
-    cvc5 = [a.cvc5, "-o", "post-asserts", "--print-arith-lit-token", "--dag-thresh=0",
+    cvc5 = [a.cvc5, "-o", "post-asserts", "--print-arith-lit-token",
             "--no-var-ent-eq-elim-quant", *CVC5_OPTS]
     tmp = Path(tempfile.mkdtemp())
     files = [Path(f) for f in a.files]

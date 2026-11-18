@@ -30,7 +30,7 @@ x
 (bvnot (bvand x y))
 (bvnot (bvcomp x #b0000))
 #b1
-(ite (xor (= #b1 ((_ extract 3 3) x)) (= #b1 ((_ extract 3 3) y))) (bvneg (bvudiv (ite (= #b1 ((_ extract 3 3) x)) (bvneg x) x) (ite (= #b1 ((_ extract 3 3) y)) (bvneg y) y))) (bvudiv (ite (= #b1 ((_ extract 3 3) x)) (bvneg x) x) (ite (= #b1 ((_ extract 3 3) y)) (bvneg y) y)))
+(let ((_let_1 (= #b1 ((_ extract 3 3) y)))) (let ((_let_2 (= #b1 ((_ extract 3 3) x)))) (let ((_let_3 (bvudiv (ite _let_2 (bvneg x) x) (ite _let_1 (bvneg y) y)))) (ite (xor _let_2 _let_1) (bvneg _let_3) _let_3))))
 (concat ((_ extract 2 0) x) #b0)
 (bvadd x y #b0011)
 #b0000

@@ -99,6 +99,29 @@ def orient_free(e):
     return e
 
 
+def let_free(e, env=None):
+    """`e` with its `let`s expanded (cvc5 and telos print shared subterms with
+    `let`, as `_let_1`, …; a quantifier body shadows the names it binds). The
+    expansion shares the values, so it is linear as a DAG."""
+    env = env or {}
+    if isinstance(e, str):
+        return env.get(e, e)
+    if len(e) == 3 and e[0] == "let" and isinstance(e[1], list):
+        env2 = dict(env)
+        for b in e[1]:
+            env2[b[0]] = let_free(b[1], env)
+        return let_free(e[2], env2)
+    if len(e) == 3 and e[0] in ("forall", "exists", "lambda", "set.comprehension") and isinstance(e[1], list):
+        env2 = {k: v for k, v in env.items() if not any(isinstance(d, list) and d and d[0] == k for d in e[1])}
+        return [e[0], e[1], let_free(e[2], env2)]
+    return [let_free(x, env) for x in e]
+
+
+def read_term(text):
+    """A printed term, parsed, its `let`s expanded."""
+    return let_free(parse_sexpr(text))
+
+
 def alpha_free(e, env=None, counter=None):
     """`e` with its bound variables renamed `@b0`, `@b1`, … in order of binding:
     equal for terms that differ only in the names of bound variables (cvc5
@@ -155,7 +178,7 @@ def order_free(e):
 
 def run_cvc5(cvc5, script, extra=()):
     out = subprocess.run([cvc5, "--lang", "smt2", "--incremental",
-                          "--no-var-ent-eq-elim-quant", "--dag-thresh=0",
+                          "--no-var-ent-eq-elim-quant",
                           "--print-arith-lit-token", *extra], input=script,
                          capture_output=True, text=True, check=False)
     if out.returncode != 0:
@@ -206,11 +229,11 @@ def main():
     for i, ((t, ours), theirs) in enumerate(zip(cases, simplified)):
         if ours == theirs:
             same += 1
-        elif alpha_free(parse_sexpr(ours)) == alpha_free(parse_sexpr(theirs)):
+        elif alpha_free(read_term(ours)) == alpha_free(read_term(theirs)):
             renamed += 1
-        elif orient_free(alpha_free(parse_sexpr(ours))) == orient_free(alpha_free(parse_sexpr(theirs))):
+        elif orient_free(alpha_free(read_term(ours))) == orient_free(alpha_free(read_term(theirs))):
             oriented += 1
-        elif order_free(alpha_free(parse_sexpr(ours))) == order_free(alpha_free(parse_sexpr(theirs))):
+        elif order_free(alpha_free(read_term(ours))) == order_free(alpha_free(read_term(theirs))):
             ordered += 1
         else:
             mismatches.append((t, ours, theirs))

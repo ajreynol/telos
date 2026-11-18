@@ -1,4 +1,7 @@
+import Std.Data.HashMap
+import Std.Data.HashSet
 import Telos.Frontend.Script
+import Telos.Core.Node.PrintLet
 import Telos.Preprocess.Preprocess
 
 /-!
@@ -19,6 +22,9 @@ The definitions of the variables that non-clausal simplification solved are
 printed as `define-fun`s, as cvc5 prints its top-level substitutions, and the
 variables are not declared.
 
+Terms are printed as cvc5 prints them by default (`--dag-thresh=1`), their
+shared subterms bound by `let` (`Telos/Core/Node/PrintLet.lean`).
+
 Deviations from cvc5: `define-fun`s are macros, expanded when the script is
 read, so they are not printed, nor are the `(assert true)` that cvc5 keeps in
 their place.
@@ -31,14 +37,29 @@ def tokens (s : String) : List String :=
   ((s.replace "(" " ").replace ")" " ").splitOn " " |>.filter (!·.isEmpty)
 
 /-- The declarations needed by the texts `ts`: those of the symbols they use,
-and of the symbols those declarations use, in the order of `syms`. -/
-partial def usedSymbols (syms : List Symbol) (ts : List String) : List Symbol :=
-  let rec close (used : List Symbol) (toks : List String) : List Symbol :=
-    let new := syms.filter fun s => !used.any (·.decl == s.decl) && s.names.any toks.contains
-    if new.isEmpty then used
-    else close (used ++ new) (toks ++ new.flatMap (tokens ·.decl))
-  let used := close [] (ts.flatMap tokens)
-  syms.filter fun s => used.any (·.decl == s.decl)
+and of the symbols those declarations use, in the order of `syms`. Linear in
+the size of the texts: the symbols are found by name in a hash map. -/
+def usedSymbols (syms : List Symbol) (ts : List String) : List Symbol := Id.run do
+  let syms := syms.toArray
+  let mut byName : Std.HashMap String (Array Nat) := {}
+  for h : i in [0:syms.size] do
+    for n in syms[i].names do
+      byName := byName.insert n ((byName.getD n #[]).push i)
+  let mut usedDecls : Std.HashSet String := {}
+  let mut seenToks : Std.HashSet String := {}
+  let mut work : Array String := (ts.flatMap tokens).toArray
+  while 0 < work.size do
+    let t := work.back!
+    work := work.pop
+    if seenToks.contains t then continue
+    seenToks := seenToks.insert t
+    for i in byName.getD t #[] do
+      let some sym := syms[i]? | continue
+      let d := sym.decl
+      if !usedDecls.contains d then
+        usedDecls := usedDecls.insert d
+        work := work ++ (tokens d).toArray
+  return syms.toList.filter fun s => usedDecls.contains s.decl
 
 /-- The skolems of `n` that are not inside another skolem, in order of first
 occurrence, with repetitions. -/
@@ -88,14 +109,16 @@ def postAsserts (sc : Script) (simplify : Bool := true) : Except String String :
   let defPairs := defs.filterMap fun
     | .app (.kind .EQUAL) #[.var x T, t] => some (x, T, t)
     | _ => none
-  let (named, skolemDecls) := nameSkolems sc.dtNames (out.toList ++ defPairs.map (·.2.2))
+  let (named, skolemDecls) := Profile.time "print" (fun _ => "nameSkolems") fun _ =>
+    nameSkolems sc.dtNames (out.toList ++ defPairs.map (·.2.2))
   let k := out.size
   let out := named.take k
   let defLines := (defPairs.zip (named.drop k)).map fun ((x, T, _), t) =>
-    s!"(define-fun {x} () {T.toSmtLibWith sc.dtNames} {t.toSmtLibWith sc.dtNames})"
-  let asserts := out.map fun n => s!"(assert {n.toSmtLibWith sc.dtNames})"
+    s!"(define-fun {x} () {T.toSmtLibWith sc.dtNames} {t.toSmtLibLet sc.dtNames})"
+  let asserts := Profile.time "print" (fun _ => "assertions") fun _ =>
+    out.map fun n => s!"(assert {n.toSmtLibLet sc.dtNames})"
   let defined := defPairs.map (·.1)
-  let decls := (usedSymbols sc.symbols (asserts ++ defLines)).filter fun s =>
+  let decls := (Profile.time "print" (fun _ => "usedSymbols") fun _ => usedSymbols sc.symbols (asserts ++ defLines)).filter fun s =>
     !s.names.any defined.contains
   let isType (s : Symbol) := s.decl.startsWith "(declare-sort" || s.decl.startsWith "(declare-datatype"
   let lines := [";; post-asserts start", s!"(set-logic {sc.logic.getD "ALL"})"] ++

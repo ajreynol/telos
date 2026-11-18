@@ -29,7 +29,7 @@ false
 false
 false
 (not (>= y 1))
-(and (>= x 0) (not (>= x 0)))
+(let ((_let_1 (>= x 0))) (and _let_1 (not _let_1)))
 (div_total x 3)
 (mod_total x 3)
 (* -1 (div_total x 3))

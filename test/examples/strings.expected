@@ -40,7 +40,7 @@ true
 (or (str.in_re s r) (= "a" s))
 (and (str.in_re s r) (= "a" s) (str.in_re s (re.* r)))
 (= "a" s)
-(and (>= (str.to_code s) 97) (not (>= (str.to_code s) 100)))
+(let ((_let_1 (str.to_code s))) (and (>= _let_1 97) (not (>= _let_1 100))))
 (not (str.in_re s r))
 s
 s
@@ -51,7 +51,7 @@ s
 (str.substr (str.++ s t) 1 (str.len s))
 true
 true
-(or (str.contains s "a") (str.contains t "a") (str.contains s "a"))
+(let ((_let_1 (str.contains s "a"))) (or _let_1 (str.contains t "a") _let_1))
 (or (str.contains s "z") (str.contains t "z"))
 false
 (str.contains s (str.++ "cd" t))
@@ -89,5 +89,5 @@ re.none
 (re.* r)
 r
 (re.union (str.to_re "") r (re.++ r r))
-(re.union (re.++ r (str.to_re "a") r (str.to_re "a")) (re.++ r (str.to_re "a") r (str.to_re "a") r (str.to_re "a")))
-(or (str.in_re s (re.++ (re.range "a" "c") (re.range "a" "c"))) (str.in_re s (re.++ (re.range "a" "c") (re.range "a" "c") (re.range "a" "c"))))
+(let ((_let_1 (str.to_re "a"))) (re.union (re.++ r _let_1 r _let_1) (re.++ r _let_1 r _let_1 r _let_1)))
+(let ((_let_1 (re.range "a" "c"))) (or (str.in_re s (re.++ _let_1 _let_1)) (str.in_re s (re.++ _let_1 _let_1 _let_1))))

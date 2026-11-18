@@ -109,7 +109,7 @@ def main():
     terms = list(dict.fromkeys(terms))
 
     simplified = cvc5(a.cvc5, PRELUDE + "".join(f"(simplify {t})\n" for t in terms),
-                      ["--incremental", "--dag-thresh=0"]).splitlines()
+                      ["--incremental"]).splitlines()
     simplified = [s for s in simplified if s.strip()]
     if len(simplified) != len(terms):
         sys.exit(f"error: expected {len(terms)} results from cvc5, got {len(simplified)}")
