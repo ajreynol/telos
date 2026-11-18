@@ -56,6 +56,18 @@ def Valid (t : Term) : Prop :=
 /-- The CPC formula `(= a b)` (Logos's `mkEq`). -/
 def mkEq (a b : Term) : Term := eoApp2 UserOp.eq a b
 
+/-- Logos's `model_agrees_on_globals`: the models differ only in the values of
+variables (`Term.Var`, bound variables). -/
+structure AgreesOnGlobals (M N : SmtModel) : Prop where
+  consts : ∀ s T, native_model_lookup M s T = native_model_lookup N s T
+  funs : ∀ fid T U, model_fun_lookup M fid T U = model_fun_lookup N fid T U
+  usortDom : M.usortDom = N.usortDom
+
+/-- Logos's `NotTopLevelQuantifier`: `t` is not a quantifier. -/
+def NotTopLevelQuantifier (t : Term) : Prop :=
+  (∀ xs body, t ≠ Term.Apply (Term.Apply (Term.UOp UserOp.forall) xs) body) ∧
+  (∀ xs body, t ≠ Term.Apply (Term.Apply (Term.UOp UserOp.exists) xs) body)
+
 /-- The Logos theorems telos uses, restated. `TelosFull/Main.lean` proves the
 instance from Logos's proofs; the name of each Logos theorem is in its field's
 documentation. -/
@@ -104,6 +116,29 @@ class LogosFacts : Prop where
   term of SMT type `Bool` evaluates to a Boolean. -/
   eval_bool : ∀ (M : SmtModel) (t : SmtTerm), model_wf M →
     __smtx_typeof t = SmtType.Bool → ∃ b, __smtx_model_eval M t = SmtValue.Boolean b
+  /-- `CongSupport.congTrueSpine_eq_true`: congruence of an application spine in
+  one model, for a spine that is not a quantifier, from argument equalities that
+  are true in every model agreeing with it on the globals. -/
+  cong_spine_model : ∀ (M : SmtModel), model_wf M → ∀ (head : Term) (xs ys : List Term),
+    NotTopLevelQuantifier (xs.foldl Term.Apply head) →
+    HasBoolType (mkEq (xs.foldl Term.Apply head) (ys.foldl Term.Apply head)) →
+    List.Forall₂ (fun x y => HasBoolType (mkEq x y) ∧
+      ∀ N, model_wf N → AgreesOnGlobals M N → TrueIn N (mkEq x y)) xs ys →
+    TrueIn M (mkEq (xs.foldl Term.Apply head) (ys.foldl Term.Apply head))
+  /-- `CongSupport.congTypeSpine_eq_has_bool_type`: a well-typed spine and well-typed
+  argument equalities give a well-typed equality of the spines. -/
+  cong_type_spine : ∀ (head : Term) (xs ys : List Term),
+    HasSmtType (xs.foldl Term.Apply head) →
+    List.Forall₂ (fun x y => HasBoolType (mkEq x y)) xs ys →
+    HasBoolType (mkEq (xs.foldl Term.Apply head) (ys.foldl Term.Apply head))
+  /-- `smt_model_eval_eq_of_eo_closed`: a closed term has the same value in models
+  that agree on the globals. -/
+  closed_eval : ∀ (P : Term), __eo_is_closed P = Term.Boolean true → ∀ (M N : SmtModel),
+    AgreesOnGlobals M N → __smtx_model_eval M (__eo_to_smt P) = __smtx_model_eval N (__eo_to_smt P)
+  /-- `SpineArgsSupport.spine_args_have_smt_translation`, for a declared function:
+  the arguments of a well-typed application are well typed. -/
+  uf_args : ∀ (i : native_Nat) (T : Term) (xs : List Term),
+    HasSmtType (xs.foldl Term.Apply (Term.UConst i T)) → ∀ x ∈ xs, HasSmtType x
 
 /-! ## Facts that need no Logos proof -/
 

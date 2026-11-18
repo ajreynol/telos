@@ -5,6 +5,7 @@ import Telos.Core.RuleNames
 import Telos.Core.Profile
 import Telos.Core.Static
 import Telos.Core.Semantic
+import Telos.Core.Tri
 
 /-!
 # Certified rewrite steps
@@ -44,25 +45,6 @@ def ProvesEq (cs : CCmdList) (n m : Node) : Prop :=
 instance (cs : CCmdList) (n m : Node) : Decidable (ProvesEq cs n m) :=
   inferInstanceAs (Decidable (_ ∧ _ ∧ _))
 
-/-- Operators whose applications, when well typed, have well-typed children
-(`verification/TelosProofs/Core/ChildTyping.lean`), so congruence under them needs no
-run-time check of the children: the built-in Boolean, equality and arithmetic
-operators. -/
-def Op.childrenTypedOfParent : Op → Bool
-  | .kind k => match k with
-    | .EQUAL | .NOT | .AND | .OR | .IMPLIES | .XOR | .ITE
-    | .ADD | .MULT | .SUB | .NEG | .DIVISION | .INTS_DIVISION | .INTS_MODULUS
-    | .DIVISION_TOTAL | .INTS_DIVISION_TOTAL | .INTS_MODULUS_TOTAL | .ABS
-    | .LT | .LEQ | .GT | .GEQ | .TO_REAL | .TO_INTEGER | .IS_INTEGER
-    | .BITVECTOR_NOT | .BITVECTOR_NEG | .BITVECTOR_NAND | .BITVECTOR_NOR | .BITVECTOR_XNOR
-    | .BITVECTOR_COMP | .BITVECTOR_SUB | .BITVECTOR_UDIV | .BITVECTOR_UREM | .BITVECTOR_SDIV
-    | .BITVECTOR_SREM | .BITVECTOR_SMOD | .BITVECTOR_SHL | .BITVECTOR_LSHR | .BITVECTOR_ASHR
-    | .BITVECTOR_ULT | .BITVECTOR_ULE | .BITVECTOR_UGT | .BITVECTOR_UGE | .BITVECTOR_SLT
-    | .BITVECTOR_SLE | .BITVECTOR_SGT | .BITVECTOR_SGE | .BITVECTOR_AND | .BITVECTOR_OR
-    | .BITVECTOR_XOR | .BITVECTOR_ADD | .BITVECTOR_MULT | .BITVECTOR_CONCAT => true
-    | _ => false
-  | _ => false
-
 /-- `n` rewrites to `m` by a chain of CPC-checked steps, at the top or below an
 operator. It is data, not a proposition: it keeps the command lists, so that a
 rewrite can be printed as a CPC proof (`Telos/Core/Proof/`). Its proof fields are
@@ -91,6 +73,11 @@ inductive Certified : Node → Node → Type
   and `k` are equivalent by a theorem (`SemProc.equiv`,
   `Telos/Core/Semantic.lean`); no CPC proof is run, nor printed. -/
   | semantic {n k m : Node} (p : SemProc) : p.Ok n k → Certified k m → Certified n m
+  /-- A triangular substitution step on a conjunction (`Telos/Core/Tri.lean`):
+  `P.Ok n k` holds, with the certified rewrites its chains use. -/
+  | tri {n k m : Node} (P : TriPlan) : P.Ok n k = true →
+      ((r : Nat) → (hr : r < P.rws.size) → Certified P.rws[r].1 P.rws[r].2) →
+      Certified k m → Certified n m
   /-- A rewrite of the well-typed body of a quantifier
   (`Node.Equiv.congr_binder`). -/
   | congrBody {k : Kind} {vs body body' m : Node} {pats : List Node} :
@@ -106,6 +93,7 @@ def Certified.trans {a b c : Node} : Certified a b → Certified b c → Certifi
   | .congrBody hk hb hc r, h₂ => .congrBody hk hb hc (r.trans h₂)
   | .static p h r, h₂ => .static p h (r.trans h₂)
   | .semantic p h r, h₂ => .semantic p h (r.trans h₂)
+  | .tri P h rws r, h₂ => .tri P h rws (r.trans h₂)
 
 /-- A certified rewrite of `n`: the result, and how it was obtained. -/
 abbrev Rw (n : Node) := (m : Node) × Certified n m
