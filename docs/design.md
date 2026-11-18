@@ -981,14 +981,18 @@ tested:
       and `bool-or-and-distrib` after `aci_norm`.
     - inequality elimination (`getVarElimIneq`): a variable occurring in one
       literal of the body, a bound of one direction or a disequality, is
-      eliminated with that literal. cvc5 proves it by contradiction
-      (`ensureProofMacroQuantVarElimIneq`), and so does telos: the variable is
-      split off and the literal miniscoped out (`quant-miniscope-or`), then
-      `(forall (v) L)` is assumed (`assume-push`), instantiated with a value
-      that falsifies `L` (`instantiate`), `L` rewritten to `false`, and the scope
-      closed (`scope`, `process_scope`, `false_intro`). When `L` is the whole
-      body and uses other variables of the quantifier, the whole quantifier is
-      refuted, with `0` for the others.
+      eliminated with that literal. telos proves it as cvc5 does
+      (`ensureProofMacroQuantVarElimIneq`, since cvc5's `altRcons` branch,
+      `c005a58a3d`), without assumptions: the variable is split off and the
+      literal miniscoped out (`quant-miniscope-or`); then, with `t` a value
+      that falsifies `L` and `g` the guard `(= v t)`, `L` is written
+      `(and (or (not g) L) (or g L))` (`bool-or-and-distrib`,
+      `bool-and-conf2`, `aci_norm`, reversed), `(forall (v) …)` distributed
+      over it (`quant-miniscope-and`), the first conjunct is `L[v := t]`
+      (`quant-var-elim-eq`), rewritten to `false`, and the conjunction is
+      `false` (`absorb`). So `L` and `t` may use the other bound variables
+      (cvc5's earlier proof assumed `(forall (v) L)` and refuted it, which
+      Logos's checker allows only for closed formulas).
     - Declared constants are `Term.UConst`s (`Node.toEo`, numbered by name with
       `constId`), as in cvc5's proofs: Logos's checker pushes only closed
       assumptions (`__eo_is_closed`), and they were `Term.Var`s. Proof output
@@ -997,9 +1001,7 @@ tested:
     - Not ported: eliminating shadowed variables, prenexing (`computePrenex`),
       datatype variable expansion, and inequality elimination with several
       literals for the variable (cvc5 instantiates with an `ite` of the bounds
-      and proves the bounds by transitivity) or whose literal shares other
-      bound variables with the rest of the body (the assumption would not be
-      closed).
+      and proves the bounds by transitivity).
     - `Node.ofEo` reads a binder's body with its variables in scope, so that
       they are the same `boundVar`s (they were read as free variables of the
       same name, with the same translation).

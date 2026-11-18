@@ -47,3 +47,6 @@ false
 (or (P x) a)
 false
 false
+(forall ((qy Int)) (P qy))
+(forall ((qy Int)) (P qy))
+(forall ((qy Int)) (P qy))

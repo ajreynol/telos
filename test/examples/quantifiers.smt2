@@ -60,3 +60,6 @@
 (simplify (forall ((z Int)) (or (= z x) (P x) a)))
 (simplify (forall ((qx Int) (qy Int)) (>= (+ qx (* -1 qy)) 1)))
 (simplify (forall ((qx Int) (qy Int)) (not (>= qy qx))))
+(simplify (forall ((qx Int) (qy Int)) (or (>= (+ qx (* -1 qy)) 1) (P qy))))
+(simplify (forall ((qx Int) (qy Int)) (or (not (>= (+ qx qy) x)) (P qy))))
+(simplify (forall ((qx Int) (qy Int)) (or (not (= (+ qx qy) x)) (P qy))))
