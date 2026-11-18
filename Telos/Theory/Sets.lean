@@ -42,9 +42,6 @@ singleton of a constant, or the empty set.
 
 Deviations from cvc5:
 
-* `(set.union s s)` and `(set.inter s s)` are left unchanged. cvc5 rewrites them
-  to `s` but has no proof rule for that (a `TRUST_THEORY_REWRITE` step;
-  reproducers in `test/cvc5-trust/`).
 * The membership of a constant in a constant set is computed by the general
   membership rewrites, then evaluating the element equalities, where cvc5
   decides it at once (`checkConstantMembership`). The result is the same.
@@ -157,9 +154,8 @@ def rewriteBinary (n : Node) : RewriteResponse n :=
   match n.getKind, n.getChildren with
   | k, #[a, b] =>
     if a == b && k == .SET_MINUS then respond .REWRITE_DONE (byRule "sets-minus-self" n)
-    -- `(set.union s s)` and `(set.inter s s)` are `s` in cvc5, by a trusted step
-    -- unless `s` is a constant, where the rules below prove it.
-    else if a == b && !isConstNode a then .done n
+    else if a == b && k == .SET_INTER then respond .REWRITE_AGAIN (byRule "sets-inter-self" n)
+    else if a == b && k == .SET_UNION then respond .REWRITE_AGAIN (byRule "sets-union-self" n)
     else if isEmptySet a then
       match k with
       | .SET_MINUS => respond .REWRITE_AGAIN (byEmptyRule .sets_minus_emp1 a b a n)

@@ -416,6 +416,8 @@ def ruleName : Eo.CRule → String
   | .sets_union_member => "sets-union-member"
   | .sets_choose_singleton => "sets-choose-singleton"
   | .sets_minus_self => "sets-minus-self"
+  | .sets_union_self => "sets-union-self"
+  | .sets_inter_self => "sets-inter-self"
   | .sets_is_empty_elim => "sets-is-empty-elim"
   | .sets_is_singleton_elim => "sets-is-singleton-elim"
   | .str_eq_ctn_false => "str-eq-ctn-false"

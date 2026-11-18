@@ -11,8 +11,8 @@ s
 (as set.empty (Set Int))
 s
 (as set.empty (Set Int))
-(set.union s s)
-(set.inter s s)
+s
+s
 (set.union s t)
 (set.inter s t)
 (set.union (set.singleton 2) (set.singleton 1))

@@ -900,10 +900,11 @@ tested:
       `(set.union (set.singleton c₁) (… (set.singleton cₙ)))` with
       `c₁ > … > cₙ`, in telos's term order (`SetsRewriter.isConstNode`).
       `Node.isConst` is unchanged; only the sets rewriter uses this.
-    - Deviations: `(set.union s s)` and `(set.inter s s)` are left unchanged
-      unless `s` is a constant. cvc5 rewrites them to `s` with a
-      `TRUST_THEORY_REWRITE` step (`test/cvc5-trust/sets-*-self.smt2`). The
-      membership of a constant in a constant set, and `set.is_empty` of a
+    - `(set.union s s)` and `(set.inter s s)` are `s` (`sets-union-self`,
+      `sets-inter-self`, added to cvc5 in `a307c0f79e` and to Logos in #511;
+      before, cvc5 used a `TRUST_THEORY_REWRITE` step and telos left them
+      unchanged).
+    - Deviations: the membership of a constant in a constant set, and `set.is_empty` of a
       constant, go through the general rewrites, with the same results.
       Elements, arguments and equalities are ordered by telos's term order.
     - `set.is_singleton` of any other set is

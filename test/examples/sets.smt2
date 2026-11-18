@@ -1,7 +1,6 @@
 ; Sets (cvc5's TheorySetsRewriter): insert and subset elimination, membership,
 ; union, intersection and difference (with the empty set, of constants, ordered),
-; choose, is_empty, is_singleton, and equalities of sets. (set.union s s) and
-; (set.inter s s) stay unchanged: cvc5 has no proof rule for them.
+; choose, is_empty, is_singleton, and equalities of sets.
 (set-logic ALL)
 (declare-const x Int)
 (declare-const y Int)

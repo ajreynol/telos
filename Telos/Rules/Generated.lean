@@ -6,7 +6,7 @@ import Telos.Rules.Pattern
 namespace Telos
 
 /-- The rewrite rules of CPC whose left-hand sides telos can match:
-446 of the signature's 628 rules. -/
+448 of the signature's 630 rules. -/
 def generatedRules : List RuleSpec := [
   { name := "arith-div-total-zero-real", rule := .arith_div_total_zero_real, numVars := 1,
     args := [0],
@@ -1207,6 +1207,16 @@ def generatedRules : List RuleSpec := [
     args := [0],
     typeArgs := [(1, 0)],
     lhs := .app .SET_MINUS [.var 0, .var 0],
+    premises := [],
+    varTypes := [none] },
+  { name := "sets-union-self", rule := .sets_union_self, numVars := 1,
+    args := [0],
+    lhs := .app .SET_UNION [.var 0, .var 0],
+    premises := [],
+    varTypes := [none] },
+  { name := "sets-inter-self", rule := .sets_inter_self, numVars := 1,
+    args := [0],
+    lhs := .app .SET_INTER [.var 0, .var 0],
     premises := [],
     varTypes := [none] },
   { name := "sets-is-empty-elim", rule := .sets_is_empty_elim, numVars := 1,
