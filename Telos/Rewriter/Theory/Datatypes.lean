@@ -183,6 +183,61 @@ partial def checkClash (a b : Node) : Bool :=
     | some as, some bs => (as.zip bs).any fun (x, y) => checkClash x y
     | _, _ => a != b && a.isConst && b.isConst
 
+/-- The fields of a constructor application or a tuple, if `n` is one; for
+tuples, `(TUPLE a r)` has fields `a` and `r`. -/
+def fieldsOf? (n : Node) : Option (Nat × Array Node) :=
+  match consApp? n with
+  | some (_, i, cs) => some (i, cs)
+  | none => if n.getKind == .TUPLE then some (0, n.getChildren) else none
+
+/-- cvc5's `utils::checkClash`, collecting the equalities of the leaves at
+which `a` and `b` differ (`rew`): `none` for a clash. -/
+partial def consEqLeaves (a b : Node) : Option (List Node) :=
+  match fieldsOf? a, fieldsOf? b with
+  | some (i, as), some (j, bs) =>
+    if i != j || as.size != bs.size then none
+    else (as.toList.zip bs.toList).foldlM (fun acc (x, y) => (acc ++ ·) <$> consEqLeaves x y) []
+  | _, _ =>
+    if a == b then some []
+    else if a.isConst && b.isConst then none
+    else some [eqNode a b]
+
+/-- A conjunction of `es`: `e` for one, `true` for none. -/
+def mkAndOf : List Node → Node
+  | [] => mkTrue
+  | [e] => e
+  | es => mkNode .AND es.toArray
+
+/-- cvc5's `MACRO_DT_CONS_EQ` (applied by `ppStaticRewrite`): an equality of
+constructor applications (or tuples) is `false` if they clash
+(`dt-cons-eq-clash`), and otherwise the conjunction of the equalities of the
+leaves at which they differ. Certified by `dt-cons-eq` (the equalities of the
+fields), then each field equality: `eq-refl` for equal sides, again for
+constructor applications; then `aci_norm`. -/
+partial def consEq (n : Node) : Option (Rw n) := do
+  let #[a, b] := n.getChildren | none
+  if n.getKind != .EQUAL then none
+  let some (_, as) := fieldsOf? a | none
+  let some (_, bs) := fieldsOf? b | none
+  match consEqLeaves a b with
+  | none => checkBy .dt_cons_eq_clash n mkFalse
+  | some [] => none
+  | some leaves =>
+    let target := mkAndOf leaves
+    if target == n then none
+    let eqs := (as.toList.zip bs.toList).map fun (x, y) => eqNode x y
+    let r ← checkBy .dt_cons_eq n (mkAndOf eqs)
+    -- each field equality
+    let field (e : Node) : Option (Rw e) :=
+      match e.getChildren with
+      | #[x, y] => if x == y then byRule "eq-refl" e else consEq e
+      | _ => none
+    let r := match eqs with
+      | [_] => (r.next? field).getD r
+      | _ => (List.range eqs.length).foldl (fun r i => (r.next? fun m => Rw.congrArg m i field).getD r) r
+    if r.1 == target then some r
+    else r.next? fun m => checkBy .aci_norm m target
+
 /-- Equalities of datatypes (cvc5's `postRewrite`). -/
 def rewriteEqual (n : Node) : RewriteResponse n :=
   match n.getChildren with

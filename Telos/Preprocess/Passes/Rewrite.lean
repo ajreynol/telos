@@ -14,12 +14,6 @@ namespace Telos.Preprocess
 
 /-- Rewrite every assertion. -/
 def Pipeline.rewrite {input : Node} (p : Pipeline input) : Pipeline input :=
-  if Pipeline.inConflict p then p
-  else
-    match h : p.1 with
-    | .app (.kind .AND) cs =>
-      let r : Rw (.app (.kind .AND) cs) := Rw.congr (.kind .AND) cs rewriteCert rfl (.inl rfl)
-      Pipeline.conflict? (p.trans (h ▸ r))
-    | _ => p
+  Pipeline.mapAssertions p rewriteCert
 
 end Telos.Preprocess

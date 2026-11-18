@@ -152,6 +152,8 @@ def Kind.smtLibName : Kind → String
   | .TO_REAL => "to_real" | .TO_INTEGER => "to_int" | .IS_INTEGER => "is_int"
   | .TUPLE => "tuple" | .TUPLE_UNIT => "tuple.unit" | .TUPLE_SELECT => "tuple.select"
   | .TUPLE_UPDATE => "tuple.update"
+  | .PURIFY => "@purify" | .INT_DIV_BY_ZERO => "@int_div_by_zero"
+  | .MOD_BY_ZERO => "@mod_by_zero" | .DIV_BY_ZERO => "@div_by_zero"
   | k => toString (repr k)
 
 /-- A field type of a parametric datatype as declared: a parameter, or a sort

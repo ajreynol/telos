@@ -323,6 +323,62 @@ where
       if ((sum.leadingCoeff?).map (fun d => decide (d < 0))).getD false then byRule "eq-symm" n
       else none
 
+/-- cvc5's `ensureReal`: an integer term as a real one (a constant as a real
+constant, anything else under `to_real`). -/
+def ensureReal (t : Node) : Node :=
+  match t with
+  | .const (.integer i) => .const (.rational i)
+  | t => toReal t
+
+/-- cvc5's `normalizeEquality` in full (`ArithRewriter::rewriteEqualityExt`), which
+the rewriter does not apply (`rewriteEq` keeps only constants and orientation)
+but `ppStaticRewrite` does: an equality of integers is solved for its term of
+least absolute coefficient, after making the coefficients coprime integers
+(`buildIntegerEquality`); one of reals for its leading term, with coefficient
+`1` (`buildRealEquality`). Both sides are made real when the equality is between
+reals. Certified by `arith_poly_norm_rel`, and by `rewriteEq` when the result is
+a constant. -/
+def normalizeEquality (n : Node) : Option (Rw n) := do
+  let #[a, b] := n.getChildren | none
+  if n.getKind != .EQUAL || !(isInt a || isReal a) then none
+  let sum := (polyOf a).add ((polyOf b).scale (-1))
+  let terms := sum.removeConstant.sorted
+  let real := isReal a
+  let x := mkNode .SUB #[a, b]
+  if a == b || (a.isConst && b.isConst) || terms.isEmpty then return ← rewriteEq n
+  let target? : Option (Node × Rat × Rat) :=
+    if sum.isIntegral then
+      let den : Nat := terms.foldl (fun acc (_, c) => Nat.lcm acc c.den) 1
+      let num : Nat := terms.foldl (fun acc (_, c) => Nat.gcd acc c.num.natAbs) 0
+      let μ : Rat := (den : Rat) / (num : Rat)
+      let scaled := sum.scale μ
+      if !(scaled.constant).isInt then none  -- no integer solution: `rewriteEq`
+      else
+        let abs (d : Rat) : Rat := if d < 0 then -d else d
+        let m? := scaled.removeConstant.sorted.foldl (fun best (mono, d) =>
+          match best with
+          | some (_, e) => if abs d < abs e then some (mono, d) else best
+          | none => some (mono, d)) none
+        m?.map fun (m, c) =>
+          let rest : Poly := scaled.filter (·.1 != m)
+          -- `c m + rest = μ (a - b)`: `-c m = rest` for `c < 0`, else `c m = -rest`
+          let (l, r, cx) := if c < 0 then (termNode false (m, -c), rest.toNode false, -(den : Rat))
+            else (termNode false (m, c), (Poly.scale rest (-1)).toNode false, (den : Rat))
+          let (l, r) := if real then (ensureReal l, ensureReal r) else (l, r)
+          (mkNode .EQUAL #[l, r], cx, (num : Rat))
+    else
+      (terms.head?).map fun (m, c) =>
+        -- `c m + rest = a - b`: `m = -rest / c`
+        let rest : Poly := Poly.scale (sum.filter (·.1 != m)) (-1 / c)
+        (mkNode .EQUAL #[termNode true (m, 1), rest.toNode true], 1, c)
+  match target? with
+  | none => rewriteEq n
+  | some (t, cx, cy) =>
+    if t == n then none
+    else
+      let #[l, r] := t.getChildren | none
+      polyNormRel n cx cy x (mkNode .SUB #[l, r]) t
+
 /-- cvc5's `postRewriteAtom` for `>=` and `<=`. -/
 def rewriteIneq (n : Node) : Option (Rw n) :=
   match n.getKind, n.getChildren with

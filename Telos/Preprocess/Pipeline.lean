@@ -60,6 +60,18 @@ def conflict? {input : Node} (p : Pipeline input) : Pipeline input :=
     (p.next? fun m => checkBy .absorb m mkFalse).getD p
   else p
 
+/-- Replace each assertion `a` by its rewrite `f a` (`AssertionPipeline::replace`,
+for every assertion), by congruence below the conjunction; an assertion that
+becomes `false` is a conflict. -/
+def mapAssertions {input : Node} (p : Pipeline input) (f : (c : Node) → Rw c) : Pipeline input :=
+  if inConflict p then p
+  else
+    match h : p.1 with
+    | .app (.kind .AND) cs =>
+      let r : Rw (.app (.kind .AND) cs) := Rw.congr (.kind .AND) cs f rfl (.inl rfl)
+      conflict? (p.trans (h ▸ r))
+    | _ => p
+
 end Pipeline
 
 /-- The assertions that `AssertionPipeline::push_back` adds for `n`: its
