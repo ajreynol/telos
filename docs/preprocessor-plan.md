@@ -1,0 +1,195 @@
+# Plan: a verified preprocessor
+
+telos's rewriter is verified (`Telos.rewrite_correct`) and matches cvc5's
+rewriter by differential testing. The next step is a **verified preprocessor**
+that matches cvc5's: given an SMT-LIB script, produce the assertions cvc5
+prints with `-o post-asserts`, with a machine-checked proof that they mean the
+same as the input. It builds on the rewriter, which keeps its interface: the
+preprocessor calls `rewrite` and its `Rw` certificates, and adds passes around it.
+
+The scope is that of `design.md` ("Scope: cvc5's safe mode"), and the target
+configuration is cvc5 with proofs: every pass that runs then has proof support.
+
+## The target
+
+`ProcessAssertions::apply` (`src/smt/process_assertions.cpp`) runs a fixed
+sequence of passes; most are off by default. With safe mode and proofs, on the
+theories in scope, the passes that run are:
+
+| Pass | When | What it does | CPC justification (cvc5) |
+|---|---|---|---|
+| `apply-substs` | always | expands `define-fun`s (beta reduction) | `beta-reduce`, `cong` |
+| `rewrite` | always (twice) | the rewriter on each assertion | as telos's rewriter |
+| `quantifiers-preprocess` | quantified logics | `QuantifiersRewriter::preprocess` | rewrites |
+| `non-clausal-simp` | not QF_SAT (`simplification=batch`) | Boolean propagation over the top-level assertions (`CircuitPropagator`); learned literals solved by the theories (`ppAssert`) into substitutions `x := t`; the substitutions applied, and the assertion rewritten | `eq_resolve`, `cong`, `trans`, theory solving steps |
+| `static-learning` | default on | theory lemmas implied by each assertion (`ppStaticLearn`: arith, UF, BV) | theory lemmas |
+| `repeat-simp` | QF_AUFBV | `non-clausal-simp` again | as above |
+| `static-rewrite` | always | `ppStaticRewrite` (arith, BV, strings, datatypes, builtin) | theory rewrites |
+| `theory-preprocess` | always | `TheoryPreprocessor`: term formula removal (`ite` to purification skolems, with lemmas), the theories' `ppRewrite` (arith's `OperatorElim` for `div`, `mod`, `to_int`, `is_int`, …; strings, sets, datatypes, arrays, BV, UF), then rewriting | `arith_reduction`, `ite_eq`, `skolem_intro`, rewrites |
+
+Out of scope: unconstrained simplification (QF_AUFBV without models). It
+preserves only satisfiability and has no proofs, so cvc5 disables it with
+proofs. Also out: incremental solving (`push`/`pop`), and the passes that are
+off by default or outside safe mode (`ite-simp`, `miplib-trick`,
+`learned-rewrite`, `bv-to-bool`, `sort-inference`, …).
+
+`-o post-asserts` prints a benchmark: `set-logic`, then `define-fun`s for the
+top-level substitutions (the solved variables and the defined functions),
+declarations of the remaining symbols and of the skolems (`@purify_k`), the
+assertions (including `true` placeholders for assertions that were solved),
+and `check-sat`. For example, for
+
+```smt2
+(declare-const x Int) (declare-const y Int) (declare-const a Bool)
+(declare-fun f (Int) Int) (define-fun g ((z Int)) Int (+ z 1))
+(assert (= x (+ y 1)))
+(assert (or a (> (f x) (g y))))
+(assert (and a (< (ite a x y) 10)))
+(assert (> (div y 3) (mod x 2)))
+```
+
+cvc5 solves `x := (+ 1 y)` and `a := true`, so the second assertion becomes
+`true`. It turns `(ite a x y)` into `x` and then into `(+ 1 y)`, and replaces
+`div` and `mod` by skolems with their defining bounds:
+
+```smt2
+(define-fun a () Bool true)
+(define-fun x () Int (+ 1 y))
+(declare-fun @purify_2 () Int)  (declare-fun @purify_3 () Int)
+(assert (not (>= y 9)))
+(assert (not (>= (+ y (* (- 2) @purify_2) (* (- 1) @purify_3)) (- 1))))
+(assert (>= (+ y (* (- 2) @purify_2)) (- 1)))  ...
+```
+
+(the `(assert true)` placeholders are omitted here.)
+
+## The theorem
+
+The skolems are what make an *equivalence* possible. In CPC, a purification
+skolem is the term `(@purify t)`, and Logos gives it the value of `t`
+(`__smtx_model_eval__at_purify` is the identity). The other skolems that
+preprocessing introduces in scope are also terms with a meaning (choice terms,
+`@int_div_by_zero`). So telos represents skolems as those terms internally and
+prints them as `@purify_k` declarations. The preprocessed assertions then mean,
+in every model, what the input means, given the definitions:
+
+```lean
+theorem Telos.preprocess_correct (s : Script) (h : s.WellTyped) :
+    let r := preprocess s
+    ∀ M, (∀ a ∈ s.assertions, M ⊨ a) ↔
+         (∀ b ∈ r.assertions, M ⊨ b) ∧ (∀ (x, t) ∈ r.defs, M ⊨ (= x t))
+```
+
+`r.defs` is in solved form: no defined symbol occurs in `r.assertions` or in a
+later definition. So the output is satisfiable iff the input is, a model of the
+output extends to one of the input by the definitions (which is cvc5's model
+reconstruction), and an unsatisfiable output means an unsatisfiable input.
+
+## Architecture
+
+The rewriter certifies each step as a CPC proof of `(= t s)`, and one theorem
+turns any certified rewrite into an equivalence. The preprocessor does the same
+at the level of assertion lists.
+
+- **State.** `Pipeline`: the assertions (an array, with cvc5's positions and
+  `true` placeholders, so output order matches), the definitions (cvc5's
+  `TopLevelSubstitutions`), and the skolems introduced. The invariant is the
+  theorem's statement, between the input and the current state.
+- **Certified steps.** A step changes the state, with a CPC proof, checked by
+  Logos from the empty state, of one of these closed formulas:
+  - `(= a b)`: replace assertion `a` by `b`. This is any `Rw` (rewriting,
+    static rewrites, theory preprocessing rewrites).
+  - `(=> (and d₁ … dₙ) (= a b))`: replace `a` by `b` using definitions
+    `dᵢ` (substitution). It is proved with `assume-push`/`scope`, as Logos
+    takes closed assumptions.
+  - `(= a (= x t))`, with `a` then moved to the definitions as `x := t` (a
+    theory solving a learned literal, `ppAssert`). The definition must be
+    solved: `x` not in `t`, nor in the definitions.
+  - `(=> a l)`: add an implied lemma `l` (static learning, learned literals).
+  - `l` valid: add a lemma `l` (skolem lemmas: `div` bounds, `ite` cases).
+
+  One soundness theorem per form, from Logos's checker soundness (the
+  `LogosFacts` already used by the rewriter, plus the semantics of `=>`, `and`
+  and `=`), shows that the step preserves the invariant. A pass is then a
+  composition of certified steps, and needs no proof of its own, as with theory
+  strategies today.
+- **Passes** are strategies, as theory rewriters are: they mirror cvc5's C++
+  (which literal to solve, which variable, which lemma, in which order) and are
+  tested against it, not proved.
+- **Front end.** Full scripts: `declare-fun`, `declare-const`, `define-fun`,
+  `assert`, `set-logic`, `check-sat`, and the datatype and sort declarations
+  already read. Assertions are read through Logos's parser (as `assume`s), as
+  `simplify` terms are today.
+- **Output.** A post-asserts printer, and optionally the CPC proof of the whole
+  preprocessing: input assertions as `assume`s, the steps, and the output
+  assertions and definitions as conclusions, checked by Ethos as the rewriter's
+  proofs are.
+
+## Phases
+
+Each phase ends with fuzzing and benchmark agreement against cvc5, with the
+passes not yet ported switched off on cvc5's side. For example,
+`--simplification=none --no-static-learning` leaves only rewriting and theory
+preprocessing.
+
+1. **Pipeline, theorem, front end, printer.** `Pipeline`, the certified step
+   forms and their soundness theorems, `preprocess_correct` for a pipeline of
+   `apply-substs` and `rewrite`, scripts in, post-asserts out. Target: cvc5 with
+   every optional pass off.
+2. **Theory preprocessing.** `TheoryPreprocessor` and term formula removal
+   (`ite` purification and its lemmas; their order and placement after the
+   last assertion), arith `OperatorElim` (`div`, `mod`, `to_int`, `is_int`,
+   division by zero), then the other theories' `ppRewrite`, and `static-rewrite`.
+   Skolem printing as `@purify_k`, compared up to renaming.
+3. **Non-clausal simplification.** `CircuitPropagator` (top-level Boolean
+   propagation, learned literals), theory solving (`ppAssert`: Boolean
+   variables, arith's linear equations and its choice of variable, BV, arrays,
+   sets), the substitution map (composition, application, re-rewriting), and
+   learned literals added back. This is the largest phase and the one most
+   sensitive to order. Then `repeat-simp` for QF_AUFBV.
+4. **Static learning.** `ppStaticLearn` for arith, UF and BV.
+5. **Quantifiers preprocessing.** `QuantifiersRewriter::preprocess` for
+   quantified logics.
+
+## Testing
+
+- **Differential, by pass.** `scripts/fuzz-pp.py`: random scripts (several
+  assertions over the existing term generators, with equalities that invite
+  solving, `define-fun`s, and `ite`, `div` and `mod` terms), through telos and
+  through `cvc5 -o post-asserts` with the same passes on. Compared up to the
+  names of skolems, the order of `define-fun`s (cvc5 prints them from a hash
+  map), and the orientation of equalities, as the rewriter's fuzzing is.
+- **Semantic.** cvc5 checks that the two outputs, with their definitions, are
+  equivalent, as the rewriter's fuzzing does for terms.
+- **Benchmarks.** The SMT-LIB benchmarks in `~/benchmarks/smt-lib-2026`, by
+  logic, as a match rate per logic.
+- **Proofs.** Ethos checks the printed preprocessing proofs.
+
+## Decisions to make
+
+- **Exactness.** Whether to match the `(assert true)` placeholders and the
+  positions of lemmas exactly. The proposal is yes, as they are part of
+  cvc5's pipeline semantics, and skipping them would hide ordering bugs.
+- **Definitions in the theorem.** The statement above includes them. The
+  alternative, equisatisfiability only, is weaker and would also admit
+  unconstrained simplification. The proposal is the equivalence, leaving
+  unconstrained simplification out.
+- **Skolem naming.** cvc5's `@purify_k` numbers come from its skolem
+  manager. The proposal is to compare up to renaming rather than replicate the
+  numbering.
+- **Order-sensitive ports.** Non-clausal simplification depends on cvc5's
+  traversal and hash orders in places. Where cvc5's choice depends on node
+  ids, telos uses its term order, as the rewriter does, and fuzzing compares up
+  to it.
+
+## Risks
+
+- `CircuitPropagator` and the substitution map are subtle (composition,
+  occurs checks, cycles), and cvc5's output depends on their exact behaviour.
+- Logos's checker takes only closed assumptions. Substitutions under
+  definitions over declared constants are closed, but anything under binders
+  (quantified assertions) needs the assumption-free proofs used for the
+  quantifier rewriter.
+- Proof size and checking time: certifying every substitution application
+  with a scoped proof per assertion may be slow on large benchmarks. Static
+  checking, as for `arith_poly_norm_rel`, may be needed for the common steps.
