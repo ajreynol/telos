@@ -37,6 +37,12 @@ def dtTypeHint : Kind → Const → Option TypeNode
   | .APPLY_UPDATER, .dtSel T .. => some T
   | _, _ => none
 
+/-- The type of an application of a function of type `T` to `k` arguments. -/
+def rangeAfter : Nat → Option TypeNode → Option TypeNode
+  | 0, T => T
+  | k + 1, some (.function _ r) => rangeAfter k (some r)
+  | _, _ => none
+
 /-- The type of a skolem with no cache values, from its identifier. -/
 def skolemType? : SkolemId → Option TypeNode
   | .INT_DIV_BY_ZERO | .MOD_BY_ZERO => some (.function .integer .integer)
@@ -52,6 +58,9 @@ def typeHint : Node → Option TypeNode
   | .const (.bitVector w _) => some (.bitVector w)
   | .const (.emptySet T) => some (.set T)
   | n@(.app (.node k (.const c)) _) => (dtTypeHint k c).orElse fun _ => n.getType
+  -- `(f t₁ … tₙ)`: the range of `f`'s type after `n` arguments
+  | n@(.app (.node .APPLY_UF f) cs) =>
+    (rangeAfter cs.size (typeHint f)).orElse fun _ => n.getType
   | .var _ T | .boundVar _ T => some T
   | n@(.skolem id cs) =>
     match id, h : cs.toList with

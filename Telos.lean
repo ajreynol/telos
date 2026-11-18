@@ -4,6 +4,7 @@ import Telos.Core.Node.TypeNode
 import Telos.Core.Node.Node
 import Telos.Core.Node.DecEq
 import Telos.Core.Node.Order
+import Telos.Core.Node.Key
 import Telos.Core.Node.Print
 import Telos.Core.Node.ToEo
 import Telos.Core.Node.OfEo
@@ -34,6 +35,8 @@ import Telos.Preprocess.Passes.TheoryPreprocess
 import Telos.Preprocess.SkolemSteps
 import Telos.Preprocess.Conjunctions
 import Telos.Preprocess.Theory.ArithPreprocess
+import Telos.Preprocess.Theory.BVPreprocess
+import Telos.Preprocess.Theory.DatatypesPreprocess
 import Telos.Preprocess.Preprocess
 import Telos.Frontend.Script
 import Telos.Frontend.Simplify

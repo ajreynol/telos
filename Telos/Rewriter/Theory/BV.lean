@@ -106,6 +106,19 @@ computed by that program, read back, and validated by the rule. -/
 def byProgram (r : Eo.CRule) (compute : Eo.Term → Eo.Term) : Step := fun m =>
   Node.ofEo m.vars (compute m.toEo) >>= fun k => if k == m then none else checkBy r m k
 
+/-- cvc5's `TheoryBVRewriter::eliminateOverflows`: the overflow predicates
+`bvuaddo`, `bvsaddo`, `bvumulo`, `bvsmulo`, `bvusubo` and `bvssubo` as
+bit-vector formulas. -/
+def eliminateOverflows : Step := fun m =>
+  firstOf [fun _ => rules ["bv-uaddo-eliminate", "bv-saddo-eliminate",
+      "bv-usubo-eliminate", "bv-ssubo-eliminate"] m,
+    fun _ => byProgram .bv_umulo_elim (fun
+      | .Apply (.Apply (.UOp .bvumulo) a) b => Programs.umuloElim a b
+      | _ => .Stuck) m,
+    fun _ => byProgram .bv_smulo_elim (fun
+      | .Apply (.Apply (.UOp .bvsmulo) a) b => Programs.smuloElim a b
+      | _ => .Stuck) m]
+
 /-- cvc5's `RepeatEliminate`, by `bv-repeat-elim`. -/
 def repeatEliminate : Step :=
   byProgram .bv_repeat_elim fun
@@ -330,14 +343,7 @@ def rewriteNode (pre : Bool) (n : Node) : RewriteResponse n :=
   | .BITVECTOR_USUBO | .BITVECTOR_SSUBO =>
     -- cvc5's `RewriteOverflow`: eliminated only when all children are constants.
     if n.getChildren.all (·.isConst) then
-      orDone <| tryRewrite n [rules ["bv-uaddo-eliminate", "bv-saddo-eliminate",
-        "bv-usubo-eliminate", "bv-ssubo-eliminate"],
-        byProgram .bv_umulo_elim (fun
-          | .Apply (.Apply (.UOp .bvumulo) a) b => Programs.umuloElim a b
-          | _ => .Stuck),
-        byProgram .bv_smulo_elim (fun
-          | .Apply (.Apply (.UOp .bvsmulo) a) b => Programs.smuloElim a b
-          | _ => .Stuck)]
+      orDone <| tryRewrite n [eliminateOverflows]
     else .done n
   | .BITVECTOR_SIZE => respond (linear n [byEvaluate]) .REWRITE_DONE
   | _ => .done n

@@ -171,12 +171,24 @@ the place of `true` conjuncts added after the last assertion. So the theorem
 still needed no new proof. Skolems are printed as cvc5 prints them
 (`@purify_k`, `@int_div_by_zero_k`, declared), numbered by occurrence.
 
+Then the `ppRewrite` of bit-vectors (`UltAddOne`, and the overflow predicates
+eliminated, `Telos/Preprocess/Theory/BVPreprocess.lean`) and of datatypes
+(updaters as an `ite` on the tester, by `dt-updater-elim`;
+`DatatypesPreprocess.lean`). Tuple updaters are blocked on Logos, which does not
+translate a tester on the `tuple` constructor (`upstream-requests.md`,
+request 9); selectors stay as they are (cvc5's shared selectors have no CPC
+term, and cvc5 prints them as the selectors). On the way: `static-rewrite`'s
+`MACRO_DT_CONS_EQ` now splits tuple equalities (the fields were those of the
+binary `TUPLE` node), and the rule matcher takes a premise after the premises
+that bind its variables (`bv-ult-add-one`). The not ported `ppRewrite`s are
+those of strings, sets, arrays and UF.
+
 `fuzz-pp.py` compares up to the numbering of skolems and up to Int/Real casts
 (cvc5's post-asserts prints its mixed arithmetic without `to_real`, where its
 `simplify`, which the rewriter matches, prints them). On 150 benchmarks per
-mode: UF all identical up to orientation; arith 146 agree (64 only up to
-casts), 4 differ; mixed 136 agree, 14 differ; datatypes differ by their
-`ppRewrite` (updaters, tuples), not ported. The remaining differences come
+mode: UF all agree up to orientation; arith 146 agree (64 only up to casts),
+4 differ; mixed 137 agree, 13 differ; bit-vectors 145 agree, 5 differ;
+datatypes 111 agree, 39 differ (37 of them by tuple updaters). The remaining differences come
 from cvc5's node ids, which order skolems by creation: the order of two
 skolems in a sum or an equality, and of terms built during preprocessing
 against skolems, and so of the lemmas that follow from them.

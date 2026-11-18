@@ -217,15 +217,18 @@ constructor applications; then `aci_norm`. -/
 partial def consEq (n : Node) : Option (Rw n) := do
   let #[a, b] := n.getChildren | none
   if n.getKind != .EQUAL then none
-  let some (_, as) := fieldsOf? a | none
-  let some (_, bs) := fieldsOf? b | none
+  -- the fields, one per element for tuples, as `$mk_dt_cons_eq` takes them
+  let fields (t : Node) : Option (List Node) :=
+    (tupleElems? t).orElse fun _ => (fieldsOf? t).map (·.2.toList)
+  let as ← fields a
+  let bs ← fields b
   match consEqLeaves a b with
   | none => checkBy .dt_cons_eq_clash n mkFalse
   | some [] => none
   | some leaves =>
     let target := mkAndOf leaves
     if target == n then none
-    let eqs := (as.toList.zip bs.toList).map fun (x, y) => eqNode x y
+    let eqs := (as.zip bs).map fun (x, y) => eqNode x y
     let r ← checkBy .dt_cons_eq n (mkAndOf eqs)
     -- each field equality
     let field (e : Node) : Option (Rw e) :=

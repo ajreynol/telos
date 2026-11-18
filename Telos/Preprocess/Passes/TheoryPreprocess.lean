@@ -2,6 +2,8 @@ import Std.Data.HashMap
 import Std.Data.HashSet
 import Telos.Preprocess.Pipeline
 import Telos.Preprocess.Theory.ArithPreprocess
+import Telos.Preprocess.Theory.BVPreprocess
+import Telos.Preprocess.Theory.DatatypesPreprocess
 import Telos.Rewriter.Rewrite
 
 /-!
@@ -31,8 +33,9 @@ not), and the set of terms that have skolems, last for the whole pass, as
 cvc5's last for the whole run, so a term already purified in an earlier
 assertion gets no second lemma. Quantifier bodies are not traversed.
 
-Ported theory hooks: arithmetic (`TheoryArith::ppRewrite`). Not ported: the
-other theories' `ppRewrite` (strings, sets, datatypes, arrays, bit-vectors, UF).
+Ported theory hooks: arithmetic (`TheoryArith::ppRewrite`), bit-vectors
+(`TheoryBV::ppRewrite`) and datatypes (`TheoryDatatypes::ppRewrite`, but for
+tuple updaters). Not ported: strings, sets, arrays and UF.
 
 Every step is certified (`Telos/Preprocess/SkolemSteps.lean`): the pass is a
 rewrite of the conjunction of the assertions.
@@ -45,9 +48,9 @@ open Node
 /-- The state of cvc5's `TheoryPreprocessor`. -/
 structure TppState where
   /-- `d_cache`: the result for each node in each context. -/
-  cache : Std.HashMap (Node × Nat) ((n : Node) × Rw n) := {}
+  cache : Std.HashMap (Key × Nat) ((n : Node) × Rw n) := {}
   /-- `RemoveTermFormulas`'s skolem cache: the terms that have a skolem. -/
-  purified : Std.HashSet Node := {}
+  purified : Std.HashSet Key := {}
   /-- The lemmas of the current assertion (`newLemmas`). -/
   lemmas : Array (Rw mkTrue) := #[]
   /-- The lemmas of the assertions processed so far, in order. -/
@@ -59,14 +62,14 @@ abbrev TppM := StateM TppState
 that it is not shared and is updated in place (`{ s with f := s.f.insert … }`
 copies `s.f` on every update, which is quadratic). -/
 
-def updCache (f : Std.HashMap (Node × Nat) ((n : Node) × Rw n) →
-    Std.HashMap (Node × Nat) ((n : Node) × Rw n)) : TppM Unit :=
+def updCache (f : Std.HashMap (Key × Nat) ((n : Node) × Rw n) →
+    Std.HashMap (Key × Nat) ((n : Node) × Rw n)) : TppM Unit :=
   modify fun s =>
     let c := s.cache
     let s := { s with cache := {} }
     { s with cache := f c }
 
-def updPurified (f : Std.HashSet Node → Std.HashSet Node) : TppM Unit :=
+def updPurified (f : Std.HashSet Key → Std.HashSet Key) : TppM Unit :=
   modify fun s =>
     let c := s.purified
     let s := { s with purified := {} }
@@ -102,8 +105,8 @@ def removeTermFormulas (n : Node) (inTerm : Bool) : TppM (Option (Rw n)) := do
   let isPurify := match n with | .skolem .PURIFY _ => true | _ => false
   if !isIte && !(isBool && inTerm && !isPurify) then return none
   let some step := purifyStep n | return none
-  if !(← get).purified.contains n then
-    updPurified (·.insert n)
+  if !(← get).purified.contains ⟨n⟩ then
+    updPurified (·.insert ⟨n⟩)
     addLemma <| if isIte then
         -- `ite_eq` proves `(ite c (= n t₁) (= n t₂))`; then `n` is purified
         (lemmaBy [stepWith .ite_eq [n.toEo]]).map fun l => l.trans (replaceRw n step l.1)
@@ -115,6 +118,8 @@ eliminates it, with a lemma. -/
 def ppRewrite (n : Node) : Option (Rw n × Option (Rw mkTrue)) :=
   match theoryOf n with
   | .THEORY_ARITH => arithPpRewrite n
+  | .THEORY_BV => (bvPpRewrite n).map (·, none)
+  | .THEORY_DATATYPES => (dtPpRewrite n).map (·, none)
   | _ => none
 
 /-- `preprocessWithProof`: `ppRewrite`, except for equalities, then rewriting. -/
@@ -128,7 +133,7 @@ def preprocessWithProof (n : Node) : TppM (Rw n) := do
 
 /-- The cached result for `n` in context `val`. -/
 def findCache (n : Node) (val : Nat) : TppM (Option (Rw n)) := do
-  match (← get).cache.get? (n, val) with
+  match (← get).cache.get? (⟨n⟩, val) with
   | some ⟨n', r⟩ => return if h : n' = n then some (h ▸ r) else none
   | none => return none
 
@@ -154,7 +159,7 @@ partial def theoryPreprocess (n : Node) (val : Nat) : TppM (Rw n) := do
         -- changed: traverse the result again
         let r₃ ← theoryPreprocess r₂.1 val
         pure (r₁.trans (r₂.trans r₃))
-  updCache (·.insert (n, val) ⟨n, res⟩)
+  updCache (·.insert (⟨n⟩, val) ⟨n, res⟩)
   return res
 
 /-- `TheoryPreprocessor::preprocessInternal`: rewrite, then traverse. -/

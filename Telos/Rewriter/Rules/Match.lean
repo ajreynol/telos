@@ -194,23 +194,36 @@ def proverSteps (prove : Option PremiseProver) (σ : Subst) (p : Premise) (a : N
           [CCmd.step .true_elim .nil (.cons 0 .nil)]
       | none => none
 
-/-- Extend `σ` by the premises, in order: the value of each premise's left-hand
-side must match its right-hand side, or the premise is proven by `prove`. -/
-def bindPremises (prove : Option PremiseProver) (σ : Subst) : List Premise → List Subst
+/-- Extend `σ` by one premise: the value of its left-hand side must match its
+right-hand side, or it is proven by `prove`. -/
+def bindPremise (prove : Option PremiseProver) (σ : Subst) (p : Premise) : List Subst :=
+  let a? := p.expr.instantiate σ (sym := true)
+  let proven := a?.bind (proverSteps prove σ p) |>.isSome
+  if proven then [σ] else
+  match a? >>= evalNode with
+  | some val =>
+    match p.other with
+    | some o =>
+      match o.instantiate σ (sym := true) >>= evalNode with
+      | some val' => if val == val' then [σ] else []
+      | none => []
+    | none => matchPat σ p.value val
+  | none => []
+
+/-- Extend `σ` by the premises, in order, except that a premise whose left-hand
+side has variables that a later premise binds is taken after it (as in
+`bv-ult-add-one`, whose `(= c (@bv 1 w))` comes before `(= w (@bvsize x))`):
+the first premise whose left-hand side is instantiated is taken first. -/
+partial def bindPremises (prove : Option PremiseProver) (σ : Subst) (ps : List Premise) :
+    List Subst :=
+  match ps with
   | [] => [σ]
-  | p :: ps =>
-    let a? := p.expr.instantiate σ (sym := true)
-    let proven := a?.bind (proverSteps prove σ p) |>.isSome
-    if proven then bindPremises prove σ ps else
-    match a? >>= evalNode with
-    | some val =>
-      match p.other with
-      | some o =>
-        match o.instantiate σ (sym := true) >>= evalNode with
-        | some val' => if val == val' then bindPremises prove σ ps else []
-        | none => []
-      | none => (matchPat σ p.value val).flatMap (bindPremises prove · ps)
-    | none => []
+  | p₀ :: rest =>
+    match ps.findIdx? fun p => (p.expr.instantiate σ (sym := true)).isSome with
+    | some i =>
+      let p := ps[i]?.getD p₀
+      (bindPremise prove σ p).flatMap fun σ' => bindPremises prove σ' (ps.eraseIdx i)
+    | none => (bindPremise prove σ p₀).flatMap fun σ' => bindPremises prove σ' rest
 
 /-- Whether a pattern has a bit-vector literal pattern `(@bv v w)`. -/
 partial def Pat.hasBvLit : Pat → Bool

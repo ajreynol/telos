@@ -11,7 +11,7 @@ assertions. The plan is `docs/preprocessor-plan.md`.
 
 Ported so far: the pipeline (`Pipeline.init`, which splits conjunctions), the
 `rewrite` pass, `static-rewrite` in part, and `theory-preprocess` with term
-formula removal and arithmetic's `ppRewrite`. This matches cvc5 with the
+formula removal and the `ppRewrite` of arithmetic, bit-vectors and datatypes. This matches cvc5 with the
 passes that are not ported switched off (`--simplification=none
 --no-static-learning`), up to the order cvc5 takes from node ids. `apply-substs` has
 nothing to do: `define-fun`s are expanded when the script is read.

@@ -32,24 +32,6 @@ namespace Telos.Preprocess
 
 open Eo Node
 
-/-- A hash of the top of a node, to depth `d`. The derived `Hashable Node`
-hashes the whole tree, which on the pipeline's conjuncts dominates the cost. -/
-def shallowHash : Nat → Node → UInt64
-  | 0, _ => 7
-  | _, .const c => hash c
-  | _, .var n _ | _, .boundVar n _ => hash n
-  | _, .skolem id _ => hash id
-  | d + 1, .app op cs =>
-    let h := mixHash (hash op.getKind) (hash cs.size)
-    cs.attach.foldl (fun h ⟨c, _⟩ => mixHash h (shallowHash d c)) h
-
-/-- A node keyed by its shallow hash; equality is still structural. -/
-structure Key where
-  node : Node
-
-instance : BEq Key := ⟨fun a b => a.node == b.node⟩
-instance : Hashable Key := ⟨fun k => shallowHash 3 k.node⟩
-
 structure ReorgState where
   cmds : Array CCmd := #[]
   /-- The number of objects on the checker's state. -/

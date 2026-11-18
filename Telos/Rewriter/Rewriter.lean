@@ -1,5 +1,6 @@
 import Std.Data.HashMap
 import Telos.Core.Certified
+import Telos.Core.Node.Key
 
 /-!
 # Rewriter
@@ -101,14 +102,14 @@ def preRewriteLoop (R : TheoryId → TheoryRewriter) : Nat → (n : Node) → Rw
 
 /-- The rewrite cache: the rewrite of each node rewritten so far, as cvc5's
 rewriter caches the result of `rewriteTo`. -/
-abbrev Cache := Std.HashMap Node ((n : Node) × Rw n)
+abbrev Cache := Std.HashMap Key ((n : Node) × Rw n)
 
 /-- The rewriter's monad: a computation with the rewrite cache. -/
 abbrev RwM := StateM Cache
 
 /-- The cached rewrite of `n`, if any. -/
 def Cache.find (c : Cache) (n : Node) : Option (Rw n) :=
-  match c.get? n with
+  match c.get? ⟨n⟩ with
   | some ⟨n', r⟩ => if h : n' = n then some (h ▸ r) else none
   | none => none
 
@@ -186,7 +187,7 @@ def rewriteWithM (R : TheoryId → TheoryRewriter) : Nat → (n : Node) → RwM 
     let mid ← rewriteChildren full pre.1
     let post ← postRewriteLoop R full fuel mid.1
     let r := pre.trans (mid.trans post)
-    modify (·.insert n ⟨n, r⟩)
+    modify (·.insert ⟨n⟩ ⟨n, r⟩)
     return r
 
 /-- cvc5's `Rewriter::rewriteTo`, with the given theory rewriters and fuel. The
