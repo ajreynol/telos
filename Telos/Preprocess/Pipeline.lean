@@ -10,7 +10,9 @@ the list of assertions that preprocessing passes transform.
 The pipeline is one node: the conjunction of its assertions, `(and a₁ … aₙ)`, as
 a certified rewrite (`Rw`) of the conjunction of the input assertions. A pass is
 then a rewrite of the conjunction, made of CPC-checked steps (rewriting an
-assertion is congruence below `and`; splitting a conjunction is `aci_norm`), and
+assertion is congruence below `and`; splitting a conjunction is `aci_norm`;
+adding a lemma `L` is `aci_norm` to add a conjunct `true`, then a rewrite
+`true → L`, `pushLemmas`), and
 the preprocessed assertions are equivalent to the input ones by the theorem that
 covers every certified rewrite (`Certified.equiv`). No pass needs a proof of its
 own.
@@ -33,6 +35,12 @@ def inputNode (as : List Node) : Node := mkNode .AND (as ++ [mkTrue]).toArray
 /-- cvc5's `AssertionPipeline`: the conjunction of the assertions, certified
 equivalent to the input `input`. -/
 abbrev Pipeline (input : Node) := Rw input
+
+/-- The assertions that `AssertionPipeline::push_back` adds for `n`: its
+conjuncts, flattened, in order. -/
+partial def flattenAnd : Node → List Node
+  | .app (.kind .AND) cs => cs.toList.flatMap flattenAnd
+  | n => [n]
 
 namespace Pipeline
 
@@ -72,13 +80,42 @@ def mapAssertions {input : Node} (p : Pipeline input) (f : (c : Node) → Rw c) 
       conflict? (p.trans (h ▸ r))
     | _ => p
 
-end Pipeline
+/-- The `true` assertion at position `i` replaced by the lemma `l`, a certified
+rewrite of `true`, by congruence below the conjunction. -/
+def setLemma {input : Node} (p : Pipeline input) (i : Nat) (l : Rw mkTrue) : Pipeline input :=
+  match h : p.1 with
+  | .app (.kind .AND) cs =>
+    if hi : i < cs.size then
+      if hc : cs[i] = mkTrue then
+        let l' : Rw cs[i] := hc ▸ l
+        let r : Rw (.app (.kind .AND) cs) :=
+          ⟨.app (.kind .AND) (cs.set i l'.1), .congrArg i l'.1 hi rfl (.inl rfl) l'.2 (.refl _)⟩
+        p.trans (h ▸ r)
+      else p
+    else p
+  | _ => p
 
-/-- The assertions that `AssertionPipeline::push_back` adds for `n`: its
-conjuncts, flattened, in order. -/
-partial def flattenAnd : Node → List Node
-  | .app (.kind .AND) cs => cs.toList.flatMap flattenAnd
-  | n => [n]
+/-- `pushBackTrusted` for each lemma, in order: a lemma, a certified rewrite of
+`true`, is added after the last assertion. The lemmas are given split into
+their conjuncts, as `push_back` splits them (`splitLemma`). The conjunction gets
+a `true` per lemma (one `aci_norm` step), and each is rewritten to its lemma. A
+lemma that is still a conjunction is split by a second `aci_norm` step. -/
+def pushLemmas {input : Node} (p : Pipeline input) (lems : List (Rw mkTrue)) : Pipeline input :=
+  if lems.isEmpty || inConflict p then p
+  else
+    let as := (assertions p).toList
+    match rearrange p (as ++ lems.map fun _ => mkTrue) with
+    | none => p
+    | some q =>
+      let q := lems.zipIdx.foldl (fun q (l, j) => setLemma q (as.length + j) l) q
+      let bs := (assertions q).toList
+      let q := if (bs.drop as.length).any (·.getKind == .AND) then
+          let flat := bs.take as.length ++ (bs.drop as.length).flatMap flattenAnd
+          (rearrange q flat).getD q
+        else q
+      conflict? q
+
+end Pipeline
 
 /-- The pipeline of cvc5's `ProcessAssertions`, before the passes: the input
 assertions pushed one by one (`push_back`, which splits conjunctions), then

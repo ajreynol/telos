@@ -113,23 +113,36 @@ def Cache.find (c : Cache) (n : Node) : Option (Rw n) :=
   | none => none
 
 /-- The rewrites of `cs` by `f`, in order. -/
-def mapChildren (f : (c : Node) → RwM (Rw c)) :
-    (cs : List Node) → RwM {rs : List ((c : Node) × Rw c) // rs.map (·.1) = cs}
+def mapChildren {m : Type → Type} [Monad m] (f : (c : Node) → m (Rw c)) :
+    (cs : List Node) → m {rs : List ((c : Node) × Rw c) // rs.map (·.1) = cs}
   | [] => return ⟨[], rfl⟩
   | c :: cs => do
     let r ← f c
     let ⟨rs, h⟩ ← mapChildren f cs
     return ⟨⟨c, r⟩ :: rs, by simp [h]⟩
 
-/-- Rewrite the children of a node with `f`. -/
-def rewriteChildren (f : (c : Node) → RwM (Rw c)) (n : Node) : RwM (Rw n) :=
+/-- `mapChildren`, with `f` run on the children from the last to the first, as
+cvc5's traversals with an explicit stack visit them. -/
+def mapChildrenRev {m : Type → Type} [Monad m] (f : (c : Node) → m (Rw c)) :
+    (cs : List Node) → m {rs : List ((c : Node) × Rw c) // rs.map (·.1) = cs}
+  | [] => return ⟨[], rfl⟩
+  | c :: cs => do
+    let ⟨rs, h⟩ ← mapChildrenRev f cs
+    let r ← f c
+    return ⟨⟨c, r⟩ :: rs, by simp [h]⟩
+
+/-- Rewrite the children of a node with `f` (in any monad: the rewriter's, or the
+preprocessor's), from the first to the last, or with `reverse` from the last to
+the first. -/
+def rewriteChildren {m : Type → Type} [Monad m] (f : (c : Node) → m (Rw c)) (n : Node)
+    (reverse : Bool := false) : m (Rw n) :=
   match n with
   | .app op cs =>
     if hop : op.eoShape.isChildCongruent then
       let typed := op.childrenTypedOfParent = true ∨ Profile.time "types"
         (fun _ => "driver: children well typed") (fun _ => decide (∀ c ∈ cs.toList, c.WellTyped)) = true
       if hwt : typed then do
-        let ⟨rs, hrs⟩ ← mapChildren f cs.toList
+        let ⟨rs, hrs⟩ ← if reverse then mapChildrenRev f cs.toList else mapChildren f cs.toList
         let hwt' : op.childrenTypedOfParent = true ∨ ∀ c ∈ cs.toList, c.WellTyped :=
           hwt.imp (fun h => h) of_decide_eq_true
         return Rw.congrList op cs rs hrs hop hwt'

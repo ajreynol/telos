@@ -47,14 +47,15 @@ namespace Node
 
 /-- Nullary constructors come after constants and before variables: cvc5 creates
 them when their datatype is declared, so they usually have smaller ids than the
-constants declared after it (`(= nil x)`). -/
+constants declared after it (`(= nil x)`). Skolems come last: cvc5 creates them
+during preprocessing, after the terms they are compared with (`(= (f x) k)`). -/
 private def rank : Node → Nat
   | .const _ => 0
   | .app (.node .APPLY_CONSTRUCTOR _) #[] => 1
   | .var .. => 2
   | .boundVar .. => 3
-  | .skolem .. => 4
-  | .app .. => 5
+  | .app .. => 4
+  | .skolem .. => 5
 
 mutual
 

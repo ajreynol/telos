@@ -44,4 +44,28 @@ def rw (n : Node) : String := (rewrite n).toSmtLib
 #guard mkPurifySkolem x0 == k && mkPurifySkolem x != k
 #guard k.vars == [k, x]
 
+/-! ## The `theory-preprocess` pass -/
+
+def a : Node := .var "a" .boolean
+def y : Node := .var "y" .integer
+def three : Node := .const (.integer 3)
+def pp (as : List Node) : List String := (Preprocess.preprocess as).toList.map (·.toSmtLib)
+
+-- A non-Boolean `ite` is purified, with its lemma after the `true` placeholder.
+#guard pp [mkNode .GT #[iteNode a x y, three]] ==
+  ["(>= (@purify (ite a x y)) 4)", "true",
+   "(ite a (= x (@purify (ite a x y))) (= y (@purify (ite a x y))))"]
+-- The same term in a second assertion gets no second lemma.
+#guard pp [mkNode .GT #[iteNode a x y, three], mkNode .LT #[iteNode a x y, y]] ==
+  ["(>= (@purify (ite a x y)) 4)", "(>= (+ y (* -1 (@purify (ite a x y)))) 1)", "true",
+   "(ite a (= x (@purify (ite a x y))) (= y (@purify (ite a x y))))"]
+-- `div` by a constant: a purification skolem, whose lemma is split.
+#guard pp [mkNode .GT #[mkNode .INTS_DIVISION #[x, three], three]] ==
+  ["(>= (@purify (div_total x 3)) 4)", "true",
+   "(>= (+ x (* -3 (@purify (div_total x 3)))) 0)",
+   "(not (>= (+ x (* -3 (@purify (div_total x 3)))) 3))"]
+-- Division by zero: the skolem function, applied.
+#guard pp [mkNode .GT #[mkNode .INTS_DIVISION #[x, .const (.integer 0)], three]] ==
+  ["(>= (@int_div_by_zero x) 4)", "true"]
+
 end TelosTests.Skolem

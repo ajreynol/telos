@@ -51,7 +51,7 @@ static rewrite is traversed again (`fuel` bounds the repetitions). -/
 def staticRewriteWith : Nat → (n : Node) → Rw n
   | 0, n => Rw.id n
   | fuel + 1, n =>
-    let r := (rewriteChildren (fun c => pure (staticRewriteWith fuel c)) n).run' {}
+    let r := rewriteChildren (m := Id) (fun c => staticRewriteWith fuel c) n
     match ppStaticRewrite r.1 with
     | some s => if s.1 == r.1 then r else (r.trans s).trans (staticRewriteWith fuel s.1)
     | none => r

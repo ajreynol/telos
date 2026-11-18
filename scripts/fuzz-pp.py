@@ -12,6 +12,13 @@ lines are ignored, and for a benchmark with `define-fun`s so are the
 `(assert true)` that cvc5 keeps in their place (all `(assert true)`, on both
 sides).
 
+Skolems (`@purify_2`, `@int_div_by_zero_3`, …) are numbered by cvc5 in the order
+it creates them, and by telos in the order they occur, so both outputs are
+compared with their skolems renumbered in order of first occurrence. Last, the
+assertions are compared up to Int/Real casts: cvc5's arithmetic is mixed
+internally, and `-o post-asserts` prints it so (`(+ r (* -1 x))`, `0`), where
+telos, like cvc5's `simplify`, keeps the casts (`(+ r (to_real (* -1 x)))`, `0/1`).
+
 The benchmarks are random (default): scripts of 1 to 4 assertions, each a
 random Boolean term from `telos-fuzz` (with the declarations of `fuzz.py`), or
 the SMT-LIB files given as arguments.
@@ -26,6 +33,7 @@ MODE is one of `fuzz.py`'s term modes (`--arith`, `--uf`, …). Build first:
 import argparse
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -56,6 +64,35 @@ def post_asserts(text):
     return decls, asserts
 
 
+SKOLEM = re.compile(r"@([a-z_]+?)_(\d+)\b")
+
+
+def renumber_skolems(asserts, decls):
+    """The assertions and declarations with skolems renumbered `@purify_#1`, …
+    in order of first occurrence (in the assertions, then the declarations)."""
+    names = {}
+    for text in list(asserts) + sorted(decls):
+        for m in SKOLEM.finditer(text):
+            names.setdefault(m.group(0), f"@{m.group(1)}_#{len(names) + 1}")
+    sub = lambda text: SKOLEM.sub(lambda m: names[m.group(0)], text)
+    # declarations up to spacing between parentheses (cvc5 prints `(par (T)((c)))`)
+    norm = lambda d: re.sub(r"\)\s+\(", ")(", d)
+    return [sub(a) for a in asserts], {norm(sub(d)) for d in decls}
+
+
+def cast_free(e):
+    """`e` without Int/Real casts: `(to_real t)` is `t`, and `n/1` is `n`."""
+    if isinstance(e, str):
+        return e[:-2] if e.endswith("/1") and is_number(e[:-2]) else e
+    if len(e) == 2 and e[0] == "to_real":
+        return cast_free(e[1])
+    return [cast_free(x) for x in e]
+
+
+def is_number(t):
+    return t.lstrip("-").isdigit()
+
+
 def run(cmd, path):
     r = subprocess.run(cmd + [str(path)], capture_output=True, text=True)
     return r.stdout if r.returncode == 0 else None, r.stderr.strip()
@@ -72,6 +109,8 @@ def compare(ours, theirs):
         return "oriented"
     if [fuzz.order_free(x) for x in o] == [fuzz.order_free(x) for x in t]:
         return "ordered"
+    if [fuzz.order_free(cast_free(x)) for x in o] == [fuzz.order_free(cast_free(x)) for x in t]:
+        return "casts"
     return None
 
 
@@ -105,7 +144,7 @@ def main():
             terms = terms[k:]
             path.write_text(fuzz.PRELUDE + body + "(check-sat)\n")
             files.append(path)
-    counts = {"same": 0, "renamed": 0, "oriented": 0, "ordered": 0}
+    counts = {"same": 0, "renamed": 0, "oriented": 0, "ordered": 0, "casts": 0}
     mismatches, failures = [], []
     for path in files:
         ours, err = run([str(TELOS), "--post-asserts"], path)
@@ -118,6 +157,8 @@ def main():
             failures.append((path, "no post-asserts output"))
             continue
         (od, oa), (td, ta) = o, t
+        oa, od = renumber_skolems(oa, od)
+        ta, td = renumber_skolems(ta, td)
         if "define-fun" in path.read_text():
             oa = [x for x in oa if x != "true"]
             ta = [x for x in ta if x != "true"]
@@ -131,7 +172,8 @@ def main():
     print(f"reference: {version[0] if version else a.cvc5} {' '.join(CVC5_OPTS)}")
     print(f"{n} benchmarks: {counts['same']} identical to cvc5, {counts['renamed']} up to the names of "
           f"bound variables, {counts['oriented']} up to the orientation of equalities, "
-          f"{counts['ordered']} up to the order of commutative arguments, {len(mismatches)} different, "
+          f"{counts['ordered']} up to the order of commutative arguments, {counts['casts']} up to Int/Real "
+          f"casts, {len(mismatches)} different, "
           f"{len(failures)} failed")
     for path, oa, ta, dd in mismatches[:a.show]:
         print(f"\n  {path}:")

@@ -157,6 +157,37 @@ three quarters differ, by the passes cvc5 always runs: `theory-preprocess`
 constructor equalities split into conjunctions) and `static-rewrite` (arith
 normalizes equalities, `rewriteEqualityExt`). These are phase 2.
 
+Phase 2 is under way. `static-rewrite` is ported for arithmetic and datatype
+equalities and `distinct`. `theory-preprocess` is ported with term formula
+removal (non-Boolean `ite`s and Boolean terms inside terms purified, with
+their lemmas) and arithmetic's `ppRewrite` (`OperatorElim`: `div`, `mod`, `/`,
+their total versions, `to_int`, `is_int`, `abs`), in
+`Telos/Preprocess/Passes/TheoryPreprocess.lean`. The new steps are still
+rewrites (`Telos/Preprocess/SkolemSteps.lean`): `t → (@purify t)` by
+`skolem_intro`, and a lemma `L` as `true → L`, proven by `ite_eq`,
+`skolem_intro` or `arith_reduction` and `and_elim` (cvc5's `OperatorElim`
+lemmas are the conjuncts of `arith_reduction`), then `true_intro`; lemmas take
+the place of `true` conjuncts added after the last assertion. So the theorem
+still needed no new proof. Skolems are printed as cvc5 prints them
+(`@purify_k`, `@int_div_by_zero_k`, declared), numbered by occurrence.
+
+`fuzz-pp.py` compares up to the numbering of skolems and up to Int/Real casts
+(cvc5's post-asserts prints its mixed arithmetic without `to_real`, where its
+`simplify`, which the rewriter matches, prints them). On 150 benchmarks per
+mode: UF all identical up to orientation; arith 146 agree (64 only up to
+casts), 4 differ; mixed 136 agree, 14 differ; datatypes differ by their
+`ppRewrite` (updaters, tuples), not ported. The remaining differences come
+from cvc5's node ids, which order skolems by creation: the order of two
+skolems in a sum or an equality, and of terms built during preprocessing
+against skolems, and so of the lemmas that follow from them.
+
+Performance: preprocessing is dominated by `aci_norm` steps over the whole
+conjunction (splitting and adding lemmas), which Logos checks in super-linear
+time; files over about 100KB take more than a minute, before and after
+`theory-preprocess`. Lemmas are split by checking small proofs (`splitLemma`),
+so adding them costs one such step. A static procedure for reordering
+conjunctions (as for `arith_poly_norm_rel`) is the next fix.
+
 ## Phases
 
 Each phase ends with fuzzing and benchmark agreement against cvc5, with the

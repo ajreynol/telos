@@ -165,8 +165,10 @@ def isConst : Node → Bool
   | .app (.kind k) cs => (k == .TUPLE || k == .TUPLE_UNIT) && cs.attach.all fun ⟨c, _⟩ => isConst c
   | _ => false
 
+/-- cvc5's `isVar`: a node of metakind `VARIABLE`, so a free or bound variable, or
+a skolem. -/
 def isVar : Node → Bool
-  | .var _ _ => true
+  | .var _ _ | .boundVar _ _ | .skolem _ _ => true
   | _ => false
 
 /-- The Boolean value of a `CONST_BOOLEAN` node. -/

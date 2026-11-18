@@ -30,6 +30,9 @@ import Telos.Core.Proof.Emit
 import Telos.Preprocess.Pipeline
 import Telos.Preprocess.Passes.Rewrite
 import Telos.Preprocess.Passes.StaticRewrite
+import Telos.Preprocess.Passes.TheoryPreprocess
+import Telos.Preprocess.SkolemSteps
+import Telos.Preprocess.Theory.ArithPreprocess
 import Telos.Preprocess.Preprocess
 import Telos.Frontend.Script
 import Telos.Frontend.Simplify

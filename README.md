@@ -59,9 +59,10 @@ With `--post-asserts`, the input is a benchmark (declarations, `define-fun`s,
 assertions and `check-sat`), and telos prints its assertions after
 preprocessing, as cvc5 does with `-o post-asserts`, with the theorem
 `Telos.preprocess_correct`: the conjunction of the output is equivalent to that
-of the input. The preprocessor is at its first stage (`docs/preprocessor-plan.md`):
-top-level conjunctions are split and the assertions rewritten; `define-fun`s
-are macros. `python3 scripts/fuzz-pp.py --cvc5 PATH` compares it with cvc5.
+of the input. The preprocessor is at its second stage (`docs/preprocessor-plan.md`):
+top-level conjunctions are split, the assertions rewritten, `ite`s and
+Boolean terms inside terms purified, and `div`, `mod`, `/`, `to_int`, `is_int`
+and `abs` eliminated, with skolem lemmas; `define-fun`s are macros. `python3 scripts/fuzz-pp.py --cvc5 PATH` compares it with cvc5.
 
 ## Layout
 
