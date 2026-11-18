@@ -100,6 +100,10 @@ class LogosFacts : Prop where
   type `Bool` has Eunoia type `Bool`. -/
   eo_typeof_bool : ∀ (t : Term),
     __smtx_typeof (__eo_to_smt t) = SmtType.Bool → __eo_typeof t = Term.Bool
+  /-- `type_preservation` and `bool_value_canonical`: in a well-formed model, a
+  term of SMT type `Bool` evaluates to a Boolean. -/
+  eval_bool : ∀ (M : SmtModel) (t : SmtTerm), model_wf M →
+    __smtx_typeof t = SmtType.Bool → ∃ b, __smtx_model_eval M t = SmtValue.Boolean b
 
 /-! ## Facts that need no Logos proof -/
 

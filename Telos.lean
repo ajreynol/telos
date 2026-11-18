@@ -10,6 +10,7 @@ import Telos.Core.Node.ToEo
 import Telos.Core.Node.OfEo
 import Telos.Core.Node.FastType
 import Telos.Core.Static
+import Telos.Core.Semantic
 import Telos.Core.Certified
 import Telos.Rewriter.Rewriter
 import Telos.Rewriter.Rules.Rules

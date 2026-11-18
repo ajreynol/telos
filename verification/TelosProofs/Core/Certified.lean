@@ -1,5 +1,6 @@
 import TelosProofs.Core.Congruence
 import TelosProofs.Core.Static
+import TelosProofs.Core.Semantic
 import TelosProofs.Core.ChildTyping
 
 /-!
@@ -65,6 +66,9 @@ theorem Certified.equiv {n m : Node} (h : Certified n m) (hn : n.WellTyped) : n.
     exact h₁.trans (ih h₁.wellTyped_right)
   | static p h _ ih =>
     have h₁ := ProvesEq.equiv (StaticProc.provesEq p _ _ h)
+    exact h₁.trans (ih h₁.wellTyped_right)
+  | @semantic n k m p h _ ih =>
+    have h₁ := SemProc.equiv p n k h hn
     exact h₁.trans (ih h₁.wellTyped_right)
   | @congrBody k vs body body' m pats hk hb _ _ ihb ih =>
     have hk' : k = .FORALL ∨ k = .EXISTS := by cases k <;> simp_all [Kind.isQuantifier]

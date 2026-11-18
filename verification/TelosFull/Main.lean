@@ -63,6 +63,10 @@ instance logosFacts : LogosFacts where
     · simp [__eo_to_smt_type, __smtx_type_wf, __smtx_type_wf_component, __smtx_type_wf_rec,
         SmtEval.native_and]
     · rw [h]; rfl
+  eval_bool M t hM h := by
+    have hP := type_preservation M hM t (by unfold term_has_non_none_type; rw [h]; simp)
+    rw [h] at hP
+    exact bool_value_canonical hP
 
 /-- **Correctness of the rewriter.** Rewriting a well-typed node gives an
 equivalent node. -/

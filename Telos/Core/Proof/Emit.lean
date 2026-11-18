@@ -145,6 +145,7 @@ partial def emitChain : {n m : Node} → Certified n m → EmitM (Array Nat)
   | n, _, @Certified.static _ k _ proc _ rest => do
     let p ← emitCmds (proc.cmds n k)
     return #[p] ++ (← emitChain rest)
+  | _, _, .semantic .. => throw "a semantically justified step has no CPC proof"
   | _, _, @Certified.congrBody k vs body _ _ pats _ _ hc rest => do
     let ch ← emitChain hc
     let p ← if ch.isEmpty then pure none

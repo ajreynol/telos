@@ -102,6 +102,21 @@ inductive Node where
   | skolem (id : SkolemId) (cacheVals : Array Node)
   /-- An operator application with n-ary children, as in cvc5. -/
   | app (op : Op) (children : Array Node)
+with
+  /-- The hash of a node, computed once, when the node is built (a computed
+  field, stored in the node, as cvc5 keeps an id in each node). So hashing a
+  node is constant time, however large the term it shares. -/
+  @[computed_field] hash : Node → UInt64
+    | .const c => mixHash 11 (Hashable.hash c)
+    | .var n T => mixHash 13 (mixHash (Hashable.hash n) (Hashable.hash T))
+    | .boundVar n T => mixHash 17 (mixHash (Hashable.hash n) (Hashable.hash T))
+    | .skolem id cs => cs.foldl (fun h c => mixHash h c.hash) (mixHash 19 (Hashable.hash id))
+    | .app op cs =>
+      let ho := match op with
+        | .kind k => Hashable.hash k
+        | .indexed k is => mixHash (Hashable.hash k) (Hashable.hash is)
+        | .node k f => mixHash (Hashable.hash k) f.hash
+      cs.foldl (fun h c => mixHash h c.hash) (mixHash 23 ho)
 
 /-- The operator of an application (cvc5's API `Op`). -/
 inductive Op where
@@ -116,10 +131,99 @@ inductive Op where
 
 end
 
-deriving instance BEq, Hashable, Repr for Node
+deriving instance Repr for Node
+
+instance : Hashable Node := ⟨Node.hash⟩
 
 instance : Inhabited Node := ⟨.const (.boolean false)⟩
 instance : Inhabited Op := ⟨.kind .EQUAL⟩
+
+/-! ## Equality
+
+Structural equality, decided in constant time for nodes that are the same in
+memory (`withPtrEqDecEq`, from Lean's core library), and for nodes whose hashes
+differ; the children are compared the same way. So comparing terms that share
+their subterms does not traverse them as trees. -/
+
+mutual
+
+def Node.decEq (a b : Node) : Decidable (a = b) :=
+  withPtrEqDecEq a b fun _ =>
+    if hh : a.hash = b.hash then Node.decEqCore a b
+    else isFalse fun e => hh (e ▸ rfl)
+termination_by (sizeOf a, 1)
+
+def Node.decEqCore : (a b : Node) → Decidable (a = b)
+  | .const c, .const d =>
+      if h : c = d then isTrue (h ▸ rfl) else isFalse fun e => by cases e; exact h rfl
+  | .var n T, .var m U =>
+      if h : n = m ∧ T = U then isTrue (by obtain ⟨rfl, rfl⟩ := h; rfl)
+      else isFalse fun e => by cases e; exact h ⟨rfl, rfl⟩
+  | .boundVar n T, .boundVar m U =>
+      if h : n = m ∧ T = U then isTrue (by obtain ⟨rfl, rfl⟩ := h; rfl)
+      else isFalse fun e => by cases e; exact h ⟨rfl, rfl⟩
+  | .skolem i cs, .skolem j ds =>
+      if h : i = j then
+        match Node.decEqArray cs ds with
+        | isTrue h₂ => isTrue (h ▸ h₂ ▸ rfl)
+        | isFalse h₂ => isFalse fun e => by cases e; exact h₂ rfl
+      else isFalse fun e => by cases e; exact h rfl
+  | .app o cs, .app p ds =>
+      match Op.decEq o p, Node.decEqArray cs ds with
+      | isTrue h₁, isTrue h₂ => isTrue (h₁ ▸ h₂ ▸ rfl)
+      | isFalse h, _ => isFalse fun e => by cases e; exact h rfl
+      | _, isFalse h => isFalse fun e => by cases e; exact h rfl
+  | .const _, .var _ _ | .const _, .boundVar _ _ | .const _, .skolem _ _ | .const _, .app _ _
+  | .var _ _, .const _ | .var _ _, .boundVar _ _ | .var _ _, .skolem _ _ | .var _ _, .app _ _
+  | .boundVar _ _, .const _ | .boundVar _ _, .var _ _ | .boundVar _ _, .skolem _ _
+  | .boundVar _ _, .app _ _
+  | .skolem _ _, .const _ | .skolem _ _, .var _ _ | .skolem _ _, .boundVar _ _
+  | .skolem _ _, .app _ _
+  | .app _ _, .const _ | .app _ _, .var _ _ | .app _ _, .boundVar _ _ | .app _ _, .skolem _ _ =>
+      isFalse fun e => by cases e
+termination_by a => (sizeOf a, 0)
+
+def Op.decEq : (a b : Op) → Decidable (a = b)
+  | .kind k, .kind l =>
+      if h : k = l then isTrue (h ▸ rfl) else isFalse fun e => by cases e; exact h rfl
+  | .indexed k is, .indexed l js =>
+      if h : k = l ∧ is = js then isTrue (by obtain ⟨rfl, rfl⟩ := h; rfl)
+      else isFalse fun e => by cases e; exact h ⟨rfl, rfl⟩
+  | .node k f, .node l g =>
+      if hk : k = l then
+        match Node.decEq f g with
+        | isTrue hf => isTrue (hk ▸ hf ▸ rfl)
+        | isFalse hf => isFalse fun e => by cases e; exact hf rfl
+      else isFalse fun e => by cases e; exact hk rfl
+  | .kind _, .indexed _ _ | .kind _, .node _ _
+  | .indexed _ _, .kind _ | .indexed _ _, .node _ _
+  | .node _ _, .kind _ | .node _ _, .indexed _ _ =>
+      isFalse fun e => by cases e
+termination_by a => (sizeOf a, 0)
+
+def Node.decEqArray : (a b : Array Node) → Decidable (a = b)
+  | ⟨l⟩, ⟨m⟩ =>
+      match Node.decEqList l m with
+      | isTrue h => isTrue (h ▸ rfl)
+      | isFalse h => isFalse fun e => by cases e; exact h rfl
+termination_by a => (sizeOf a, 0)
+
+def Node.decEqList : (a b : List Node) → Decidable (a = b)
+  | [], [] => isTrue rfl
+  | x :: xs, y :: ys =>
+      match Node.decEq x y, Node.decEqList xs ys with
+      | isTrue h₁, isTrue h₂ => isTrue (h₁ ▸ h₂ ▸ rfl)
+      | isFalse h, _ => isFalse fun e => by cases e; exact h rfl
+      | _, isFalse h => isFalse fun e => by cases e; exact h rfl
+  | [], _ :: _ | _ :: _, [] => isFalse fun e => by cases e
+termination_by a => (sizeOf a, 0)
+
+end
+
+instance : DecidableEq Node := Node.decEq
+instance : DecidableEq Op := Op.decEq
+instance : BEq Node := ⟨fun a b => decide (a = b)⟩
+instance : BEq Op := ⟨fun a b => decide (a = b)⟩
 
 namespace Op
 

@@ -4,6 +4,7 @@ import Cpc.TranslationChecks
 import Telos.Core.RuleNames
 import Telos.Core.Profile
 import Telos.Core.Static
+import Telos.Core.Semantic
 
 /-!
 # Certified rewrite steps
@@ -86,6 +87,10 @@ inductive Certified : Node → Node → Type
   `p.cmds n k` are accepted by Logos's checker by a theorem
   (`StaticProc.provesEq`), so they are not run (`Telos/Core/Static.lean`). -/
   | static {n k m : Node} (p : StaticProc) : p.Ok n k → Certified k m → Certified n m
+  /-- A semantically justified step: `p.Ok n k` holds, which implies that `n`
+  and `k` are equivalent by a theorem (`SemProc.equiv`,
+  `Telos/Core/Semantic.lean`); no CPC proof is run, nor printed. -/
+  | semantic {n k m : Node} (p : SemProc) : p.Ok n k → Certified k m → Certified n m
   /-- A rewrite of the well-typed body of a quantifier
   (`Node.Equiv.congr_binder`). -/
   | congrBody {k : Kind} {vs body body' m : Node} {pats : List Node} :
@@ -100,6 +105,7 @@ def Certified.trans {a b c : Node} : Certified a b → Certified b c → Certifi
   | .congr hsize hop hwt hc r, h₂ => .congr hsize hop hwt hc (r.trans h₂)
   | .congrBody hk hb hc r, h₂ => .congrBody hk hb hc (r.trans h₂)
   | .static p h r, h₂ => .static p h (r.trans h₂)
+  | .semantic p h r, h₂ => .semantic p h (r.trans h₂)
 
 /-- A certified rewrite of `n`: the result, and how it was obtained. -/
 abbrev Rw (n : Node) := (m : Node) × Certified n m
