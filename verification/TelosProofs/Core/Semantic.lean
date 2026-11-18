@@ -4,8 +4,10 @@ import Telos.Core.Semantic
 /-!
 # Semantically justified steps are equivalences
 
-`SemProc.equiv`: under its side condition, a `Certified.semantic` step relates
-equivalent nodes (`Telos/Core/Semantic.lean`). One case per procedure.
+Under its side condition, a `Certified.semantic` step relates equivalent nodes
+(`Telos/Core/Semantic.lean`). This file proves the case of `reorg`
+(`SemProc.reorg_equiv`); `Learn.lean` proves that of `learn` and puts them
+together (`SemProc.equiv`).
 
 `reorg`: a conjunction whose conjunctions have at least two conjuncts has type
 `Bool` iff each of its conjuncts (`Node.conjuncts`) has, and is then true in a
@@ -190,9 +192,9 @@ theorem and_smtType_bool (cs : Array Node) (h : (Node.app (.kind .AND) cs).WellT
     simp [Op.eoShape, Kind.eoShape, AppShape.toEo, hsz]
     rfl
 
-/-- **Semantically justified steps are equivalences.** -/
-theorem SemProc.equiv : ∀ (p : SemProc) (n m : Node), p.Ok n m → n.WellTyped → n.Equiv m
-  | .reorg, n, m, ⟨hkn, _, hsn, hsm, hmn, hnm⟩, hn => by
+/-- **Reorganizations are equivalences.** -/
+theorem SemProc.reorg_equiv : ∀ (n m : Node), SemProc.reorg.Ok n m → n.WellTyped → n.Equiv m
+  | n, m, ⟨hkn, _, hsn, hsm, hmn, hnm⟩, hn => by
     have hnb : n.smtType = SmtType.Bool := by
       match n, hkn with
       | .app (.kind .AND) cs, _ => exact and_smtType_bool cs hn

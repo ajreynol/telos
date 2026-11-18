@@ -1,5 +1,7 @@
 import Telos.Preprocess.Pipeline
 import Telos.Preprocess.CircuitPropagator
+import Telos.Preprocess.CircuitPure
+import Telos.Preprocess.TriBuild
 import Telos.Rewriter.Theory.Arith
 
 /-!
@@ -251,12 +253,274 @@ def ncsProof (C : Node) : EmitM Nat := do
   let i₂ ← scopeE (← andIntroE olds.toList)
   equivOfE C.toEo C'.toEo i₁ i₂
 
+/-! ## Without a CPC proof
+
+The same pass as `ncsProof`, as semantic and triangular steps, each checked in
+time linear in the size of the terms as DAGs:
+
+1. `SemProc.learn`: the learned literals are added after the conjuncts, last
+   learned first (`Telos/Core/Learn.lean`), justified by the propagator's trace
+   (`runCircuitPure`).
+2. `Certified.tri`: each learned literal is simplified by the substitutions of
+   the literals learned before it, which come after it, and solved into its
+   equation `(= x t)` or kept as a constant propagation; the assertions are
+   simplified by all of them. A kept literal is left as it is.
+3. `SemProc.reorg`: the kept literals, then the constant propagations, then the
+   equations, in the order they were learned.
+4. `Certified.tri`: the kept literals and the constant propagations are
+   simplified by the substitutions, and the right-hand sides of the equations by
+   those of the later ones (cvc5's `TopLevelSubstitutions`, to a fixed point).
+5. `SemProc.reorg`: the conjunction of `ncsProof`, with the definitions slot.
+
+If a step cannot be built, or its check fails, the pass falls back to
+`ncsProof`. -/
+
+/-- The equation `(= x t)` of a solved literal `l`, by a certified rewrite. -/
+def solvedEq (l x t : Node) : Option (Rw l) :=
+  let goal := eqNode x t
+  let r : Option (Rw l) :=
+    if l == goal then some (Rw.id l)
+    else if l == eqNode t x then byRuleWithPremises .eq_symm [t, x] [] l
+    else if l == x && t == mkTrue then byRuleWithPremises .symm [] [stepCmd .bool_eq_true [x]] l
+    else if l == notNode x && t == mkFalse then
+      byRuleWithPremises .symm [] [stepCmd .bool_eq_false [x]] l
+    else
+      let neg? : Option (Node × Node) := match l with
+        | .app (.kind .NOT) #[.app (.kind .EQUAL) #[a, b]] => some (a, b)
+        | _ => none
+      match neg? with
+      | some (a, b) =>
+        if a == x && t == notNode b then byRuleWithPremises .bool_not_eq_elim2 [a, b] [] l
+        else if b == x && t == notNode a then do
+          let r₁ ← byRuleWithPremises .bool_not_eq_elim1 [a, b] [] l
+          let r₂ ← byRuleWithPremises .eq_symm [notNode a, b] [] r₁.1
+          some (r₁.trans r₂)
+        else none
+      | none => Arith.normalizeEquality l
+  r.bind fun r => if r.1 == goal then some r else none
+
+/-- The data of `SemProc.learn` from the propagator's state, for the conjuncts
+`cs`: the skeleton (the conjuncts, and the children of connectives, breadth
+first), the trace, and the learned literals, last learned first. -/
+def learnPlanOf (cs : Array Node) (st : CPPState) : Except String LearnPlan := do
+  let posOf : Std.HashMap Key Nat := Id.run do
+    let mut m : Std.HashMap Key Nat := {}
+    for h : i in [0:cs.size] do
+      if !m.contains ⟨cs[i]⟩ then m := m.insert ⟨cs[i]⟩ i
+    return m
+  let (skel, skelOf) := Id.run do
+    let mut skel : Array SkelItem := #[]
+    let mut skelOf : Std.HashMap Key Nat := {}
+    for h : i in [0:cs.size] do
+      if !skelOf.contains ⟨cs[i]⟩ then
+        skelOf := skelOf.insert ⟨cs[i]⟩ skel.size
+        skel := skel.push ⟨cs[i], none, i⟩
+    let mut q := 0
+    for _ in [0:skel.size + st.trace.size * 64 + 1] do
+      if h : q < skel.size then
+        let it := skel[q]
+        if isBoolConn it.node then
+          for (c, j) in it.node.getChildren.toList.zipIdx do
+            if !skelOf.contains ⟨c⟩ then
+              skelOf := skelOf.insert ⟨c⟩ skel.size
+              skel := skel.push ⟨c, some q, j⟩
+        q := q + 1
+      else break
+    return (skel, skelOf)
+  let trace ← st.trace.mapM fun it => do
+    let r ← match it.reason with
+      | .root => match posOf.get? ⟨it.node⟩ with
+        | some p => pure (LReason.root p)
+        | none => throw "learn: an asserted node is not a conjunct"
+      | .fwd => match skelOf.get? ⟨it.node⟩ with
+        | some s => pure (LReason.fwd s)
+        | none => throw "learn: not in the skeleton"
+      | .bwd p => pure (LReason.bwd p)
+    pure (⟨it.node, it.value, r⟩ : LItem)
+  return { skel, trace, lits := st.learned.reverse }
+
+/-- How a learned literal was processed. -/
+inductive LitClass where
+  | drop
+  | conflict
+  /-- Kept (the original literal is conjoined, simplified). -/
+  | kept
+  /-- Solved into `x := t`; the literal became `(= x t)`. -/
+  | solved (x t : Node)
+  /-- The constant propagation `t := c`; the literal `l'` stays. -/
+  | cprop (t c l' : Node)
+
+/-- Run a builder from `B`. -/
+def runTri {α : Type} (m : TriM α) (B : TriB) : Except String (α × TriB) := m.run B
+
+/-- The steps of the pass, without a CPC proof (steps 1 to 5 above). -/
+def ncsSteps {input : Node} (p : Pipeline input) : Except String (Pipeline input) := do
+  let .app (.kind .AND) cs := p.1 | throw "not a conjunction"
+  let asserts := cs.pop
+  let nA := asserts.size
+  -- 1. the propagator, and the learned literals
+  let st := Profile.time "ncs" (fun _ => "propagate") fun _ => runCircuitPure asserts.toList
+  if st.conflict then throw "conflict"
+  let L ← learnPlanOf cs st
+  let K := st.learned.size
+  let litOf (h : Nat) : Node := LearnPlan.litOf (L.trace[st.learned[h]!]!)
+  let C₁ := mkNode .AND (cs ++ L.lits.map fun t => LearnPlan.litOf L.trace[t]!)
+  let some p₁ := Profile.time "ncs" (fun _ => "learn") fun _ =>
+      p.next? fun m => if h : SemProc.check (.learn L) m C₁ = true then
+        some ⟨C₁, .semantic (.learn L) (SemProc.check_ok h) (.refl _)⟩ else none
+    | throw "learn: check failed"
+  -- 2. the learned literals, then the assertions
+  let litPos (h : Nat) : Nat := nA + 1 + (K - 1 - h)
+  let mut B : TriB := {}
+  let mut σn : TSubst := {}
+  let mut σc : TSubst := {}
+  let mut cls : Array LitClass := #[]
+  let mut fin₁ : Array (Node × Array ChainStep) := #[]
+  let mut conflict := false
+  for h in [0:K] do
+    let l := litOf h
+    if conflict then
+      cls := cls.push .kept; fin₁ := fin₁.push (l, #[]); continue
+    let (((l', steps), _, _), B') ← runTri (simplifyJ σn σc {} {} l) B
+    B := B'
+    if l' == mkTrue then
+      cls := cls.push .drop; fin₁ := fin₁.push (l', steps)
+    else if l' == mkFalse then
+      cls := cls.push .conflict; fin₁ := fin₁.push (l', steps); conflict := true
+    else match solveLit l' with
+      | some (x, t, _) =>
+        let some r := solvedEq l' x t | throw "solve: no equation"
+        let eq := eqNode x t
+        let (steps', B') ← runTri (do
+            let st ← if r.1 == l' then pure #[] else pure #[← TriM.rw r]
+            let e ← TriM.entry x t (litPos h) eq
+            pure (steps ++ st, e)) B
+        B := B'
+        σn := σn.insert ⟨x⟩ steps'.2
+        cls := cls.push (.solved x t); fin₁ := fin₁.push (eq, steps'.1)
+      | none =>
+        match constProp? l' with
+        | some (t, c, _) =>
+          let (e, B') ← runTri (TriM.entry t c (litPos h) l') B
+          B := B'
+          σc := σc.insert ⟨t⟩ e
+          cls := cls.push (.cprop t c l'); fin₁ := fin₁.push (l', steps)
+        | none => cls := cls.push .kept; fin₁ := fin₁.push (l, #[])
+  let mut newA : Array (Node × Array ChainStep) := #[]
+  if conflict then
+    newA := asserts.map fun a => (a, #[])
+  else
+    let mut cn : SubstCache := {}
+    let mut cc : SubstCache := {}
+    for a in asserts do
+      let ((r, cn', cc'), B') ← runTri (simplifyJ σn σc cn cc a) B
+      B := B'; cn := cn'; cc := cc'
+      newA := newA.push r
+  let parts₂ := newA ++ #[(mkTrue, #[])] ++ fin₁.reverse
+  let C₂ := mkNode .AND (parts₂.map (·.1))
+  let some p₂ := Profile.time "ncs" (fun _ => "tri") fun _ =>
+      p₁.next? fun m => triRw m C₂ B (parts₂.map (·.2))
+    | throw "tri: check failed"
+  if conflict then
+    let some p₃ := p₂.next? fun m => checkBy .absorb m mkFalse | throw "conflict"
+    return p₃
+  -- 3. reorganized: assertions, kept literals, constant propagations, equations
+  let kept := (List.range K).filterMap fun h => match cls[h]? with
+    | some LitClass.kept => some (litOf h) | _ => none
+  let cprops := cls.toList.filterMap fun | .cprop t c l' => some (t, c, l') | _ => none
+  let solved := cls.toList.filterMap fun | .solved x t => some (x, t) | _ => none
+  let newAs := newA.map (·.1)
+  let C₂' := mkNode .AND (newAs ++ kept.toArray ++ (cprops.map (·.2.2)).toArray ++
+    (solved.map fun (x, t) => eqNode x t).toArray ++ #[mkTrue])
+  let some p₃ := p₂.next? fun m =>
+      if h : SemProc.reorg.check m C₂' = true then
+        some ⟨C₂', .semantic .reorg (SemProc.check_ok h) (.refl _)⟩ else none
+    | throw "reorg: check failed"
+  -- 4. the equations, from the last; the constant propagations; the kept literals
+  let posK := nA
+  let posC := posK + kept.length
+  let posD := posC + cprops.length
+  let mut B₂ : TriB := {}
+  let mut σD : TSubst := {}
+  let mut defs : Array (Node × Node × Array ChainStep) := #[]
+  for ((x, t), i) in solved.zipIdx.reverse do
+    let (r, B') ← runTri (do
+        let (j?, _) ← (substJ σD t).run {}
+        match j? with
+        | none =>
+          let e ← TriM.entry x t (posD + i) (eqNode x t)
+          pure (t, #[], e)
+        | some j =>
+          let J ← TriM.just j
+          let rx ← TriM.refl x
+          let jEq ← TriM.addJust ⟨eqNode x t, eqNode x J.b, J.minPos, .congr #[rx, j]⟩
+          let e ← TriM.entry x J.b (posD + i) (eqNode x J.b)
+          pure (J.b, #[ChainStep.subst jEq], e)) B₂
+    B₂ := B'
+    σD := σD.insert ⟨x⟩ r.2.2
+    defs := defs.push (x, r.1, r.2.1)
+  defs := defs.reverse
+  let mut cnD : SubstCache := {}
+  let mut σcF : TSubst := {}
+  let mut cpF : Array (Node × Array ChainStep) := #[]
+  for ((t, c, l'), i) in cprops.zipIdx do
+    let start := eqNode t c
+    let (r, B') ← runTri (do
+        let st ← if l' == start then pure #[] else
+          match byRuleWithPremises .eq_symm [c, t] [] l' with
+          | some r => if r.1 == start then pure #[← TriM.rw r] else throw "cprop: symm"
+          | none => throw "cprop: symm"
+        let ((e', steps), cn', _) ← simplifyJ σD {} cnD {} start
+        let ent ← if e' == start then some <$> TriM.entry t c (posC + i) e' else pure none
+        pure (e', st ++ steps, cn', ent)) B₂
+    B₂ := B'
+    cnD := r.2.2.1
+    if let some ent := r.2.2.2 then σcF := σcF.insert ⟨t⟩ ent
+    cpF := cpF.push (r.1, r.2.1)
+  let mut ccF : SubstCache := {}
+  let mut keptF : Array (Node × Array ChainStep) := #[]
+  for l in kept do
+    let ((r, cn', cc'), B') ← runTri (simplifyJ σD σcF cnD ccF l) B₂
+    B₂ := B'; cnD := cn'; ccF := cc'
+    keptF := keptF.push r
+  let parts₃ := newAs.map (fun a => (a, (#[] : Array ChainStep))) ++ keptF ++ cpF ++
+    defs.map (fun (x, t', st) => (eqNode x t', st)) ++ #[(mkTrue, #[])]
+  let C₃ := mkNode .AND (parts₃.map (·.1))
+  let some p₄ := Profile.time "ncs" (fun _ => "tri (2)") fun _ =>
+      p₃.next? fun m => triRw m C₃ B₂ (parts₃.map (·.2))
+    | throw "tri (2): check failed"
+  -- 5. the conjunction of `ncsProof`
+  let mut seen : Std.HashSet Key := newAs.foldl (fun s a => s.insert ⟨a⟩) {}
+  let mut extra : Array Node := #[]
+  for (l', _) in keptF ++ cpF do
+    if seen.contains ⟨l'⟩ then continue
+    seen := seen.insert ⟨l'⟩
+    extra := extra.push l'
+  let defNodes := defs.toList.map fun (x, t', _) => eqNode x t'
+  let slotNode := match defNodes with
+    | [] => mkTrue
+    | [d] => d
+    | ds => mkNode .AND ds.toArray
+  let target := mkNode .AND (newAs ++ extra ++ #[slotNode])
+  let some p₅ := p₄.next? fun m =>
+      if m == target then some (Rw.id m)
+      else if h : SemProc.reorg.check m target = true then
+        some ⟨target, .semantic .reorg (SemProc.check_ok h) (.refl _)⟩ else none
+    | throw "reorg (2): check failed"
+  return p₅
+
 /-- The `non-clausal-simp` pass. -/
 def Pipeline.nonClausalSimp {input : Node} (p : Pipeline input) : Pipeline input :=
   if Pipeline.inConflict p || Pipeline.slot p != mkTrue then p
   else
-    match runE p.1 (ncsProof p.1) with
-    | some r => Pipeline.conflict? (p.trans r)
-    | none => p
+    let fast := match ncsSteps p with
+      | .ok q => some q
+      | .error e => Profile.time "ncs" (fun _ => s!"fallback: {e}") fun _ => none
+    match fast with
+    | some q => Pipeline.conflict? q
+    | none =>
+      match runE p.1 (ncsProof p.1) with
+      | some r => Pipeline.conflict? (p.trans r)
+      | none => p
 
 end Telos.Preprocess

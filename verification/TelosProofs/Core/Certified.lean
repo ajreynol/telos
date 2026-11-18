@@ -3,6 +3,7 @@ import TelosProofs.Core.Static
 import TelosProofs.Core.Semantic
 import TelosProofs.Core.ChildTyping
 import TelosProofs.Core.Tri
+import TelosProofs.Core.Learn
 
 /-!
 # Certified steps are equivalences

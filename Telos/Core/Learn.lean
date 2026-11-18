@@ -34,11 +34,13 @@ inductive LReason where
   | root (pos : Nat)
   | bwd (parent : Nat)
   | fwd (skel : Nat)
+  deriving Inhabited
 
 structure LItem where
   node : Node
   value : Bool
   reason : LReason
+  deriving Inhabited
 
 /-- A node shown well typed: the conjunct `pos` of `n` (`parent = none`), or
 the child `pos` of the skeleton node `parent`. -/
@@ -68,39 +70,54 @@ def Assign.val (A : Assign) (c : Node) : Option Bool :=
   | .const (.boolean b) => some b
   | c => A.get? ⟨c⟩
 
-/-- The three-valued value of a connective, from the values of its children. -/
-def eval3 (A : Assign) : Node → Option Bool
-  | .app (.kind .AND) cs =>
+/-- The three-valued value of the connective `k` with children `cs`, from the
+values of the children. -/
+def eval3K (A : Assign) (k : Kind) (cs : Array Node) : Option Bool :=
+  match k with
+  | .AND =>
     if cs.any (fun c => A.val c == some false) then some false
     else if cs.all (fun c => A.val c == some true) then some true else none
-  | .app (.kind .OR) cs =>
+  | .OR =>
     if cs.any (fun c => A.val c == some true) then some true
     else if cs.all (fun c => A.val c == some false) then some false else none
-  | .app (.kind .NOT) #[c] => (A.val c).map (!·)
-  | .app (.kind .ITE) #[c, t, e] =>
-    match A.val c with
-    | some true => A.val t
-    | some false => A.val e
-    | none =>
-      match A.val t, A.val e with
-      | some a, some b => if a == b then some a else none
+  | .NOT => if h : cs.size = 1 then (A.val cs[0]).map (!·) else none
+  | .ITE =>
+    if h : cs.size = 3 then
+      match A.val cs[0] with
+      | some true => A.val cs[1]
+      | some false => A.val cs[2]
+      | none =>
+        match A.val cs[1], A.val cs[2] with
+        | some a, some b => if a == b then some a else none
+        | _, _ => none
+    else none
+  | .EQUAL =>
+    if h : cs.size = 2 then
+      if cs[0] == cs[1] then none else
+      match A.val cs[0], A.val cs[1] with
+      | some a, some b => some (a == b)
       | _, _ => none
-  | .app (.kind .EQUAL) #[x, y] =>
-    if x == y then none else
-    match A.val x, A.val y with
-    | some a, some b => some (a == b)
-    | _, _ => none
-  | .app (.kind .XOR) #[x, y] =>
-    if x == y then none else
-    match A.val x, A.val y with
-    | some a, some b => some (a != b)
-    | _, _ => none
-  | .app (.kind .IMPLIES) #[x, y] =>
-    match A.val x, A.val y with
-    | some false, _ => some true
-    | _, some true => some true
-    | some true, some false => some false
-    | _, _ => none
+    else none
+  | .XOR =>
+    if h : cs.size = 2 then
+      if cs[0] == cs[1] then none else
+      match A.val cs[0], A.val cs[1] with
+      | some a, some b => some (a != b)
+      | _, _ => none
+    else none
+  | .IMPLIES =>
+    if h : cs.size = 2 then
+      match A.val cs[0], A.val cs[1] with
+      | some false, _ => some true
+      | _, some true => some true
+      | some true, some false => some false
+      | _, _ => none
+    else none
+  | _ => none
+
+/-- The three-valued value of a connective, from the values of its children. -/
+def eval3 (A : Assign) : Node → Option Bool
+  | .app (.kind k) cs => eval3K A k cs
   | _ => none
 
 namespace LearnPlan
@@ -127,12 +144,15 @@ def itemOk (L : LearnPlan) (cs : Array Node) (A : Assign) (idx : Nat) (it : LIte
       isBoolConn P.node && P.node.getChildren.contains it.node &&
         eval3 (A.insert ⟨it.node⟩ (!it.value)) P.node == some (!P.value)).getD false
 
+/-- The values after the trace item `idx`, checked. -/
+def replayStep (L : LearnPlan) (cs : Array Node) (A : Assign) (idx : Nat) : Option Assign :=
+  match L.trace[idx]? with
+  | some it => if L.itemOk cs A idx it then some (A.insert ⟨it.node⟩ it.value) else none
+  | none => none
+
 /-- The values of the trace, checked item by item. -/
 def replay (L : LearnPlan) (cs : Array Node) : Option Assign :=
-  (List.range L.trace.size).foldlM (fun A idx =>
-    match L.trace[idx]? with
-    | some it => if L.itemOk cs A idx it then some (A.insert ⟨it.node⟩ it.value) else none
-    | none => none) {}
+  (List.range L.trace.size).foldlM (L.replayStep cs) {}
 
 /-- The literal of a trace item. -/
 def litOf (it : LItem) : Node :=
