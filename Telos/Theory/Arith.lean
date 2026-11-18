@@ -121,22 +121,28 @@ def rewriteOther (n : Node) : Option (Rw n) :=
   | .DIVISION_TOTAL, #[_, .const (.integer 0)] => byRule "arith-div-total-zero-int" n
   | _, _ => none
 
-/-- cvc5's `rewriteDiv`, for the sides of a division (and of `/_total`). By a
-constant, `to_real` is removed from both: `(/ (to_real x) (to_real 0))` is
-`(/ x 0)`, by `arith-div-int-to-real` (resp. `arith-div-total-int-to-real`)
-read right to left. By a non-constant, both sides are made real: `(/ x y)` is
-`(/ (to_real x) (to_real y))` for integers, by the same rules, and an integer
-constant numerator is then evaluated, `(/ 1 y)` being `(/ 1.0 (to_real y))`.
-A division with one real and one integer side is not well typed in Logos. -/
+/-- cvc5's `rewriteDiv`, for the sides of a division (and of `/_total`), in
+cvc5 PR #13170's normal form: a division that remains has real arguments.
+Integer sides are made real: `(/ x y)` and `(/ x 0)` are
+`(/ (to_real x) (to_real y))` and `(/ (to_real x) (to_real 0))`, by
+`arith-div-int-to-real` (resp. `arith-div-total-int-to-real`), and an integer
+constant numerator is then evaluated, `(/ 1 y)` being `(/ 1.0 (to_real y))`
+(the `(to_real 0)` is evaluated when the children are rewritten again). A
+division by a non-zero constant becomes a product (`normalizeTerm`); for
+`(/ (to_real x) (to_real 2))` the `to_real`s are first removed, by the same
+rules read right to left, as cvc5's `removeToReal` does, so that it is
+`(* 1/2 (to_real x))`. A division with one real and one integer side is not
+well typed in Logos. -/
 def rewriteDivToReal (n : Node) : Option (Rw n) :=
   let rule := if n.getKind == .DIVISION then CRule.arith_div_int_to_real else .arith_div_total_int_to_real
+  let isZero (y : Node) : Bool := y == .const (.integer 0)
   match n.getChildren with
   | #[.app (.kind .TO_REAL) #[x], .app (.kind .TO_REAL) #[y]] =>
-    if y.isConst then
+    if y.isConst && !isZero y then
       applyCmds (.cons (stepCmd rule [x, y]) (.cons (.step .symm .nil (.cons 0 .nil)) .nil)) n
     else none
   | #[x, y] =>
-    if isInt x && isInt y && !y.isConst then
+    if isInt x && isInt y && (!y.isConst || (isZero y && n.getKind == .DIVISION)) then
       (applyCmds (.cons (stepCmd rule [x, y]) .nil) n).bind fun r =>
         if x.isConst then r.next? fun t => Rw.congrArg t 0 byEvaluate else some r
     else none
@@ -345,7 +351,7 @@ def preRewrite (n : Node) : RewriteResponse n :=
     | .GT => byRule "arith-elim-gt" n
     | .LT => byRule "arith-elim-lt" n
     -- cvc5's `rewriteDiv` also runs before the children are rewritten, so
-    -- `(/ (to_real 0) (to_real 0))` is `(/ 0 0)`, not `(/ 0.0 0.0)`.
+    -- `(/ (to_real x) (to_real 2))` is `(/ x 2)`; by `0` it is left real.
     | .DIVISION | .DIVISION_TOTAL =>
       match n.getChildren with
       | #[.app (.kind .TO_REAL) #[_], .app (.kind .TO_REAL) #[_]] => rewriteDivToReal n

@@ -16,8 +16,8 @@ rev = "v4.34.0"
 # Same commit as the `Cpc` requirement in ../lakefile.toml.
 [[require]]
 name = "LogosVerification"
-git = "/home/andrew-reynolds/logos-telos-sets"
-rev = "2ea5282f7cb1ffe939bcfcdb4aa5a4d358131ebe"
+git = "https://github.com/ajreynol/logos"
+rev = "58c89a48005fac77e7af10029bd16927507128b5"
 subDir = "verification"
 
 [[require]]

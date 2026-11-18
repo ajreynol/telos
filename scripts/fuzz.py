@@ -116,7 +116,7 @@ def alpha_free(e, env=None, counter=None):
 
 
 COMMUTATIVE = {"and", "or", "xor", "+", "*", "distinct", "bvand", "bvor", "bvxor",
-               "bvadd", "bvmul", "re.union", "re.inter"}
+               "bvadd", "bvmul", "re.union", "re.inter", "set.union", "set.inter"}
 
 
 def is_literal(e):
@@ -148,7 +148,8 @@ def order_free(e):
 
 
 def run_cvc5(cvc5, script, extra=()):
-    out = subprocess.run([cvc5, "--lang", "smt2", "--incremental", "--dag-thresh=0",
+    out = subprocess.run([cvc5, "--lang", "smt2", "--incremental",
+                          "--no-var-ent-eq-elim-quant", "--dag-thresh=0",
                           "--print-arith-lit-token", *extra], input=script,
                          capture_output=True, text=True, check=False)
     if out.returncode != 0:

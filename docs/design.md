@@ -23,6 +23,44 @@ full solver; its notes on Logos still apply.
 
 Non-goals for now: matching cvc5's speed, and termination proofs (fuel is used).
 
+## Scope: cvc5's safe mode
+
+telos ports only what cvc5 supports in safe mode (`--safe-mode=safe`,
+`SetDefaults::setDefaultsPre` and `IllegalChecker` in cvc5). Out of scope, so
+not to be ported:
+
+- the theories safe mode disables: floating-point, bags, separation logic,
+  finite fields;
+- higher-order logic (`--uf-ho-exp`): lambdas, and the set operators taking
+  functions (`set.map`, `set.filter`, `set.all`, `set.some`, `set.fold`);
+- cardinality constraints (`--uf-card-exp`);
+- the datatypes extension (`--datatypes-exp`): `match`, nullables,
+  codatatypes;
+- the arithmetic extension (`--arith-exp`): transcendentals, `^`, `iand`,
+  `int.pow2`, `int.log2`, `sqrt`;
+- the sets extensions: `set.card` (`--sets-card-exp`), relations
+  (`--rels-exp`), `set.complement` and `set.universe` (`--sets-exp`);
+- constant arrays (`store_all`, `--arrays-exp`);
+- rewrites safe mode turns off: variable elimination by entailed equalities
+  (`--var-ent-eq-elim-quant`: string equations, and bit-vector `concat` on the
+  path to the variable).
+
+In scope: Booleans, UF, linear and non-linear arithmetic (with `div`, `mod`,
+`abs`, `to_int`, `is_int`), bit-vectors (with `int_to_bv`, `bv_to_nat`),
+arrays, strings and sequences, regular expressions, sets without the
+extensions above, datatypes (including parametric ones and tuples), and
+quantifiers. On these, the one safe-mode setting that changes cvc5's rewriter
+is `--no-var-ent-eq-elim-quant`, which the fuzzer passes (`--safe-mode=safe`
+itself rejects the expert options the fuzzer needs, such as
+`--print-arith-lit-token`).
+
+The arithmetic normal form is the one of cvc5 PR #13170 (division has real
+arguments, `to_real` removed from the monomials of sums), not cvc5 `main`'s.
+telos also assumes cvc5 PR #13167 is merged as written: its string rewrites
+(proven by the rules of Logos `newRules-1115`), and `IDOF_NORM_PREFIX` moved
+to the extended rewriter, so that differences from cvc5 `main` on it are
+expected.
+
 ## Architecture
 
 ```
@@ -492,18 +530,24 @@ tested:
      cases (by zero, one, a negative constant, constants, `mod` over `mod`,
      `div` over `mod`), constant `abs`, `to_int` and `is_int`, `to_int` and
      `is_int` of `to_real` (`arith-to-int-elim-to-real`,
-     `arith-is-int-elim-to-real`), and the sides of `/` and `/_total` as cvc5
-     PR #13167 has them: made real for a non-constant denominator (`(/ x y)` is
-     `(/ (to_real x) (to_real y))`, by `arith-div-int-to-real` and
-     `arith-div-total-int-to-real`, then `evaluate` for a constant numerator),
-     and `to_real` removed from both for a constant one (the same rules read
-     right to left), also before the children are rewritten (`preRewrite`), so
-     `(/ (to_real 0) (to_real 0))` is `(/ 0 0)`.
+     `arith-is-int-elim-to-real`), and `/` and `/_total` in cvc5 PR #13170's
+     normal form, where every division that remains has real arguments:
+     integer arguments are made real (`(/ x y)` is
+     `(/ (to_real x) (to_real y))` and `(/ x 0)` is `(/ (to_real x) 0.0)`, by
+     `arith-div-int-to-real` and `arith-div-total-int-to-real`, then
+     `evaluate` for constants), and a division by a non-zero constant becomes
+     a product (`(/ x 2)` and `(/ (to_real x) (to_real 2))` are
+     `(* 1/2 (to_real x))`; for the latter, as cvc5's `removeToReal`, the
+     `to_real`s are first removed by the same rules read right to left,
+     before the children are rewritten, `preRewrite`).
    - Fuzzing (`scripts/fuzz.py --arith`, 3000 terms of depth 4, including
      `div`, `mod`, `abs`, `to_int` and `is_int`): 86.9% identical to cvc5,
      96.9% up to the orientation of equalities, 98.4% also up to the order of
      commutative arguments, no semantic disagreements. Against PR #13167:
-     87.5%, 97.2% and 98.4%. The other 47 differ in
+     87.5%, 97.2% and 98.4%. Against PR #13170 merged into cvc5 main
+     `a307c0f79e` (`~/cvc5-arith-13170`), on 1500 terms of depth 2 and 3:
+     96.5% and 93.5% identical, 11 and 18 different, all in which monomial
+     leads. The other 47 differ in
      which monomial leads a normalized inequality, which cvc5 decides by node
      id (`LeafNodeComparator`), and so in its sign and scaling.
      Equalities are only oriented, not solved, as in cvc5 since PR #12833
