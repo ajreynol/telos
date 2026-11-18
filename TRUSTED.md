@@ -21,7 +21,11 @@ the wrong thing, so review them as specifications, not as code.
   per-operator part is a table (`Kind.eoShape`, `indexedEoShape`, `nodeEoShape`)
   giving each operator's CPC head symbol and arity. A declared constant
   (`Node.var`) is a `Term.UConst`, numbered by its name (`constId`, injective),
-  and a bound variable a `Term.Var`. The nil terminator of
+  and a bound variable a `Term.Var`. A skolem (`Node.skolem id cacheVals`, with
+`SkolemId` in `Telos/Core/Node/SkolemId.lean`) is the CPC term cvc5 prints for
+it, its identifier's operator applied to its cache values (`SkolemId.eoShape`):
+`(@purify t)`, or `@int_div_by_zero`, which is a function, applied with
+`APPLY_UF`. The nil terminator of
   `+`, `*`, the bit-vector operators, `str.++` and `distinct` depends on the type
   of the elements; it is a hand-written table (`typedNilOfType`) over the SMT
   type of the first element, given by `__smtx_typeof`. Datatype types

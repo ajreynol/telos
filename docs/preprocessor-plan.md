@@ -70,7 +70,19 @@ skolem is the term `(@purify t)`, and Logos gives it the value of `t`
 (`__smtx_model_eval__at_purify` is the identity). The other skolems that
 preprocessing introduces in scope are also terms with a meaning (choice terms,
 `@int_div_by_zero`). So telos represents skolems as those terms internally and
-prints them as `@purify_k` declarations. The preprocessed assertions then mean,
+prints them as `@purify_k` declarations.
+
+As in cvc5, a skolem is its own kind of node, `Node.skolem id cacheVals`
+(cvc5's `SKOLEM`, `mkSkolemFunction(id, cacheVals)`, with `SkolemId` mirroring
+cvc5's), not an operator application: it is atomic, so rewriting, congruence and
+substitution do not enter its cache values, with no special cases. Its meaning
+is its CPC term (`SkolemId.eoShape` in `ToEo.lean`): `(@purify t)` for
+`.skolem .PURIFY #[t]`. Function skolems are applied with `APPLY_UF`, as in
+cvc5's `OperatorElim`: `(div x 0)` becomes
+`APPLY_UF (.skolem .INT_DIV_BY_ZERO #[]) #[x]`, printed `(@int_div_by_zero x)`,
+whose argument is a child. The functions that must see a skolem's cache values
+handle `skolem` explicitly: `toEo`, `vars` (for the solved-form condition, a
+symbol occurs in a skolem's cache values), `typeHint`, and printing. The preprocessed assertions then mean,
 in every model, what the input means, given the definitions:
 
 ```lean

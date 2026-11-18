@@ -1,5 +1,6 @@
 import Telos.Core.Node.Kind
 import Telos.Core.Node.TypeNode
+import Telos.Core.Node.SkolemId
 
 /-!
 # Nodes
@@ -13,9 +14,17 @@ constructors:
 | `CONSTANT` (`CONST_*`)         | `const c`                             |
 | `VARIABLE` (free constants)    | `var name type`                       |
 | `VARIABLE` (`BOUND_VARIABLE`)  | `boundVar name type`                  |
+| `VARIABLE` (`SKOLEM`)          | `skolem id cacheVals`                 |
 | `OPERATOR`                     | `app (.kind k) children`              |
 | `PARAMETERIZED`, indexed       | `app (.indexed k indices) children`   |
 | `PARAMETERIZED`, term operator | `app (.node k f) children`            |
+
+A skolem is atomic, as in cvc5, where it is a variable: its cache values are
+not children, so traversals of children (rewriting, congruence, substitution)
+do not enter it. Its meaning is that of its CPC term (`(@purify t)`), so the
+functions that must see the cache values (`toEo`, `vars`, printing) handle
+`skolem` explicitly. Skolems that are functions, such as `@int_div_by_zero`,
+are applied with `APPLY_UF`, as in cvc5, and their arguments are children.
 
 Binders follow cvc5: `FORALL` has children `[BOUND_VAR_LIST(x₁ … xₙ), body]`,
 optionally followed by an `INST_PATTERN_LIST`.
@@ -87,6 +96,10 @@ inductive Node where
   | var (name : String) (type : TypeNode)
   /-- A bound variable (cvc5 `BOUND_VARIABLE`). -/
   | boundVar (name : String) (type : TypeNode)
+  /-- A skolem (cvc5 `SKOLEM`): `SkolemManager::mkSkolemFunction id cacheVals`.
+  Two skolems are the same when their identifiers and cache values are, as in
+  cvc5's skolem cache. Its type is determined by them (`typeHint`). -/
+  | skolem (id : SkolemId) (cacheVals : Array Node)
   /-- An operator application with n-ary children, as in cvc5. -/
   | app (op : Op) (children : Array Node)
 
@@ -128,6 +141,7 @@ def getKind : Node → Kind
   | .const c => c.kind
   | .var _ _ => .VARIABLE
   | .boundVar _ _ => .BOUND_VARIABLE
+  | .skolem _ _ => .SKOLEM
   | .app op _ => op.getKind
 
 /-- The operator of an application (cvc5's `getOperator()`), if any. -/
@@ -165,6 +179,9 @@ def getConstBoolean? : Node → Option Bool
 def mkConst (c : Const) : Node := .const c
 def mkVar (name : String) (type : TypeNode) : Node := .var name type
 def mkBoundVar (name : String) (type : TypeNode) : Node := .boundVar name type
+def mkSkolem (id : SkolemId) (cacheVals : Array Node) : Node := .skolem id cacheVals
+/-- The purification skolem of `t` (`SkolemManager::mkPurifySkolem`). -/
+def mkPurifySkolem (t : Node) : Node := .skolem .PURIFY #[t]
 def mkNode (k : Kind) (children : Array Node) : Node := .app (.kind k) children
 def mkIndexedNode (k : Kind) (indices : Array Int) (children : Array Node) : Node :=
   .app (.indexed k indices) children

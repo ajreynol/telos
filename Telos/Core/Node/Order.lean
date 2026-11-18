@@ -53,7 +53,8 @@ private def rank : Node → Nat
   | .app (.node .APPLY_CONSTRUCTOR _) #[] => 1
   | .var .. => 2
   | .boundVar .. => 3
-  | .app .. => 4
+  | .skolem .. => 4
+  | .app .. => 5
 
 mutual
 
@@ -61,6 +62,7 @@ mutual
 partial def cmp : Node → Node → Ordering
   | .const a, .const b => a.cmp b
   | .var n T, .var m U | .boundVar n T, .boundVar m U => (compare n m).then (compare T U)
+  | .skolem i cs, .skolem j ds => (compare i j).then (listCmp cs.toList ds.toList)
   | a@(.app op cs), b@(.app op' cs') =>
     (compare a.rank b.rank).then ((opCmp op op').then (listCmp cs.toList cs'.toList))
   | a, b => compare a.rank b.rank

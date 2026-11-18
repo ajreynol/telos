@@ -22,15 +22,24 @@ def Node.decEq : (a b : Node) → Decidable (a = b)
   | .boundVar n T, .boundVar m U =>
       if h : n = m ∧ T = U then isTrue (by obtain ⟨rfl, rfl⟩ := h; rfl)
       else isFalse fun e => by cases e; exact h ⟨rfl, rfl⟩
+  | .skolem i cs, .skolem j ds =>
+      if h : i = j then
+        match Node.decEqArray cs ds with
+        | isTrue h₂ => isTrue (h ▸ h₂ ▸ rfl)
+        | isFalse h₂ => isFalse fun e => by cases e; exact h₂ rfl
+      else isFalse fun e => by cases e; exact h rfl
   | .app o cs, .app p ds =>
       match Op.decEq o p, Node.decEqArray cs ds with
       | isTrue h₁, isTrue h₂ => isTrue (h₁ ▸ h₂ ▸ rfl)
       | isFalse h, _ => isFalse fun e => by cases e; exact h rfl
       | _, isFalse h => isFalse fun e => by cases e; exact h rfl
-  | .const _, .var _ _ | .const _, .boundVar _ _ | .const _, .app _ _
-  | .var _ _, .const _ | .var _ _, .boundVar _ _ | .var _ _, .app _ _
-  | .boundVar _ _, .const _ | .boundVar _ _, .var _ _ | .boundVar _ _, .app _ _
-  | .app _ _, .const _ | .app _ _, .var _ _ | .app _ _, .boundVar _ _ =>
+  | .const _, .var _ _ | .const _, .boundVar _ _ | .const _, .skolem _ _ | .const _, .app _ _
+  | .var _ _, .const _ | .var _ _, .boundVar _ _ | .var _ _, .skolem _ _ | .var _ _, .app _ _
+  | .boundVar _ _, .const _ | .boundVar _ _, .var _ _ | .boundVar _ _, .skolem _ _
+  | .boundVar _ _, .app _ _
+  | .skolem _ _, .const _ | .skolem _ _, .var _ _ | .skolem _ _, .boundVar _ _
+  | .skolem _ _, .app _ _
+  | .app _ _, .const _ | .app _ _, .var _ _ | .app _ _, .boundVar _ _ | .app _ _, .skolem _ _ =>
       isFalse fun e => by cases e
 
 def Op.decEq : (a b : Op) → Decidable (a = b)

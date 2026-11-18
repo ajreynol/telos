@@ -77,8 +77,8 @@ to the theory of its type, an equality to the theory of the type of its
 arguments, and anything else to the theory of its kind. -/
 def theoryOf : Node → TheoryId
   | .var _ T | .boundVar _ T => T.theoryId
-  -- A purification skolem is a variable in cvc5.
-  | n@(.app (.kind .PURIFY) _) => ((n.typeHint).map TypeNode.theoryId).getD .THEORY_BUILTIN
+  -- A skolem is a variable in cvc5.
+  | n@(.skolem ..) => ((n.typeHint).map TypeNode.theoryId).getD .THEORY_BUILTIN
   | n@(.app (.kind .EQUAL) cs) =>
       match Profile.time "types" (fun _ => "theoryOf: type of equality") fun _ => cs[0]?.bind Node.typeHint with
       | some T => T.theoryId
@@ -124,8 +124,6 @@ def mapChildren (f : (c : Node) → RwM (Rw c)) :
 /-- Rewrite the children of a node with `f`. -/
 def rewriteChildren (f : (c : Node) → RwM (Rw c)) (n : Node) : RwM (Rw n) :=
   match n with
-  -- A purification skolem is atomic (a variable in cvc5).
-  | .app (.kind .PURIFY) _ => return .id _
   | .app op cs =>
     if hop : op.eoShape.isChildCongruent then
       let typed := op.childrenTypedOfParent = true ∨ Profile.time "types"

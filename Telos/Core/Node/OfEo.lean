@@ -127,13 +127,21 @@ def indexedKindOf : UserOp1 → Option Kind
   | _ => none
 
 /-- Kinds read back from their spine shape (`Kind.eoShape`). -/
-def shapeKinds : List Kind := [.TUPLE, .TUPLE_UNIT, .PURIFY, .INT_DIV_BY_ZERO, .MOD_BY_ZERO, .DIV_BY_ZERO, .STRING_LENGTH, .STRING_SUBSTR, .STRING_UPDATE, .STRING_CHARAT, .STRING_CONTAINS, .STRING_LT, .STRING_LEQ, .STRING_INDEXOF, .STRING_INDEXOF_RE, .STRING_REPLACE, .STRING_REPLACE_ALL, .STRING_REPLACE_RE, .STRING_REPLACE_RE_ALL, .STRING_PREFIX, .STRING_SUFFIX, .STRING_IS_DIGIT, .STRING_ITOS, .STRING_STOI, .STRING_TO_CODE, .STRING_FROM_CODE, .STRING_TO_LOWER, .STRING_TO_UPPER, .STRING_REV, .STRING_TO_REGEXP, .STRING_IN_REGEXP, .REGEXP_NONE, .REGEXP_ALL, .REGEXP_ALLCHAR, .REGEXP_DIFF, .REGEXP_STAR, .REGEXP_PLUS, .REGEXP_OPT, .REGEXP_RANGE, .REGEXP_COMPLEMENT, .SELECT, .STORE, .SET_SINGLETON, .SET_UNION, .SET_INTER, .SET_MINUS, .SET_MEMBER, .SET_SUBSET, .SET_CHOOSE, .SET_IS_EMPTY, .SET_IS_SINGLETON, .SET_INSERT, .POW2, .INTS_LOG2, .INTS_ISPOW2, .BITVECTOR_UBV_TO_INT, .BITVECTOR_SBV_TO_INT, .BITVECTOR_NOT, .BITVECTOR_NEG, .BITVECTOR_REDOR, .BITVECTOR_REDAND, .BITVECTOR_NEGO, .BITVECTOR_SIZE, .BITVECTOR_NAND, .BITVECTOR_NOR, .BITVECTOR_XNOR, .BITVECTOR_COMP, .BITVECTOR_SUB, .BITVECTOR_UDIV, .BITVECTOR_UREM, .BITVECTOR_SDIV, .BITVECTOR_SREM, .BITVECTOR_SMOD, .BITVECTOR_SHL, .BITVECTOR_LSHR, .BITVECTOR_ASHR, .BITVECTOR_ULT, .BITVECTOR_ULE, .BITVECTOR_UGT, .BITVECTOR_UGE, .BITVECTOR_SLT, .BITVECTOR_SLE, .BITVECTOR_SGT, .BITVECTOR_SGE, .BITVECTOR_ULTBV, .BITVECTOR_SLTBV, .BITVECTOR_UADDO, .BITVECTOR_SADDO, .BITVECTOR_UMULO, .BITVECTOR_SMULO, .BITVECTOR_USUBO, .BITVECTOR_SSUBO, .BITVECTOR_SDIVO, .BITVECTOR_ITE]
+def shapeKinds : List Kind := [.TUPLE, .TUPLE_UNIT, .STRING_LENGTH, .STRING_SUBSTR, .STRING_UPDATE, .STRING_CHARAT, .STRING_CONTAINS, .STRING_LT, .STRING_LEQ, .STRING_INDEXOF, .STRING_INDEXOF_RE, .STRING_REPLACE, .STRING_REPLACE_ALL, .STRING_REPLACE_RE, .STRING_REPLACE_RE_ALL, .STRING_PREFIX, .STRING_SUFFIX, .STRING_IS_DIGIT, .STRING_ITOS, .STRING_STOI, .STRING_TO_CODE, .STRING_FROM_CODE, .STRING_TO_LOWER, .STRING_TO_UPPER, .STRING_REV, .STRING_TO_REGEXP, .STRING_IN_REGEXP, .REGEXP_NONE, .REGEXP_ALL, .REGEXP_ALLCHAR, .REGEXP_DIFF, .REGEXP_STAR, .REGEXP_PLUS, .REGEXP_OPT, .REGEXP_RANGE, .REGEXP_COMPLEMENT, .SELECT, .STORE, .SET_SINGLETON, .SET_UNION, .SET_INTER, .SET_MINUS, .SET_MEMBER, .SET_SUBSET, .SET_CHOOSE, .SET_IS_EMPTY, .SET_IS_SINGLETON, .SET_INSERT, .POW2, .INTS_LOG2, .INTS_ISPOW2, .BITVECTOR_UBV_TO_INT, .BITVECTOR_SBV_TO_INT, .BITVECTOR_NOT, .BITVECTOR_NEG, .BITVECTOR_REDOR, .BITVECTOR_REDAND, .BITVECTOR_NEGO, .BITVECTOR_SIZE, .BITVECTOR_NAND, .BITVECTOR_NOR, .BITVECTOR_XNOR, .BITVECTOR_COMP, .BITVECTOR_SUB, .BITVECTOR_UDIV, .BITVECTOR_UREM, .BITVECTOR_SDIV, .BITVECTOR_SREM, .BITVECTOR_SMOD, .BITVECTOR_SHL, .BITVECTOR_LSHR, .BITVECTOR_ASHR, .BITVECTOR_ULT, .BITVECTOR_ULE, .BITVECTOR_UGT, .BITVECTOR_UGE, .BITVECTOR_SLT, .BITVECTOR_SLE, .BITVECTOR_SGT, .BITVECTOR_SGE, .BITVECTOR_ULTBV, .BITVECTOR_SLTBV, .BITVECTOR_UADDO, .BITVECTOR_SADDO, .BITVECTOR_UMULO, .BITVECTOR_SMULO, .BITVECTOR_USUBO, .BITVECTOR_SSUBO, .BITVECTOR_SDIVO, .BITVECTOR_ITE]
+
+/-- The head operator of a skolem's CPC term (`SkolemId.eoShape`). -/
+def skolemHead? (id : SkolemId) : Option UserOp :=
+  match id.eoShape with
+  | .spine (.UOp op) _ => some op
+  | _ => none
 
 namespace Node
 
-/-- The variables (free and bound) occurring in a node. -/
+/-- The variables (free and bound) and skolems occurring in a node. A skolem's
+cache values are included: its meaning depends on them. -/
 partial def vars : Node → List Node
   | n@(.var ..) | n@(.boundVar ..) => [n]
+  | n@(.skolem _ cs) => n :: cs.toList.flatMap vars
   | .const _ => []
   | .app op cs =>
       let opVars := match op with
@@ -172,6 +180,9 @@ partial def ofEo (env : List Node) (t : Term) : Option Node := do
   if let .Var .. := t then return ← varOfEo env t false
   if let .UConst i T := t then return .var (constName i) (← TypeNode.ofEo T)
   let (h, xs) := eoSpine t
+  if let .UOp op := h then
+    if let some id := SkolemId.all.find? (skolemHead? · == some op) then
+      return ← skolemApp id xs
   match h, xs with
   | .UOp UserOp.and, [x, _] => nary .AND x
   | .UOp UserOp.or, [x, _] => nary .OR x
@@ -230,6 +241,15 @@ partial def ofEo (env : List Node) (t : Term) : Option Node := do
       return .app (.node .APPLY_UF (.var (constName i) (← TypeNode.ofEo T))) (← xs.mapM (ofEo env)).toArray
   | _, _ => none
 where
+  /-- The skolem `id` applied to `xs`: its cache values first, then (for a
+  function skolem) the arguments of an `APPLY_UF`. -/
+  skolemApp (id : SkolemId) (xs : List Term) : Option Node := do
+    let n := id.numCacheVals
+    if xs.length < n then none
+    let k := Node.skolem id (← (xs.take n).mapM (ofEo env)).toArray
+    match xs.drop n with
+    | [] => return k
+    | args => return .app (.node .APPLY_UF k) (← args.mapM (ofEo env)).toArray
   app (k : Kind) (xs : List Term) : Option Node := do
     return .app (.kind k) (← xs.mapM (ofEo env)).toArray
   dtCons (s : native_String) (d : DatatypeDecl) (i : Nat) : Option Node := do

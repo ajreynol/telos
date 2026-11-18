@@ -37,6 +37,12 @@ def dtTypeHint : Kind → Const → Option TypeNode
   | .APPLY_UPDATER, .dtSel T .. => some T
   | _, _ => none
 
+/-- The type of a skolem with no cache values, from its identifier. -/
+def skolemType? : SkolemId → Option TypeNode
+  | .INT_DIV_BY_ZERO | .MOD_BY_ZERO => some (.function .integer .integer)
+  | .DIV_BY_ZERO => some (.function .real .real)
+  | .PURIFY => none
+
 -- The match over `Kind` is large; its compilation needs more than the default.
 set_option maxHeartbeats 1000000 in
 def typeHint : Node → Option TypeNode
@@ -47,6 +53,12 @@ def typeHint : Node → Option TypeNode
   | .const (.emptySet T) => some (.set T)
   | n@(.app (.node k (.const c)) _) => (dtTypeHint k c).orElse fun _ => n.getType
   | .var _ T | .boundVar _ T => some T
+  | n@(.skolem id cs) =>
+    match id, h : cs.toList with
+    | .PURIFY, [t] =>
+      have : t ∈ cs := by rw [Array.mem_def, h]; simp
+      typeHint t
+    | _, _ => (skolemType? id).orElse fun _ => n.getType
   | .app (.kind .ADD) ⟨c :: _⟩ | .app (.kind .MULT) ⟨c :: _⟩ | .app (.kind .SUB) ⟨c :: _⟩
   | .app (.kind .NEG) ⟨c :: _⟩ | .app (.kind .ABS) ⟨c :: _⟩ => typeHint c
   | .app (.kind .ITE) ⟨[_, t, _]⟩ | .app (.kind .BITVECTOR_ITE) ⟨[_, t, _]⟩ => typeHint t

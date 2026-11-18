@@ -868,7 +868,7 @@ tested:
      (`(str.contains "abc" (str.++ x "d" y))` and similar), telos reaches cvc5's
      result by other rewrites, and fuzzing shows no difference from it. cvc5's
      proof of it uses `string_eager_reduction`, whose skolems telos's `Node`
-     does not represent.
+     does not represent yet (`SkolemId` has only the preprocessor's so far).
 9. **Performance.** ~~Rewrite cache~~ (done: `Cache` in
    `Telos/Rewriter/Rewriter.lean`, for one call of `rewriteWith`, as cvc5 caches
    `rewriteTo`; children are rewritten in order and assembled by

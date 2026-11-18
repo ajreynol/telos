@@ -24,6 +24,9 @@ The encoding follows the CPC signature (`Cpc.eo`) as Ethos elaborates it:
 * `(f a b)` is the curried `((f a) b)`, and `(-> A B C)` is `(-> A (-> B C))`.
 * `(forall ((x T) …) F)` is `(forall (@list x …) F)`, where the bound variables are
   `Term.Var`s. Instantiation patterns are dropped.
+* A skolem is its CPC term: `(@purify t)` for the purification skolem of `t`
+  (`SkolemId.eoShape`). A function skolem, `@int_div_by_zero`, is applied as
+  any function is: `(@int_div_by_zero x)` is `APPLY_UF` of it.
 * A declared constant is a `Term.UConst`, as in cvc5's proofs, numbered by its
   name (`constId`). Logos's checker treats these as closed (unlike `Term.Var`),
   which proofs by contradiction need: it pushes only closed assumptions.
@@ -245,10 +248,6 @@ def Kind.eoShape : Kind → AppShape
   | .NOT => .spine (Term.UOp UserOp.not) (.exactly 1)
   | .TUPLE => .spine (Term.UOp UserOp.tuple) (.exactly 2)
   | .TUPLE_UNIT => .spine (Term.UOp UserOp.tuple_unit) (.exactly 0)
-  | .PURIFY => .spine (Term.UOp UserOp._at_purify) (.exactly 1)
-  | .INT_DIV_BY_ZERO => .spine (Term.UOp UserOp._at_int_div_by_zero) (.exactly 1)
-  | .MOD_BY_ZERO => .spine (Term.UOp UserOp._at_mod_by_zero) (.exactly 1)
-  | .DIV_BY_ZERO => .spine (Term.UOp UserOp._at_div_by_zero) (.exactly 1)
   | .AND => .rightAssocNil UserOp.and (.const (Term.Boolean true))
   | .OR => .rightAssocNil UserOp.or (.const (Term.Boolean false))
   | .IMPLIES => .spine (Term.UOp UserOp.imp) (.exactly 2)
@@ -458,12 +457,22 @@ by name, as in SMT-LIB. -/
 def constId (name : String) : Nat :=
   name.toList.foldl (fun acc c => acc * 0x110000 + (c.toNat + 1)) 0
 
+/-- The CPC term of a skolem, applied to its cache values: cvc5 prints a skolem
+as its identifier's operator applied to the cache values, so `(@purify t)`, and
+`@int_div_by_zero` alone. -/
+def _root_.Telos.SkolemId.eoShape : SkolemId → AppShape
+  | .PURIFY => .spine (Term.UOp UserOp._at_purify) (.exactly 1)
+  | .INT_DIV_BY_ZERO => .spine (Term.UOp UserOp._at_int_div_by_zero) (.exactly 0)
+  | .MOD_BY_ZERO => .spine (Term.UOp UserOp._at_mod_by_zero) (.exactly 0)
+  | .DIV_BY_ZERO => .spine (Term.UOp UserOp._at_div_by_zero) (.exactly 0)
+
 namespace Node
 
 def toEo : Node → Term
   | .const c => c.toEo
   | .var name T => Term.UConst (constId name) T.toEo
   | .boundVar name T => Term.Var (Term.String (native_string_lit name)) T.toEo
+  | .skolem id cs => id.eoShape.toEo (cs.attach.toList.map fun ⟨c, _⟩ => c.toEo)
   | .app (.kind k) cs => k.eoShape.toEo (cs.attach.toList.map fun ⟨c, _⟩ => c.toEo)
   | .app (.indexed k is) cs =>
       (indexedEoShape k is.toList).toEo (cs.attach.toList.map fun ⟨c, _⟩ => c.toEo)

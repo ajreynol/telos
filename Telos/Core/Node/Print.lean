@@ -152,8 +152,6 @@ def Kind.smtLibName : Kind → String
   | .TO_REAL => "to_real" | .TO_INTEGER => "to_int" | .IS_INTEGER => "is_int"
   | .TUPLE => "tuple" | .TUPLE_UNIT => "tuple.unit" | .TUPLE_SELECT => "tuple.select"
   | .TUPLE_UPDATE => "tuple.update"
-  | .PURIFY => "@purify" | .INT_DIV_BY_ZERO => "@int_div_by_zero"
-  | .MOD_BY_ZERO => "@mod_by_zero" | .DIV_BY_ZERO => "@div_by_zero"
   | k => toString (repr k)
 
 /-- A field type of a parametric datatype as declared: a parameter, or a sort
@@ -277,6 +275,9 @@ partial def Node.toSmtLibWith (N : DtNames) : Node → String
   | .const (.dtSel T i j) => N.selName T i j
   | .const c => c.toSmtLib
   | .var n _ | .boundVar n _ => n
+  | .skolem id #[] => id.name
+  | .skolem id cs =>
+    "(" ++ String.intercalate " " (id.name :: cs.toList.map (·.toSmtLibWith N)) ++ ")"
   | .app (.node .APPLY_CONSTRUCTOR f) #[] => f.toSmtLibWith N
   | .app (.node .APPLY_TESTER f) cs =>
     -- the constructor's name, without the type of a parametric datatype's

@@ -28,6 +28,8 @@ inductive Kind where
   -- `BOUND_VARIABLE`).
   | VARIABLE
   | BOUND_VARIABLE
+  /-- A skolem (cvc5's `SKOLEM`, of metakind `VARIABLE`): `Node.skolem`. -/
+  | SKOLEM
   -- theory/builtin
   | EQUAL
   -- theory/booleans
@@ -186,19 +188,6 @@ inductive Kind where
   | TUPLE_SELECT
   /-- `((_ tuple.update i) t u)` (indexed by `i`). -/
   | TUPLE_UPDATE
-  /-- Skolems that preprocessing introduces, as CPC writes them: terms whose
-  value Logos defines, so that preprocessing preserves equivalence.
-  `(@purify t)` is the purification skolem for `t` (cvc5's
-  `SkolemId::PURIFY`), whose value is that of `t`; cvc5's skolems are
-  variables, so the rewriter and the preprocessing passes do not look inside
-  it. -/
-  | PURIFY
-  /-- `(@int_div_by_zero x)`, the value of `(div x 0)`. -/
-  | INT_DIV_BY_ZERO
-  /-- `(@mod_by_zero x)`, the value of `(mod x 0)`. -/
-  | MOD_BY_ZERO
-  /-- `(@div_by_zero x)`, the value of `(/ x 0.0)`. -/
-  | DIV_BY_ZERO
   -- theory/quantifiers
   | FORALL
   | EXISTS
@@ -230,7 +219,7 @@ def Kind.theoryId : Kind → TheoryId
   | .CONST_STRING => .THEORY_STRINGS
   | .SET_EMPTY => .THEORY_SETS
   | .DT_SYMBOL => .THEORY_DATATYPES
-  | .VARIABLE | .BOUND_VARIABLE | .EQUAL => .THEORY_BUILTIN
+  | .VARIABLE | .BOUND_VARIABLE | .SKOLEM | .EQUAL => .THEORY_BUILTIN
   | .NOT | .AND | .IMPLIES | .OR | .XOR | .ITE => .THEORY_BOOL
   | .ADD | .SUB | .NEG | .MULT | .DIVISION | .INTS_DIVISION | .INTS_MODULUS | .ABS
   | .DIVISION_TOTAL | .INTS_DIVISION_TOTAL | .INTS_MODULUS_TOTAL
@@ -332,8 +321,6 @@ def Kind.theoryId : Kind → TheoryId
   | .REGEXP_LOOP => .THEORY_STRINGS
   | .APPLY_CONSTRUCTOR | .APPLY_SELECTOR | .APPLY_TESTER | .APPLY_UPDATER
   | .TUPLE | .TUPLE_UNIT | .TUPLE_SELECT | .TUPLE_UPDATE => .THEORY_DATATYPES
-  | .PURIFY => .THEORY_BUILTIN
-  | .INT_DIV_BY_ZERO | .MOD_BY_ZERO | .DIV_BY_ZERO => .THEORY_ARITH
   | .FORALL | .EXISTS | .BOUND_VAR_LIST | .INST_PATTERN_LIST => .THEORY_QUANTIFIERS
 
 /-- The quantifier kinds, whose congruence is in their body only. -/
