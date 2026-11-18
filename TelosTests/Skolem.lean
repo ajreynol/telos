@@ -68,4 +68,17 @@ def pp (as : List Node) : List String := (Preprocess.preprocess as).toList.map (
 #guard pp [mkNode .GT #[mkNode .INTS_DIVISION #[x, .const (.integer 0)], three]] ==
   ["(>= (@int_div_by_zero x) 4)", "true"]
 
+/-! ## Reorganizing the pipeline's conjunction (`andReorg`) -/
+
+def b : Node := .var "b" .boolean
+def c : Node := .var "c" .boolean
+-- splitting a conjunct, as `push_back` does
+#guard ((Preprocess.andReorg (mkNode .AND #[mkNode .AND #[a, b], c, mkTrue])
+    (mkNode .AND #[a, b, c, mkTrue])).map (·.1)) == some (mkNode .AND #[a, b, c, mkTrue])
+-- adding `true` conjuncts, for lemmas
+#guard ((Preprocess.andReorg (mkNode .AND #[a, mkTrue])
+    (mkNode .AND #[a, mkTrue, mkTrue, mkTrue])).map (·.1)) == some (mkNode .AND #[a, mkTrue, mkTrue, mkTrue])
+-- not the same conjuncts: no proof
+#guard (Preprocess.andReorg (mkNode .AND #[a, b]) (mkNode .AND #[a, c])).isNone
+
 end TelosTests.Skolem

@@ -1,4 +1,5 @@
 import Telos.Rewriter.Theory.Common
+import Telos.Preprocess.Conjunctions
 import Telos.Core.Node.Order
 
 /-!
@@ -53,13 +54,13 @@ def assertions {input : Node} (p : Pipeline input) : Array Node :=
 /-- Whether the pipeline is in conflict (`isInConflict`). -/
 def inConflict {input : Node} (p : Pipeline input) : Bool := p.1 == mkFalse
 
-/-- The pipeline with the assertions `as` in place of the current ones, if
-`aci_norm` proves the two conjunctions equal: they have the same conjuncts, up
-to nested conjunctions, `true` and duplicates. -/
+/-- The pipeline with the assertions `as` in place of the current ones, if the
+two conjunctions have the same conjuncts, up to nested conjunctions, `true` and
+duplicates: by `andReorg`, linear, or else `aci_norm`. -/
 def rearrange {input : Node} (p : Pipeline input) (as : List Node) : Option (Pipeline input) :=
   let target := mkNode .AND as.toArray
   if target == p.1 then some p
-  else p.next? fun m => checkBy .aci_norm m target
+  else p.next? fun m => (andReorg m target).orElse fun _ => checkBy .aci_norm m target
 
 /-- `markConflict`: if an assertion is `false`, the pipeline is `false`
 (`absorb`). -/
@@ -80,26 +81,29 @@ def mapAssertions {input : Node} (p : Pipeline input) (f : (c : Node) → Rw c) 
       conflict? (p.trans (h ▸ r))
     | _ => p
 
-/-- The `true` assertion at position `i` replaced by the lemma `l`, a certified
-rewrite of `true`, by congruence below the conjunction. -/
-def setLemma {input : Node} (p : Pipeline input) (i : Nat) (l : Rw mkTrue) : Pipeline input :=
+/-- The `true` assertions from position `k` on replaced by the lemmas `lems`,
+certified rewrites of `true`, in one congruence step below the conjunction. -/
+def setLemmas {input : Node} (p : Pipeline input) (k : Nat) (lems : Array (Rw mkTrue)) :
+    Pipeline input :=
   match h : p.1 with
   | .app (.kind .AND) cs =>
-    if hi : i < cs.size then
-      if hc : cs[i] = mkTrue then
-        let l' : Rw cs[i] := hc ▸ l
-        let r : Rw (.app (.kind .AND) cs) :=
-          ⟨.app (.kind .AND) (cs.set i l'.1), .congrArg i l'.1 hi rfl (.inl rfl) l'.2 (.refl _)⟩
-        p.trans (h ▸ r)
-      else p
-    else p
+    let f : Node × Nat → (c : Node) × Rw c := fun (c, i) =>
+      ⟨c, if hi : k ≤ i ∧ i - k < lems.size then
+            if hc : c = mkTrue then hc ▸ lems[i - k] else Rw.id c
+          else Rw.id c⟩
+    let rs := cs.toList.zipIdx.map f
+    have hrs : rs.map (·.1) = cs.toList := by
+      simp only [rs, List.map_map]
+      exact List.zipIdx_map_fst 0 _
+    p.trans (h ▸ Rw.congrList (.kind .AND) cs rs hrs rfl (.inl rfl))
   | _ => p
 
 /-- `pushBackTrusted` for each lemma, in order: a lemma, a certified rewrite of
 `true`, is added after the last assertion. The lemmas are given split into
 their conjuncts, as `push_back` splits them (`splitLemma`). The conjunction gets
-a `true` per lemma (one `aci_norm` step), and each is rewritten to its lemma. A
-lemma that is still a conjunction is split by a second `aci_norm` step. -/
+a `true` per lemma (`andReorg`), and they are rewritten to the lemmas (one
+congruence step). A lemma that is still a conjunction is split by a second
+`andReorg` step. -/
 def pushLemmas {input : Node} (p : Pipeline input) (lems : List (Rw mkTrue)) : Pipeline input :=
   if lems.isEmpty || inConflict p then p
   else
@@ -107,7 +111,7 @@ def pushLemmas {input : Node} (p : Pipeline input) (lems : List (Rw mkTrue)) : P
     match rearrange p (as ++ lems.map fun _ => mkTrue) with
     | none => p
     | some q =>
-      let q := lems.zipIdx.foldl (fun q (l, j) => setLemma q (as.length + j) l) q
+      let q := setLemmas q as.length lems.toArray
       let bs := (assertions q).toList
       let q := if (bs.drop as.length).any (·.getKind == .AND) then
           let flat := bs.take as.length ++ (bs.drop as.length).flatMap flattenAnd

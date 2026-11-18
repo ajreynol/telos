@@ -1,34 +1,49 @@
 # telos
 
-A **verified rewriter for SMT**, written in Lean 4. It is a port of
-[cvc5](https://github.com/cvc5/cvc5)'s rewriter, with a machine-checked proof that
-every rewrite preserves equivalence. The semantics come from
-[Logos](https://github.com/ajreynol/logos), the CPC proof checker, so "equivalent"
-means the same thing that a CPC proof of `(= t (rewrite t))` would establish.
+A **verified rewriter and preprocessor for SMT**, written in Lean 4. Both are
+ports of [cvc5](https://github.com/cvc5/cvc5), each with a machine-checked proof
+that it preserves meaning:
 
-Every rewrite step is an instance of a CPC rule (a RARE rewrite or a theory
-rewrite), found by a matcher generated from the Eunoia signature and checked by
-Logos's verified rule programs. The choice of which rule to apply follows cvc5's
-theory rewriters and is tested against cvc5 by differential fuzzing.
+- the **rewriter**, cvc5's `Rewriter` and its theory rewriters: every rewrite is
+  equivalent to its input;
+- the **preprocessor**, cvc5's preprocessing passes (`ProcessAssertions`): the
+  preprocessed assertions are equivalent to the input ones.
 
 ```lean
 theorem Telos.rewrite_correct (t : Node) (h : t.WellTyped) : t.Equiv (rewrite t)
+theorem Telos.preprocess_correct (as : List Node) (h : (Preprocess.inputNode as).WellTyped) :
+    (Preprocess.inputNode as).Equiv (Preprocess.preprocessCert as).1
 ```
+
+`inputNode as` is the conjunction of the input assertions, and
+`preprocessCert as` the conjunction of the preprocessed ones, as certified
+rewrites of it.
+
+The semantics come from [Logos](https://github.com/ajreynol/logos), the CPC proof
+checker, so "equivalent" means the same thing that a CPC proof would establish.
+Every step is an instance of a CPC rule (a RARE rewrite, a theory rewrite, or a
+preprocessing rule such as `skolem_intro` or `arith_reduction`), checked by
+Logos's verified rule programs; one theorem about certified steps covers the
+rewriter and the preprocessor alike, so no rewrite or pass needs a proof of its
+own. Which rule to apply, and when, follows cvc5's C++ and is tested against
+cvc5 by differential fuzzing.
 
 ## The name
 
 *Telos* is Greek for "end" or "goal". A verified SMT solver is the end goal of
 the verification and Eunoia efforts this project builds on; the verified rewriter
-is a step toward it.
+and preprocessor are steps toward it.
 
 ## Usage
 
 ```sh
 lake build telos
-.lake/build/bin/telos test/examples/bool.smt2            # rewritten terms
-.lake/build/bin/telos --proof test/examples/bool.smt2    # ... each with a CPC proof
-.lake/build/bin/telos --post-asserts test/preprocess/basic.smt2   # preprocessed assertions
+.lake/build/bin/telos test/examples/bool.smt2                      # rewritten terms
+.lake/build/bin/telos --proof test/examples/bool.smt2              # ... each with a CPC proof
+.lake/build/bin/telos --post-asserts test/preprocess/basic.smt2    # preprocessed assertions
 ```
+
+### The rewriter
 
 The input is an SMT-LIB script of `declare-const`, `declare-fun`, `declare-sort`
 and `(simplify t)` commands, read by Logos's parser. For each `t`, telos prints
@@ -38,8 +53,7 @@ arithmetic (`+`, `-`, `*`, `/`, `div`, `mod`, `abs`, `to_real`, `to_int`,
 `distinct` (cvc5's UF rewriter), bit-vectors, arrays (`select`, `store`),
 strings (partly), finite sets (the operators of cvc5's safe mode: no
 `set.card` or relations), inductive datatypes (`declare-datatypes`, also
-parametric) and tuples, and quantifiers as far as they are Boolean.
-Terms
+parametric) and tuples, and quantifiers as far as they are Boolean. Terms
 with other operators are reported as unsupported, and rewriting of the supported
 ones is incomplete.
 
@@ -50,58 +64,73 @@ Logos's checker accepts. To check one with Ethos, drop the outer parentheses and
 run `ethos --include=.lake/packages/Cpc/install/defs/Cpc.cached.eo FILE`, or run
 `python3 scripts/check-proofs.py --fuzz 500`, which does both.
 
-See [`docs/design.md`](docs/design.md) for the architecture and roadmap,
-[`docs/theory-rewriters.md`](docs/theory-rewriters.md) for how to port another theory,
-[`docs/solver-plan.md`](docs/solver-plan.md) for the original, broader plan for a
-verified solver, and [`TRUSTED.md`](TRUSTED.md) for what the theorem relies on.
+### The preprocessor
 
 With `--post-asserts`, the input is a benchmark (declarations, `define-fun`s,
 assertions and `check-sat`), and telos prints its assertions after
-preprocessing, as cvc5 does with `-o post-asserts`, with the theorem
-`Telos.preprocess_correct`: the conjunction of the output is equivalent to that
-of the input. The preprocessor is at its second stage (`docs/preprocessor-plan.md`):
-top-level conjunctions are split, the assertions rewritten, `ite`s and
-Boolean terms inside terms purified, and `div`, `mod`, `/`, `to_int`, `is_int`
-and `abs` eliminated, with skolem lemmas; `define-fun`s are macros. `python3 scripts/fuzz-pp.py --cvc5 PATH` compares it with cvc5.
+preprocessing, as cvc5 does with `-o post-asserts`. The output is equivalent to
+the input (`Telos.preprocess_correct`), so it is satisfiable exactly when the
+input is, in the same models. Ported so far (`docs/preprocessor-plan.md`):
+
+- the assertion pipeline: top-level conjunctions split, conflicts detected;
+- `rewrite`: each assertion rewritten by the verified rewriter;
+- `static-rewrite`, in part: arithmetic and datatype equalities, `distinct`;
+- `theory-preprocess`: non-Boolean `ite`s and Boolean terms inside terms
+  replaced by purification skolems, and `div`, `mod`, `/`, `to_int`, `is_int`
+  and `abs` eliminated (cvc5's `OperatorElim`), with their skolem lemmas.
+  Skolems are printed as cvc5 prints them (`@purify_1`, `@int_div_by_zero_2`).
+
+`define-fun`s are macros. Non-clausal simplification, static learning and
+quantifier preprocessing are next. `python3 scripts/fuzz-pp.py --cvc5 PATH`
+compares the output with cvc5's, with the passes not yet ported switched off.
+
+See [`docs/design.md`](docs/design.md) for the architecture and roadmap,
+[`docs/theory-rewriters.md`](docs/theory-rewriters.md) for how to port another theory,
+[`docs/preprocessor-plan.md`](docs/preprocessor-plan.md) for the preprocessor,
+[`docs/solver-plan.md`](docs/solver-plan.md) for the original, broader plan for a
+verified solver, and [`TRUSTED.md`](TRUSTED.md) for what the theorems rely on.
 
 ## Layout
 
-Two Lake projects, so the rewriter builds without Mathlib:
+Two Lake projects, so the rewriter and preprocessor build without Mathlib:
 
 - `.` (package `Telos`), requiring Logos's root package `Cpc`, in layers, each
   a library that imports only the ones above it (`scripts/check-hygiene.sh`
   checks this):
-  - `Telos/Core/` (`TelosCore`): `Node` and its translation to Logos terms
-    (`Node/`), certified rewrites (`Certified.lean`, `Static.lean`,
-    `PolyNorm.lean`), and CPC proof output (`Proof/`);
+  - `Telos/Core/` (`TelosCore`): `Node` (with skolems, `SkolemId`) and its
+    translation to Logos terms (`Node/`), certified rewrites (`Certified.lean`,
+    `Static.lean`, `PolyNorm.lean`), and CPC proof output (`Proof/`);
   - `Telos/Rewriter/` (`TelosRewriter`): the rewriter: the driver, the
     generated rule table (`Rules/`) and the theory rewriters (`Theory/`,
     `Strings/`);
-  - `Telos/Frontend/` (`TelosFrontend`): SMT-LIB scripts (`Script.lean`) and
-    `simplify` queries (`Simplify.lean`);
+  - `Telos/Preprocess/` (`TelosPreprocess`): the preprocessor: the assertion
+    pipeline (`Pipeline.lean`), the passes (`Passes/`), the theories'
+    preprocessing (`Theory/`), and the certified steps that introduce skolems
+    and reorganize conjunctions;
+  - `Telos/Frontend/` (`TelosFrontend`): SMT-LIB scripts (`Script.lean`),
+    `simplify` queries (`Simplify.lean`) and `-o post-asserts`
+    (`PostAsserts.lean`);
   - `Main.lean`: the `telos` executable. `TelosTests/` holds tests checked at
     build time.
 - `verification/` (package `TelosVerification`): the specification `Node.Equiv`
   and the correctness proofs, in the same layers (`TelosProofs/Core/`,
-  `TelosProofs/Rewriter/`). Requires `Telos`, Logos's `LogosVerification` and
-  Mathlib.
-
-The verified preprocessor (`docs/preprocessor-plan.md`) will be a further layer,
-`Telos/Preprocess/`, between the rewriter and the front end.
+  `TelosProofs/Rewriter/`, `TelosProofs/Preprocess/`). Requires `Telos`,
+  Logos's `LogosVerification` and Mathlib.
 
 ## Building
 
 ```sh
-lake build                              # rewriter
+lake build                              # rewriter and preprocessor
 lake -d verification exe cache get      # Mathlib binaries (once)
 lake -d verification build              # proofs, with the Logos theorems they use as a hypothesis (CI)
 lake -d verification build TelosFull    # also Logos's proofs: the unconditional theorem
 bash scripts/check-hygiene.sh           # no sorry/axiom; trusted code is listed
 python3 scripts/gen-rules.py            # regenerate Telos/Rewriter/Rules/Generated.lean
 python3 scripts/gen-term-order.py       # regenerate the generated part of TelosProofs/Core/TermOrder.lean
-lake build telos-fuzz && python3 scripts/fuzz.py --cvc5 PATH   # compare with cvc5
+lake build telos-fuzz && python3 scripts/fuzz.py --cvc5 PATH   # compare the rewriter with cvc5
+python3 scripts/fuzz-pp.py --cvc5 PATH                          # compare the preprocessor with cvc5
 python3 scripts/check-proofs.py --fuzz 500                      # proofs, with Ethos
-python3 scripts/loc-summary.py                                  # lines: spec, rewriter, proofs
+python3 scripts/loc-summary.py                                  # lines: spec, core, rewriter, preprocessor, proofs
 bash scripts/profile.sh                                         # where rewriting time goes
 ```
 
@@ -129,5 +158,5 @@ The work is written by a human maintainer together with AI coding agents working
 under the maintainer's direction; the maintainer reviews changes before they are
 committed. That review does not re-check proofs by hand: correctness rests on
 Lean's kernel and the trusted base listed in [`TRUSTED.md`](TRUSTED.md), and
-agreement with cvc5's choice of rewrites is tested by differential fuzzing, not
-proved.
+agreement with cvc5's choice of rewrites and preprocessing steps is tested by
+differential fuzzing, not proved.

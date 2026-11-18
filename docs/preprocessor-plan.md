@@ -181,12 +181,19 @@ from cvc5's node ids, which order skolems by creation: the order of two
 skolems in a sum or an equality, and of terms built during preprocessing
 against skolems, and so of the lemmas that follow from them.
 
-Performance: preprocessing is dominated by `aci_norm` steps over the whole
-conjunction (splitting and adding lemmas), which Logos checks in super-linear
-time; files over about 100KB take more than a minute, before and after
-`theory-preprocess`. Lemmas are split by checking small proofs (`splitLemma`),
-so adding them costs one such step. A static procedure for reordering
-conjunctions (as for `arith_poly_norm_rel`) is the next fix.
+Performance: the pipeline's reorganizations of the whole conjunction
+(splitting the input's conjunctions, adding `true` conjuncts for lemmas) were
+`aci_norm` steps, which Logos checks in cubic time (`list_setof` at every level
+of the nested conjunction); they took seconds on a few hundred assertions. They
+are now `andReorg` (`Telos/Preprocess/Conjunctions.lean`): a CPC proof by
+`assume_push`, `and_elim`, `and_intro`, `scope` and resolution, whose steps are
+list walks, still checked by Logos's checker, so it needed no proof. Lemmas are
+split by checking their own small proofs (`splitLemma`), and set in one
+congruence step. On Certora QF_UFNIA benchmarks, an 87KB file went from 80s to
+1.2s and a 36KB one from 14s to 0.6s; 0.13MB with 400 assertions takes 14s,
+growing about linearly, mostly in the rewriter's type checks (Logos's
+translation and typing of every node checked) and the checking of the two
+`andReorg` steps.
 
 ## Phases
 

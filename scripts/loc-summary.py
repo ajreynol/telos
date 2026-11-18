@@ -3,18 +3,22 @@
 
 Every Lean file of the repository is put in exactly one bucket:
 
-  (1) specification: what `Telos.rewrite_correct` means. This is telos's part of
-      the trusted base (TRUSTED.md): the `Node` datatype, its translation to
-      Logos terms (`toEo`) and the definition of `Node.Equiv`. For reference, the
-      Logos specification it builds on (the import closure of `Cpc.Spec` and
-      `Cpc.SmtTranslate` in the pinned Logos checkout) is reported separately.
-  (2) rewriter: the code that rewrites, all untrusted: node utilities, the
-      certificate, the driver, the rule matcher and the theory strategies.
-      Generated files are counted separately.
-  (3) front end and proof output: SMT-LIB input, CPC proof printing, the `telos`
-      executable. Untrusted, and outside the theorem.
-  (4) proofs: `verification/TelosProofs/`, minus the specification.
-  (5) tests and fuzzing.
+  (1) specification: what `Telos.rewrite_correct` and `Telos.preprocess_correct`
+      mean. This is telos's part of the trusted base (TRUSTED.md): the `Node`
+      datatype (with `SkolemId`), its translation to Logos terms (`toEo`) and the
+      definition of `Node.Equiv`. For reference, the Logos specification it
+      builds on (the import closure of `Cpc.Spec` and `Cpc.SmtTranslate` in the
+      pinned Logos checkout) is reported separately.
+  (2) core: the rest of `Telos/Core/`, untrusted: node utilities, certified
+      rewrites (`Rw`) and static steps, shared by the rewriter and the
+      preprocessor.
+  (3) rewriter: `Telos/Rewriter/`, untrusted: the driver, the rule matcher and
+      the theory strategies. Generated files are counted separately.
+  (4) preprocessor: `Telos/Preprocess/`, untrusted: the pipeline and the passes.
+  (5) front end and proof output: SMT-LIB input, CPC proof printing, the `telos`
+      executable. Untrusted, and outside the theorems.
+  (6) proofs: `verification/TelosProofs/`, minus the specification.
+  (7) tests and fuzzing.
 
 A line of code is a non-blank, non-comment line (Lean `--` and nested `/- -/`
 comments stripped), as in Logos's `scripts/cpc-loc-summary.py`.
@@ -38,6 +42,7 @@ LOGOS = ROOT / ".lake" / "packages" / "Cpc"
 SPEC = [
     "Telos/Core/Node/Kind.lean",
     "Telos/Core/Node/TypeNode.lean",
+    "Telos/Core/Node/SkolemId.lean",
     "Telos/Core/Node/Node.lean",
     "Telos/Core/Node/ToEo.lean",
     "verification/TelosProofs/Core/Spec.lean",
@@ -46,18 +51,22 @@ GENERATED = ["Telos/Rewriter/Rules/Generated.lean", "Telos/Core/RuleNames.lean"]
 FRONTEND = ["Telos/Frontend/", "Telos/Core/Proof/", "Main.lean"]
 TESTS = ["TelosTests/", "FuzzMain.lean"]
 PROOFS = ["verification/TelosProofs/", "verification/TelosFull/"]
-REWRITER = ["Telos/", "Telos.lean"]
+REWRITER = ["Telos/Rewriter/"]
+PREPROCESSOR = ["Telos/Preprocess/"]
+CORE = ["Telos/Core/", "Telos.lean"]
 
 # (key, title, path prefixes); the first bucket whose prefix matches owns a file.
 BUCKETS = [
     ("spec", "(1) specification (trusted)", SPEC),
-    ("gen", "(2) rewriter: generated rule tables", GENERATED),
-    ("front", "(3) front end and proof output", FRONTEND),
-    ("tests", "(5) tests and fuzzing", TESTS),
-    ("proofs", "(4) proofs", PROOFS),
-    ("rw", "(2) rewriter: hand-written", REWRITER),
+    ("gen", "(3) rewriter: generated rule tables", GENERATED),
+    ("front", "(5) front end and proof output", FRONTEND),
+    ("tests", "(7) tests and fuzzing", TESTS),
+    ("proofs", "(6) proofs", PROOFS),
+    ("rw", "(3) rewriter: hand-written", REWRITER),
+    ("pp", "(4) preprocessor", PREPROCESSOR),
+    ("core", "(2) core (shared, untrusted)", CORE),
 ]
-DISPLAY = ["spec", "rw", "gen", "front", "proofs", "tests"]
+DISPLAY = ["spec", "core", "rw", "gen", "pp", "front", "proofs", "tests"]
 SKIP_DIRS = {".lake", ".git"}
 
 

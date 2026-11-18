@@ -55,6 +55,29 @@ structure TppState where
 
 abbrev TppM := StateM TppState
 
+/-! Updates of the state's fields take the field out before changing it, so
+that it is not shared and is updated in place (`{ s with f := s.f.insert … }`
+copies `s.f` on every update, which is quadratic). -/
+
+def updCache (f : Std.HashMap (Node × Nat) ((n : Node) × Rw n) →
+    Std.HashMap (Node × Nat) ((n : Node) × Rw n)) : TppM Unit :=
+  modify fun s =>
+    let c := s.cache
+    let s := { s with cache := {} }
+    { s with cache := f c }
+
+def updPurified (f : Std.HashSet Node → Std.HashSet Node) : TppM Unit :=
+  modify fun s =>
+    let c := s.purified
+    let s := { s with purified := {} }
+    { s with purified := f c }
+
+def updLemmas (f : Array (Rw mkTrue) → Array (Rw mkTrue)) : TppM Unit :=
+  modify fun s =>
+    let c := s.lemmas
+    let s := { s with lemmas := #[] }
+    { s with lemmas := f c }
+
 /-- cvc5's `RtfTermContext::hasNestedTermChildren`: the children of `n` are
 inside a term. -/
 def hasNestedTermChildren (n : Node) : Bool :=
@@ -68,7 +91,7 @@ def childContext (n : Node) (val : Nat) : Nat :=
   else val
 
 def addLemma (l : Option (Rw mkTrue)) : TppM Unit :=
-  if let some l := l then modify fun s => { s with lemmas := s.lemmas.push l } else pure ()
+  if let some l := l then updLemmas (·.push l) else pure ()
 
 /-- `RemoveTermFormulas::runCurrent`: `n` replaced by its purification skolem,
 if it is a non-Boolean `ite`, or a Boolean term inside a term (`inTerm`) that is
@@ -80,7 +103,7 @@ def removeTermFormulas (n : Node) (inTerm : Bool) : TppM (Option (Rw n)) := do
   if !isIte && !(isBool && inTerm && !isPurify) then return none
   let some step := purifyStep n | return none
   if !(← get).purified.contains n then
-    modify fun s => { s with purified := s.purified.insert n }
+    updPurified (·.insert n)
     addLemma <| if isIte then
         -- `ite_eq` proves `(ite c (= n t₁) (= n t₂))`; then `n` is purified
         (lemmaBy [stepWith .ite_eq [n.toEo]]).map fun l => l.trans (replaceRw n step l.1)
@@ -131,7 +154,7 @@ partial def theoryPreprocess (n : Node) (val : Nat) : TppM (Rw n) := do
         -- changed: traverse the result again
         let r₃ ← theoryPreprocess r₂.1 val
         pure (r₁.trans (r₂.trans r₃))
-  modify fun s => { s with cache := s.cache.insert (n, val) ⟨n, res⟩ }
+  updCache (·.insert (n, val) ⟨n, res⟩)
   return res
 
 /-- `TheoryPreprocessor::preprocessInternal`: rewrite, then traverse. -/
@@ -148,9 +171,13 @@ def preprocessAssertion (a : Node) : TppM (Rw a) := do
   while i < (← get).lemmas.size do
     let l := (← get).lemmas[i]!
     let l' := l.trans (← preprocessInternal l.1)
-    modify fun s => { s with lemmas := s.lemmas.set! i l' }
+    updLemmas (·.set! i l')
     i := i + 1
-  modify fun s => { s with allLemmas := s.allLemmas ++ s.lemmas, lemmas := #[] }
+  modify fun s =>
+    let all := s.allLemmas
+    let lems := s.lemmas
+    let s := { s with allLemmas := #[], lemmas := #[] }
+    { s with allLemmas := all ++ lems }
   return r
 
 /-- The `theory-preprocess` pass: each assertion replaced by its preprocessed

@@ -32,6 +32,7 @@ import Telos.Preprocess.Passes.Rewrite
 import Telos.Preprocess.Passes.StaticRewrite
 import Telos.Preprocess.Passes.TheoryPreprocess
 import Telos.Preprocess.SkolemSteps
+import Telos.Preprocess.Conjunctions
 import Telos.Preprocess.Theory.ArithPreprocess
 import Telos.Preprocess.Preprocess
 import Telos.Frontend.Script
