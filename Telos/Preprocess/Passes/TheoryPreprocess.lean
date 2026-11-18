@@ -4,6 +4,7 @@ import Telos.Preprocess.Pipeline
 import Telos.Preprocess.Theory.ArithPreprocess
 import Telos.Preprocess.Theory.BVPreprocess
 import Telos.Preprocess.Theory.DatatypesPreprocess
+import Telos.Preprocess.Theory.StringsPreprocess
 import Telos.Rewriter.Rewrite
 
 /-!
@@ -34,8 +35,11 @@ cvc5's last for the whole run, so a term already purified in an earlier
 assertion gets no second lemma. Quantifier bodies are not traversed.
 
 Ported theory hooks: arithmetic (`TheoryArith::ppRewrite`), bit-vectors
-(`TheoryBV::ppRewrite`) and datatypes (`TheoryDatatypes::ppRewrite`, but for
-tuple updaters). Not ported: strings, sets, arrays and UF.
+(`TheoryBV::ppRewrite`), datatypes (`TheoryDatatypes::ppRewrite`, but for
+tuple updaters) and strings (`TheoryStrings::ppRewrite`). Sets and UF have
+nothing to do on the input telos supports. Not ported: arrays (`select` over
+`store` and store reordering at indices known disequal), which the rewriter
+already does in the cases that arise without non-clausal simplification.
 
 Every step is certified (`Telos/Preprocess/SkolemSteps.lean`): the pass is a
 rewrite of the conjunction of the assertions.
@@ -120,6 +124,7 @@ def ppRewrite (n : Node) : Option (Rw n × Option (Rw mkTrue)) :=
   | .THEORY_ARITH => arithPpRewrite n
   | .THEORY_BV => (bvPpRewrite n).map (·, none)
   | .THEORY_DATATYPES => (dtPpRewrite n).map (·, none)
+  | .THEORY_STRINGS => stringsPpRewrite n
   | _ => none
 
 /-- `preprocessWithProof`: `ppRewrite`, except for equalities, then rewriting. -/

@@ -37,6 +37,8 @@ import Telos.Preprocess.Conjunctions
 import Telos.Preprocess.Theory.ArithPreprocess
 import Telos.Preprocess.Theory.BVPreprocess
 import Telos.Preprocess.Theory.DatatypesPreprocess
+import Telos.Preprocess.Theory.StringsPreprocess
+import Telos.Preprocess.Theory.StringsStaticRewrite
 import Telos.Preprocess.Preprocess
 import Telos.Frontend.Script
 import Telos.Frontend.Simplify

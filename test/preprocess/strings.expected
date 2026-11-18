@@ -1,0 +1,17 @@
+;; post-asserts start
+(set-logic ALL)
+(declare-fun x () String)
+(declare-fun y () String)
+(declare-fun z () String)
+(declare-fun n () Int)
+(declare-fun @purify_1 () String)
+(assert (= y (str.++ x "a")))
+(assert (= y z))
+(assert (and (= "" x) (not (= "" y))))
+(assert (not (str.contains x "a")))
+(assert true)
+(assert (= (str.len @purify_1) 1))
+(assert true)
+(assert (ite (and (>= n 0) (not (>= n 196608))) (= n (str.to_code @purify_1)) (= "" @purify_1)))
+(check-sat)
+;; post-asserts end

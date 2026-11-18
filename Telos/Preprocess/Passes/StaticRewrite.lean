@@ -1,5 +1,6 @@
 import Telos.Preprocess.Pipeline
 import Telos.Rewriter.Rewrite
+import Telos.Preprocess.Theory.StringsStaticRewrite
 
 /-!
 # The `static-rewrite` pass
@@ -14,10 +15,12 @@ follows rewrites). Ported theory hooks:
   `PreprocessRewriteEq::ppRewriteEq`; `Arith.normalizeEquality`);
 * datatype equalities: `MACRO_DT_CONS_EQ` (`DatatypesRewriter.consEq`);
 * `distinct`: blasted into disequalities (`TheoryBuiltin::ppStaticRewrite`,
-  `distinct-elim`).
+  `distinct-elim`);
+* string equalities: `rewriteStrEqualityExt`, in part
+  (`Telos/Preprocess/Theory/StringsStaticRewrite.lean`).
 
-Not ported: bit-vector equalities (`SolveEq`), and string and regular expression
-equalities (`rewriteEqualityExt`, `RE_EQ_ELIM`).
+Not ported: bit-vector equalities (`SolveEq`), and regular expression
+equalities (`RE_EQ_ELIM`).
 -/
 
 namespace Telos.Preprocess
@@ -42,6 +45,7 @@ def ppStaticRewrite (n : Node) : Option (Rw n) :=
     match theoryOf n with
     | .THEORY_ARITH => Arith.normalizeEquality n
     | .THEORY_DATATYPES => DatatypesRewriter.consEq n
+    | .THEORY_STRINGS => if n.getChildren[0]?.bind (·.typeHint) == some .string then strEqualityExt n else none
     | _ => none
   | .DISTINCT => blastDistinct n
   | _ => none

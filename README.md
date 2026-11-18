@@ -74,12 +74,12 @@ input is, in the same models. Ported so far (`docs/preprocessor-plan.md`):
 
 - the assertion pipeline: top-level conjunctions split, conflicts detected;
 - `rewrite`: each assertion rewritten by the verified rewriter;
-- `static-rewrite`, in part: arithmetic and datatype equalities, `distinct`;
+- `static-rewrite`, in part: arithmetic, datatype and string equalities, `distinct`;
 - `theory-preprocess`: non-Boolean `ite`s and Boolean terms inside terms
   replaced by purification skolems, and the theories' `ppRewrite`: `div`,
   `mod`, `/`, `to_int`, `is_int` and `abs` eliminated (cvc5's `OperatorElim`),
-  datatype updaters expanded, and the bit-vector overflow predicates
-  eliminated, with their skolem lemmas. Skolems are printed as cvc5 prints them
+  datatype updaters expanded, the bit-vector overflow predicates eliminated,
+  and `str.from_code` purified, with their skolem lemmas. Skolems are printed as cvc5 prints them
   (`@purify_1`, `@int_div_by_zero_2`).
 
 `define-fun`s are macros. Non-clausal simplification, static learning and

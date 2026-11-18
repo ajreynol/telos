@@ -180,8 +180,18 @@ request 9); selectors stay as they are (cvc5's shared selectors have no CPC
 term, and cvc5 prints them as the selectors). On the way: `static-rewrite`'s
 `MACRO_DT_CONS_EQ` now splits tuple equalities (the fields were those of the
 binary `TUPLE` node), and the rule matcher takes a premise after the premises
-that bind its variables (`bv-ult-add-one`). The not ported `ppRewrite`s are
-those of strings, sets, arrays and UF.
+that bind its variables (`bv-ult-add-one`). Strings: `ppRewrite` purifies
+`str.from_code` with its eager reduction (`string_eager_reduction`), and
+`static-rewrite` applies `rewriteStrEqualityExt`
+(`Theory/StringsStaticRewrite.lean`): `EQ_NCTN` (`str-eq-ctn-full-false*`),
+`EQ_NFIX` and `STR_EQ_UNIFY` (constants split at the ends with `regroup`, then
+`str-concat-unify`/`-clash`), and the `str.replace` cases (`str-eq-repl-*`);
+cvc5 trusts this step and elaborates it, telos certifies each case. Not ported:
+the `str.substr` cases and the length-based unifications. Sets and UF have no
+`ppRewrite` on telos's input; arrays' (`select` over `store` and store
+reordering at disequal indices) is what the rewriter does without
+non-clausal simplification's facts. On 150 benchmarks, strings went from 28 to
+9 differences.
 
 `fuzz-pp.py` compares up to the numbering of skolems and up to Int/Real casts
 (cvc5's post-asserts prints its mixed arithmetic without `to_real`, where its
