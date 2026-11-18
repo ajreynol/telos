@@ -639,7 +639,7 @@ theorem and_true_iff (cs : Array Node) (h : 2 ≤ cs.size) (M : SmtModel) (hM : 
     intro x hx
     obtain ⟨c, hc, rfl⟩ := List.mem_map.1 hx
     obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hc
-    simpa using hb i (by simpa using hi))]
+    simpa [HasBoolType] using hb i (by simpa using hi))]
   constructor
   · intro hall i hi; exact hall _ (List.mem_map_of_mem (Array.getElem_mem_toList hi))
   · intro hall x hx
@@ -689,7 +689,7 @@ theorem tri_equiv (P : TriPlan) (cs ds : Array Node)
         subst hc
         rw [← Array.foldl_toList] at he
         have hJs := justs_sound P k hJ hE hG i hT
-        have h := chain_fold_sound P k i hJs hrw steps.toList cs[i] e
+        have h := chain_fold_sound P k i hJs hrw steps.toList cs[i] _
           (hasSmtType_of_bool (hcb i hi)) he
         refine ⟨?_, h⟩
         unfold HasBoolType; rw [← h.type_eq]; exact hcb i hi

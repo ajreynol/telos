@@ -1,5 +1,6 @@
 import Std.Data.HashSet
 import Telos.Core.Node.Key
+import Telos.Core.Learn
 
 /-!
 # Semantically justified steps
@@ -20,7 +21,9 @@ Unlike CPC steps, these steps have no CPC proof to print.
 Procedures:
 
 * `reorg`: two conjunctions with the same conjuncts, up to nesting, `true` and
-  repetition (splitting the pipeline's conjuncts, adding `true` for lemmas).
+  repetition (splitting the pipeline's conjuncts, adding `true` for lemmas);
+* `learn`: a conjunction with literals added, learned by Boolean propagation
+  (`Telos/Core/Learn.lean`).
 -/
 
 namespace Telos
@@ -55,25 +58,18 @@ end Node
 inductive SemProc where
   /-- Same conjuncts, up to nesting, `true` and repetition. -/
   | reorg
+  /-- Literals learned by Boolean propagation, added (`Telos/Core/Learn.lean`). -/
+  | learn (L : LearnPlan)
 
 /-- The side condition of a step from `n` to `m`. -/
 def SemProc.Ok : SemProc → Node → Node → Prop
   | .reorg, n, m =>
     n.isAndApp = true ∧ m.isAndApp = true ∧ n.andShapeOk = true ∧ m.andShapeOk = true ∧
       (∀ c ∈ m.conjuncts, c ∈ n.conjuncts) ∧ (∀ c ∈ n.conjuncts, c ∈ m.conjuncts)
+  | .learn L, n, m => L.Ok n m = true
 
 instance (p : SemProc) (n m : Node) : Decidable (p.Ok n m) := by
   cases p <;> unfold SemProc.Ok <;> infer_instance
-
-instance : LawfulBEq Key where
-  eq_of_beq {a b} h := by
-    cases a; cases b
-    simp only [BEq.beq, decide_eq_true_eq] at h
-    rw [h]
-  rfl {a} := by simp [BEq.beq]
-
-instance : LawfulHashable Key where
-  hash_eq {a b} h := by rw [eq_of_beq h]
 
 /-- Whether every node of `as` is one of `bs`, by a hash set of `bs`. -/
 def subsetBy (as bs : List Node) : Bool :=
@@ -94,9 +90,11 @@ def SemProc.check : SemProc → Node → Node → Bool
   | .reorg, n, m =>
     n.isAndApp && m.isAndApp && n.andShapeOk && m.andShapeOk &&
       (let cn := n.conjuncts; let cm := m.conjuncts; subsetBy cm cn && subsetBy cn cm)
+  | .learn L, n, m => L.Ok n m
 
 theorem SemProc.check_ok {p : SemProc} {n m : Node} (h : p.check n m = true) : p.Ok n m := by
   cases p
+  case learn L => exact h
   simp only [SemProc.check, Bool.and_eq_true] at h
   obtain ⟨⟨⟨⟨h₁, h₂⟩, h₃⟩, h₄⟩, h₅, h₆⟩ := h
   exact ⟨h₁, h₂, h₃, h₄, subsetBy_mem h₅, subsetBy_mem h₆⟩

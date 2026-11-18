@@ -39,6 +39,7 @@ import Telos.Preprocess.SkolemSteps
 import Telos.Preprocess.Conjunctions
 import Telos.Preprocess.ConjProof
 import Telos.Preprocess.CircuitPropagator
+import Telos.Preprocess.CircuitPure
 import Telos.Preprocess.Theory.ArithPreprocess
 import Telos.Preprocess.Theory.BVPreprocess
 import Telos.Preprocess.Theory.DatatypesPreprocess

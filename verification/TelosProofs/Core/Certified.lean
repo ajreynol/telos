@@ -2,6 +2,7 @@ import TelosProofs.Core.Congruence
 import TelosProofs.Core.Static
 import TelosProofs.Core.Semantic
 import TelosProofs.Core.ChildTyping
+import TelosProofs.Core.Tri
 
 /-!
 # Certified steps are equivalences
@@ -69,6 +70,10 @@ theorem Certified.equiv {n m : Node} (h : Certified n m) (hn : n.WellTyped) : n.
     exact h₁.trans (ih h₁.wellTyped_right)
   | @semantic n k m p h _ ih =>
     have h₁ := SemProc.equiv p n k h hn
+    exact h₁.trans (ih h₁.wellTyped_right)
+  | @tri n k m P h _ _ ihrws ih =>
+    obtain ⟨cs, ds, rfl, rfl⟩ := TriPlan.ok_shape h
+    have h₁ := tri_equiv P cs ds h (fun r hr hw => ihrws r hr hw) hn
     exact h₁.trans (ih h₁.wellTyped_right)
   | @congrBody k vs body body' m pats hk hb _ _ ihb ih =>
     have hk' : k = .FORALL ∨ k = .EXISTS := by cases k <;> simp_all [Kind.isQuantifier]

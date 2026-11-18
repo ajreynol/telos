@@ -4,6 +4,9 @@ import Cpc.Proofs.RuleSupport.Cong.Spine
 import Cpc.Proofs.RuleSupport.SpineArgsSupport
 import Cpc.Proofs.RuleSupport.SubstituteTypeSupport
 import Cpc.Proofs.TypePreservation.Full
+import Cpc.Proofs.RuleSupport.Cong.TrueSpine
+import Cpc.Proofs.RuleSupport.Cong.TypeSpine
+import Cpc.Proofs.Closed.Support
 
 /-!
 # The unconditional theorem
@@ -42,6 +45,28 @@ theorem valid_iff (t : Term) :
   · intro ⟨hTy, hInt⟩
     exact ⟨hTy, fun M hM => ((eo_interprets_true_iff M t).1 (hInt M hM)).2⟩
 
+theorem agrees_of {M N : SmtModel} (h : AgreesOnGlobals M N) : model_agrees_on_globals M N :=
+  ⟨h.consts, h.funs, h.usortDom⟩
+
+theorem agrees_to {M N : SmtModel} (h : model_agrees_on_globals M N) : AgreesOnGlobals M N :=
+  ⟨h.consts, h.funs, h.usortDom⟩
+
+/-- A true spine over `xs` and `ys`, extending one between the heads. -/
+theorem congTrueSpine_foldl (M : SmtModel) (hM : model_wf M) :
+    ∀ {h₁ h₂ : Term} {xs ys : List Term},
+      CongSupport.CongTrueSpine M h₁ h₂ →
+      List.Forall₂ (fun x y => HasBoolType (mkEq x y) ∧
+        ∀ N, model_wf N → AgreesOnGlobals M N → TrueIn N (mkEq x y)) xs ys →
+      CongSupport.CongTrueSpine M (xs.foldl Term.Apply h₁) (ys.foldl Term.Apply h₂) := by
+  intro h₁ h₂ xs ys hh h
+  induction h generalizing h₁ h₂ with
+  | nil => exact hh
+  | cons hxy _ ih =>
+    refine ih (CongSupport.CongTrueSpine.app hh ?_ ?_)
+    · exact (eo_interprets_true_iff M _).2 ⟨hxy.1, hxy.2 M hM (agrees_to (model_agrees_on_globals_refl M))⟩
+    · intro N hN hAgree
+      exact (eo_interprets_true_iff N _).2 ⟨hxy.1, hxy.2 N hN (agrees_to hAgree)⟩
+
 instance logosFacts : LogosFacts where
   checker_sound cs P hT hC hP := (valid_iff P).2 (proven_from_empty_valid cs P hT hC hP)
   cong_spine head xs ys ht h :=
@@ -67,6 +92,15 @@ instance logosFacts : LogosFacts where
     have hP := type_preservation M hM t (by unfold term_has_non_none_type; rw [h]; simp)
     rw [h] at hP
     exact bool_value_canonical hP
+  cong_spine_model M hM head xs ys hq hb h :=
+    ((eo_interprets_true_iff M _).1 (CongSupport.congTrueSpine_eq_true M hM _ _ ⟨hq.1, hq.2⟩ hb
+      (congTrueSpine_foldl M hM (CongSupport.CongTrueSpine.refl head) h))).2
+  cong_type_spine head xs ys ht h :=
+    CongSupport.congTypeSpine_eq_has_bool_type _ _ ht
+      (CongSupport.congTypeSpine_foldl (fun _ _ hxy => hxy) (CongSupport.CongTypeSpine.refl head) h)
+  closed_eval P hc M N h := smt_model_eval_eq_of_eo_closed P hc M N (agrees_of h)
+  uf_args i T xs h x hx :=
+    SpineArgsSupport.spine_args_have_smt_translation (Term.UConst i T) xs (.uconst i T _) h x hx
 
 /-- **Correctness of the rewriter.** Rewriting a well-typed node gives an
 equivalent node. -/

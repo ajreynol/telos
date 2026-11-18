@@ -17,4 +17,14 @@ structure Key where
 instance : BEq Key := ⟨fun a b => a.node == b.node⟩
 instance : Hashable Key := ⟨fun k => k.node.hash⟩
 
+instance : LawfulBEq Key where
+  eq_of_beq {a b} h := by
+    cases a; cases b
+    simp only [BEq.beq, decide_eq_true_eq] at h
+    rw [h]
+  rfl {a} := by simp [BEq.beq]
+
+instance : LawfulHashable Key where
+  hash_eq {a b} h := by rw [eq_of_beq h]
+
 end Telos
