@@ -979,19 +979,28 @@ tested:
       `quant-var-elim-eq`;
     - conditional splitting (`computeCondSplit`, default mode): `ite-expand`,
       and `bool-or-and-distrib` after `aci_norm`.
-    - inequality elimination (`getVarElimIneq`): a variable occurring in one
-      literal of the body, a bound of one direction or a disequality, is
-      eliminated with that literal. telos proves it as cvc5 does
+    - inequality elimination (`getVarElimIneq`): the first variable (in the
+      term order) whose disjuncts are all bounds of one direction or
+      equations (cvc5's disequalities), with coefficient `±1` for an integer
+      variable, is eliminated with those disjuncts (`ineqVar`, cvc5's
+      eligibility rules). telos proves it as cvc5 does
       (`ensureProofMacroQuantVarElimIneq`, since cvc5's `altRcons` branch,
-      `c005a58a3d`), without assumptions: the variable is split off and the
-      literal miniscoped out (`quant-miniscope-or`); then, with `t` a value
-      that falsifies `L` and `g` the guard `(= v t)`, `L` is written
-      `(and (or (not g) L) (or g L))` (`bool-or-and-distrib`,
-      `bool-and-conf2`, `aci_norm`, reversed), `(forall (v) …)` distributed
-      over it (`quant-miniscope-and`), the first conjunct is `L[v := t]`
-      (`quant-var-elim-eq`), rewritten to `false`, and the conjunction is
-      `false` (`absorb`). So `L` and `t` may use the other bound variables
-      (cvc5's earlier proof assumed `(forall (v) L)` and refuted it, which
+      `c005a58a3d`), without assumptions: the variable is split off and its
+      disjuncts `E` grouped and miniscoped out (`aci_norm`,
+      `quant-miniscope-or`); then, with `t` a value that falsifies `E` and
+      `g` the guard `(= v t)`, `E` is written `(and (or (not g) E) (or g E))`
+      (`bool-or-and-distrib`, `bool-and-conf2`, `aci_norm`, reversed),
+      `(forall (v) …)` distributed over it (`quant-miniscope-and`), the first
+      conjunct is `E[v := t]` (`quant-var-elim-eq`), shown `false`, and the
+      conjunction is `false` (`absorb`). For one bound, `t` makes it constant
+      and the rewriter gives `false`. For several, `t` is cvc5's `ite` chain,
+      the least (or greatest) of their limits; each bound at `t` follows from
+      `arith-min-lt1`/`arith-min-lt2` (`arith-max-geq*`) and transitivity
+      (`arith_sum_ub`, `arith_poly_norm_rel`), with `(< 0 1)` added for a
+      strict bound, and the bound is then `false` by `arith_poly_norm_rel`,
+      `arith-elim-lt`/`arith-elim-leq` (and `arith-eq-elim-*`, `absorb` for an
+      equation) (`ineqChain`). `E` and `t` may use the other bound variables
+      (cvc5's earlier proofs assumed `(forall (v) E)` and refuted it, which
       Logos's checker allows only for closed formulas).
     - Declared constants are `Term.UConst`s (`Node.toEo`, numbered by name with
       `constId`), as in cvc5's proofs: Logos's checker pushes only closed
@@ -999,9 +1008,7 @@ tested:
       supports `assume-push` and `step-pop` (`Proof.toCmds` tracks the stack of
       facts), and prints variables as `(@var "x" T)` outside their binder.
     - Not ported: eliminating shadowed variables, prenexing (`computePrenex`),
-      datatype variable expansion, and inequality elimination with several
-      literals for the variable (cvc5 instantiates with an `ite` of the bounds
-      and proves the bounds by transitivity).
+      and datatype variable expansion.
     - `Node.ofEo` reads a binder's body with its variables in scope, so that
       they are the same `boundVar`s (they were read as free variables of the
       same name, with the same translation).

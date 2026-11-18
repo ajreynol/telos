@@ -50,3 +50,6 @@ false
 (forall ((qy Int)) (P qy))
 (forall ((qy Int)) (P qy))
 (forall ((qy Int)) (P qy))
+a
+a
+(forall ((w Int)) (P w))

@@ -26,13 +26,15 @@ in stages. Ported so far:
 * otherwise, the variables that do not occur in the body are removed
   (`quant-unused-vars`);
 * before miniscoping, the body is put in negation normal form (cvc5's
-  `COMPUTE_ELIM_SYMBOLS`, `Telos/Theory/Nnf.lean`).
+  `COMPUTE_ELIM_SYMBOLS`, `Telos/Theory/Nnf.lean`);
+* variable elimination (`computeVarElimination`): by equalities, Boolean
+  variables and solved linear equations (`varElim`), and by bounds of one
+  direction (`getVarElimIneq`, `ineqElim`);
+* conditional splitting (`computeCondSplit`, `condSplit`).
 
 cvc5's steps run in order, the first that changes the quantifier winning
 (`computeOperation`). Not ported yet, and so skipped: eliminating shadowed
-variables,
-prenexing, variable elimination, datatype variable expansion and conditional
-splitting.
+variables, prenexing and datatype variable expansion.
 
 Deviations from cvc5: cvc5 gives the quantifiers created by miniscoping fresh
 bound variables (`BoundVarManager`), printed with the same names. telos, like
@@ -333,9 +335,9 @@ checker does not allow in an assumption). With `g` the guard `(= v t)`, `L` is
 `(and (or (not g) L) (or g L))` (`bool-or-and-distrib`, `bool-and-conf2` and
 `aci_norm`, reversed), the quantifier is distributed
 over the conjunction (`quant-miniscope-and`), its first conjunct is `L[v := t]`
-(`quant-var-elim-eq`), which `rw` rewrites to `false`, and the conjunction is
-`false` (`absorb`). -/
-def refute (rw : (m : Node) → Rw m) (v t lit : Node) (q : Node) : Option (Rw q) := do
+(`quant-var-elim-eq`), which `falsify` rewrites to `false`, and the conjunction
+is `false` (`absorb`). -/
+def refute (falsify : (m : Node) → Option (Rw m)) (v t lit : Node) (q : Node) : Option (Rw q) := do
   let (_, #[v'], body) ← quant? q | none
   if v' != v || body != lit then none
   let g := eqNode v t
@@ -357,66 +359,266 @@ def refute (rw : (m : Node) → Rw m) (v t lit : Node) (q : Node) : Option (Rw q
   -- the first conjunct to `false`
   let r ← r.next? fun m => Rw.congrArg m 0 fun q₁ => do
     let r ← checkBy .quant_var_elim_eq q₁ (substitute v t lit)
-    let r := r.trans (rw r.1)
-    if r.1 == mkFalse then some r else none
+    r.next? falsify
   r.next? fun m => checkBy .absorb m mkFalse
 
-/-- A value for `v` that makes the bound `lit` (a disjunct: `(>= a b)`, its
-negation, or a positive arithmetic equation) false, if `v` has coefficient 1 or
--1 in it and occurs in no other monomial. -/
-def falsifier (v lit : Node) : Option Node := do
-  let (atom, neg) := match lit.getKind, lit.getChildren with
-    | .NOT, #[a] => (a, true)
-    | _, _ => (lit, false)
-  let #[a, b] := atom.getChildren | none
-  if !(Arith.isInt a || Arith.isReal a) then none
-  let p := Arith.polyOf (mkNode .SUB #[a, b])
-  let c ← p.findSome? fun (m, c) => if m == [v] then some c else none
-  if !(c == 1 || c == -1) || p.any (fun (m, _) => m != [v] && m.contains v) then none
-  let rest := p.filter (·.1 != [v])
-  -- `p = c v + rest` is zero at `v = root`
-  let root := Arith.Poly.scale rest (-1 / c)
-  let real := Arith.isReal v
-  let shifted (k : Rat) : Node := (Arith.Poly.add root (Arith.Poly.const k)).toNode real
-  match atom.getKind, neg with
-  -- `p >= 0` false: `p = -1`
-  | .GEQ, false => some (shifted (-1 / c))
-  -- `p >= 0` true: `p = 0`
-  | .GEQ, true => some (shifted 0)
-  -- `p = 0` false: `p = 1`
-  | .EQUAL, false => some (shifted (1 / c))
-  | _, _ => none
+/-- A disjunct of the body that bounds a variable `v` (cvc5's `getVarElimIneq`):
+`(>= a b)`, `(not (>= a b))` or a positive arithmetic `(= a b)`, where `a - b`
+is `c v + rest`, with `v` in no other monomial. -/
+structure IneqBound where
+  /-- the position of the disjunct -/
+  idx : Nat
+  lit : Node
+  neg : Bool
+  isEq : Bool
+  /-- the coefficient `c` of `v` -/
+  coeff : Rat
+  /-- the value of `v` at which `a - b` is zero, `-rest / c` -/
+  root : Arith.Poly
+  /-- `some true` when the disjunct is false for small values of `v` (cvc5's
+  upper bounds), `some false` for large ones, `none` for an equation (cvc5's
+  disequalities, false for all values but one) -/
+  small : Option Bool
+  deriving Inhabited
 
-/-- cvc5's `getVarElimIneq`, when the eliminated variable `v` occurs in one
-literal `L` of the body: `(forall vs (or L K))` is `(forall vs' K)`. `L` and
-the value of `v` that falsifies it may use the other variables of `vs`. Certified as cvc5's proofs do: `v` split off as for variable
-elimination, `L` moved first (`aci_norm`), `(forall (v) (or L K))` to
-`(or (forall (v) L) K)` (`quant-miniscope-or`), `(forall (v) L)` to `false` by
-`refute`, and `(or false K)` to `K` (`aci_norm`). -/
+/-- cvc5's `getVarElimIneq`: the first variable of `vs` (in the term order) that
+occurs only in disjuncts that bound it, in one direction (or are equations), with
+the direction (`true` when they are false for small values of the variable) and
+those disjuncts. A variable is ineligible when it occurs in a disjunct that is no
+such bound, in a monomial other than itself, or (for an integer variable) with a
+coefficient other than `1` or `-1`. -/
+def ineqVar (vs : Array Node) (lits : Array Node) : Option (Node × Bool × List IneqBound) := Id.run do
+  let ofVs (n : Node) : Array Node := (n.vars.filter vs.contains).toArray
+  let mut inelig : Array Node := #[]
+  let mut bounds : Array (Node × IneqBound) := #[]
+  for i in [0:lits.size] do
+    let l := lits[i]!
+    let (atom, neg) := match l.getKind, l.getChildren with
+      | .NOT, #[a] => (a, true)
+      | _, _ => (l, false)
+    let canSolve := match atom.getKind, atom.getChildren with
+      | .GEQ, #[_, _] => true
+      | .EQUAL, #[a, _] => !neg && (Arith.isInt a || Arith.isReal a)
+      | _, _ => false
+    match canSolve, atom.getChildren with
+    | true, #[a, b] =>
+      let p := Arith.polyOf (mkNode .SUB #[a, b])
+      for (m, c) in p do
+        match m with
+        | [] => pure ()
+        | [w] =>
+          if inelig.contains w then pure ()
+          else if vs.contains w then
+            if c != 0 && (Arith.isReal w || c == 1 || c == -1) then
+              let small := if atom.getKind == .EQUAL then none else some (neg != decide (c > 0))
+              let root := Arith.Poly.scale (p.filter (·.1 != [w])) (-1 / c)
+              bounds := bounds.push (w, ⟨i, l, neg, atom.getKind == .EQUAL, c, root, small⟩)
+            else inelig := inelig.push w
+          else inelig := inelig ++ ofVs w
+        | m => inelig := inelig ++ m.foldl (fun acc a => acc ++ ofVs a) #[]
+    | _, _ => inelig := inelig ++ ofVs l
+  for v in vs.toList.mergeSort (fun a b => a.lt b) do
+    if inelig.contains v then continue
+    let bs := (bounds.filter (·.1 == v)).toList.map (·.2)
+    if bs.isEmpty then continue
+    if !bs.any (·.small == some true) then return some (v, false, bs)
+    if !bs.any (·.small == some false) then return some (v, true, bs)
+  return none
+
+/-- For one bound, a value of `v` that makes it false: `a - b` is `-1` for
+`(>= a b)`, `0` for `(not (>= a b))` and `1` for `(= a b)`. -/
+def falsifier (real : Bool) (bd : IneqBound) : Node :=
+  let k : Rat := if bd.isEq then 1 else if bd.neg then 0 else -1
+  (Arith.Poly.add bd.root (Arith.Poly.const (k / bd.coeff))).toNode real
+
+/-- The proof that the disjunction `E[v := t]` of the bounds `bds` of `v`, which
+all are false for small values of `v` (`small`) or all for large ones, is
+`false`, for `t` the least (or greatest) of their limits, as cvc5's
+`ensureProofMacroQuantVarElimIneq` does. A bound's limit `B` is its root `r`,
+less (more) `1` for a strict bound (`(>= a b)` and `(= a b)`, which are false
+for `v < r`, or `v ≠ r`, when `c > 0`). `t` is `T₁ = B₁`,
+`Tₖ = (ite (< Bₖ Tₖ₋₁) Bₖ Tₖ₋₁)` (or `(ite (>= Bₖ Tₖ₋₁) Bₖ Tₖ₋₁)`). Each
+`(<= t Bₖ)` (or `(<= Bₖ t)`) is `arith-min-lt1`, `arith-min-lt2` (or
+`arith-max-geq1`, `arith-max-geq2`) and transitivity (`arith_sum_ub` and
+`arith_poly_norm_rel`); for a strict bound, `(< t r)` (or `(< r t)`) follows
+by adding `(< 0 1)`. Each bound, at `t`, is written with `t` alone on one side
+(`arith_poly_norm_rel`), and is `false` by that fact (`arith-elim-lt`,
+`arith-elim-leq`, and `arith-eq-elim-*` and `absorb` for an equation). -/
+structure IneqChain where
+  /-- the value of `v` -/
+  t : Node
+  /-- the proof of `(= E[v := t] false)`, from `E[v := t]` -/
+  falsify : (m : Node) → Option (Rw m)
+
+def ineqChain (v : Node) (small : Bool) (bds : List IneqBound) : Option IneqChain := do
+  let real := Arith.isReal v
+  let num (c : Rat) : Node := Arith.constNode real c
+  let strict (bd : IneqBound) : Bool := !bd.neg
+  let limit (bd : IneqBound) : Node :=
+    if strict bd then
+      (Arith.Poly.add bd.root (Arith.Poly.const (if small then -1 else 1))).toNode real
+    else bd.root.toNode real
+  let Bs := bds.map limit
+  let B₁ ← Bs.head?
+  -- `T₁ … Tₙ`
+  let Ts := (Bs.drop 1).foldl (init := [B₁]) fun Ts B =>
+    let T := Ts.getLast!
+    Ts ++ [iteNode (mkNode (if small then .LT else .GEQ) #[B, T]) B T]
+  let t := Ts.getLast!
+  let st := fun (r : CRule) (args : List Node) (prems : List Nat) =>
+    Proof.push ⟨r, args.map Node.toEo, prems, .step⟩
+  -- `(r X Y)`, from the fact `f` (`(r X₀ Y₀)`, with `X₀ - Y₀ = X - Y`)
+  let normRel (f : Nat) (from_ to_ : Node) : Proof.EmitM Nat := do
+    match from_.getChildren, to_.getChildren with
+    | #[x₀, y₀], #[x, y] =>
+      let pn ← st .arith_poly_norm [Arith.scaledEq real 1 1 (mkNode .SUB #[x₀, y₀]) (mkNode .SUB #[x, y])] []
+      let e ← st .arith_poly_norm_rel [eqNode from_ to_] [pn]
+      st .eq_resolve [] [f, e]
+    | _, _ => throw "normRel"
+  -- `(<= x z)` from `(<= x y)` and `(<= y z)`
+  let leTrans (f₁ f₂ : Nat) (x y z : Node) : Proof.EmitM Nat := do
+    let s ← st .arith_sum_ub [] [f₁, f₂]
+    normRel s (mkNode .LEQ #[mkNode .ADD #[x, y], mkNode .ADD #[y, z]]) (mkNode .LEQ #[x, z])
+  -- the fact `le x y`, from `(= (le' …) true)` for `le'` the rule's relation
+  let ofTrue (e : Nat) (x y : Node) : Proof.EmitM Nat := do
+    let f ← st .true_elim [] [e]
+    if small then pure f
+    else
+      -- `(>= y x)` to `(<= x y)`
+      let e ← st .arith_elim_leq [x, y] []
+      let e ← st .symm [] [e]
+      st .eq_resolve [] [f, e]
+  let ff := mkFalse
+  let run (et : Node) : Proof.EmitM Nat := do
+    -- `le Tₖ Bₖ` and `le Tₖ Tₖ₋₁`, for `k ≥ 2`
+    let n := Ts.length
+    let mut toB : Array (Option Nat) := Array.replicate n none
+    let mut toPrev : Array (Option Nat) := Array.replicate n none
+    for k in [1:n] do
+      let (r₁, r₂) := if small then (CRule.arith_min_lt1, CRule.arith_min_lt2)
+        else (CRule.arith_max_geq1, CRule.arith_max_geq2)
+      let B := Bs[k]!
+      let T := Ts[k-1]!
+      let e₁ ← st r₁ [B, T] []
+      toB := toB.set! k (some (← if small then ofTrue e₁ Ts[k]! B else ofTrue e₁ B Ts[k]!))
+      let e₂ ← st r₂ [B, T] []
+      toPrev := toPrev.set! k (some (← if small then ofTrue e₂ Ts[k]! T else ofTrue e₂ T Ts[k]!))
+    -- `le t Tₖ`, for `k < n`, from the top
+    let mut toT : Array (Option Nat) := Array.replicate n none
+    for j in [0:n-1] do
+      let k := n - 2 - j
+      let f ← match toT[k+1]!, toPrev[k+1]! with
+        | none, some p => pure p
+        | some f, some p =>
+          if small then leTrans f p t Ts[k+1]! Ts[k]! else leTrans p f Ts[k]! Ts[k+1]! t
+        | _, none => throw "chain"
+      toT := toT.set! k (some f)
+    -- per bound, `(= L[v := t] false)`
+    let zero := num 0
+    let one := num 1
+    let mut eqs : List Nat := []
+    for k in [0:n] do
+      let bd := bds[k]!
+      -- `le t Bₖ`
+      let f ← match toT[k]!, toB[k]! with
+        | none, some p => pure p
+        | some f, none => pure f
+        | some f, some p =>
+          if small then leTrans f p t Ts[k]! Bs[k]! else leTrans p f Bs[k]! Ts[k]! t
+        | none, none => throw "bound"
+      let r := bd.root.toNode real
+      -- the bound at `t` is `(k' x y)` or `(not (>= x y))`
+      let (x, y) :=
+        if bd.isEq then (if small then (t, r) else (r, t))
+        else if bd.coeff > 0 then (t, r) else (r, t)
+      let atomT := mkNode (if bd.isEq then .EQUAL else .GEQ) #[x, y]
+      let litT := substitute v t bd.lit
+      let cy := if x == t then bd.coeff else -bd.coeff
+      let normAtom (a : Node) : Option (Rw a) := do
+        let #[p, q] := a.getChildren | none
+        Arith.polyNormRel a 1 cy (mkNode .SUB #[p, q]) (mkNode .SUB #[x, y]) atomT
+      let rLit ← match bd.neg with
+        | true => (Rw.congrArg litT 0 normAtom).elim (throw "norm") pure
+        | false => (normAtom litT).elim (throw "norm") pure
+      let e₁ ← Proof.closeChain litT (← Proof.emitChain rLit.2)
+      -- `(= (>= x y) false)` from `(< x y)`
+      let geqFalse (lt : Nat) : Proof.EmitM Nat := do
+        let e ← st .arith_elim_lt [x, y] []
+        let n ← st .eq_resolve [] [lt, e]
+        st .false_intro [] [n]
+      -- `(< x y)`, from `le t B`, `B = r ∓ 1`
+      let strictLt : Proof.EmitM Nat := do
+        let z ← st .evaluate [mkNode .LT #[zero, one]] []
+        let z ← st .true_elim [] [z]
+        let s ← st .arith_sum_ub [] [f, z]
+        let (X, Y) := if small then (t, Bs[k]!) else (Bs[k]!, t)
+        normRel s (mkNode .LT #[mkNode .ADD #[X, zero], mkNode .ADD #[Y, one]]) (mkNode .LT #[x, y])
+      let e ← if bd.isEq then do
+          let gf ← geqFalse (← strictLt)
+          let le' := mkNode .LEQ #[x, y]
+          let el ← st (if real then .arith_eq_elim_real else .arith_eq_elim_int) [x, y] []
+          let rl ← st .refl [le'] []
+          let c ← st .nary_cong [mkNode .AND #[mkNode .GEQ #[x, y], le']] [gf, rl]
+          let ab ← st .absorb [eqNode (mkNode .AND #[ff, le']) ff] []
+          st .trans [] [e₁, el, c, ab]
+        else if bd.neg then do
+          -- `(<= y x)` to `(>= x y)`, which is `true`
+          let e ← st .arith_elim_leq [y, x] []
+          let g ← st .eq_resolve [] [f, e]
+          let tr ← st .true_intro [] [g]
+          let c ← st .cong [notNode atomT] [tr]
+          let ev ← st .evaluate [notNode (mkBool true)] []
+          st .trans [] [e₁, c, ev]
+        else do
+          let gf ← geqFalse (← strictLt)
+          st .trans [] [e₁, gf]
+      eqs := eqs ++ [e]
+    -- the disjunction
+    let c ← Proof.congStep et (match et with | .app op _ => op | _ => .kind .OR) eqs
+    let ev ← st .evaluate [mkNode .OR (Array.replicate n ff)] []
+    st .trans [] [c, ev]
+  let falsify (m : Node) : Option (Rw m) := do
+    let (_, s) ← ((run m).run {}).toOption
+    let r ← applyCmds ((Proof.toCmds s.steps).foldr .cons .nil) m
+    if r.1 == ff then some r else none
+  return ⟨t, falsify⟩
+
+/-- cvc5's `getVarElimIneq`: `(forall vs (or L₁ … Lₙ K))`, for the disjuncts
+`Lᵢ` bounding a variable `v` of `vs` (`ineqVar`), is `(forall vs' K)`.
+Certified as cvc5's proofs do: `v` split off as for variable elimination, the
+`Lᵢ` moved first and grouped (`aci_norm`), `(forall (v) (or E K))` to
+`(or (forall (v) E) K)` (`quant-miniscope-or`), `(forall (v) E)` to `false` by
+`refute`, and `(or false K)` to `K` (`aci_norm`). For one bound, the value of
+`v` makes it constant (`falsifier`, and `rw` rewrites it to `false`); for
+several, it is `ineqChain`. -/
 def ineqElim (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) := do
   let (_, vs, body) ← quant? n
   let disjuncts := if body.getKind == .OR then body.getChildren else #[body]
-  let cands := vs.toList.mergeSort (fun a b => a.lt b) |>.filterMap fun v =>
-    let uses := (List.range disjuncts.size).filter fun i => occursIn v disjuncts[i]!
-    match uses with
-    | [i] =>
-      (falsifier v disjuncts[i]!).bind fun t =>
-        -- `t` replaces `v` in the literal, which binds nothing
-        let safe := !bindsAny (t.vars.filter (·.getKind == .BOUND_VARIABLE)) disjuncts[i]!
-        if occursIn v t || !safe then none else some (v, i, t)
-    | _ => none
-  let (v, i, t) ← cands.head?
-  let lit := disjuncts[i]!
-  let keep := disjuncts.eraseIdx! i
+  let (v, small, bds) ← ineqVar vs disjuncts
+  let real := Arith.isReal v
+  let elim := bds.map (·.idx)
+  let lits := (bds.map (·.lit)).toArray
+  let lit := if lits.size == 1 then lits[0]! else mkNode .OR lits
+  let (t, falsify) ← match bds with
+    | [bd] =>
+      let t := falsifier real bd
+      some (t, fun m => let r := rw m; if r.1 == mkFalse then some r else none)
+    | _ => (ineqChain v small bds).map fun c => (c.t, c.falsify)
+  -- `t` replaces `v` in the bounds, which must not capture its variables
+  if occursIn v t || bindsAny (t.vars.filter (·.getKind == .BOUND_VARIABLE)) lit then none
+  let keep := (List.range disjuncts.size).filter (!elim.contains ·) |>.map (disjuncts[·]!) |>.toArray
   let inner (q : Node) : Option (Rw q) :=
-    if keep.isEmpty then refute rw v t lit q
+    if keep.isEmpty then
+      let r := if lit == body then Rw.id q
+        else (congrBody? q fun b => (checkBy .aci_norm b lit).getD (Rw.id b)).getD (Rw.id q)
+      r.next? (refute falsify v t lit)
     else do
       let kd := if keep.size == 1 then keep[0]! else mkNode .OR keep
       let arranged := mkNode .OR #[lit, kd]
       let r := if arranged == body then Rw.id q
         else (congrBody? q fun b => (checkBy .aci_norm b arranged).getD (Rw.id b)).getD (Rw.id q)
       let r ← r.next? fun m => checkBy .quant_miniscope_or m (mkNode .OR #[mkQuant .FORALL #[v] lit, kd])
-      let r ← r.next? fun m => Rw.congrArg m 0 (refute rw v t lit)
+      let r ← r.next? fun m => Rw.congrArg m 0 (refute falsify v t lit)
       r.next? fun m => checkBy .aci_norm m kd
   let others := vs.filter (· != v)
   if others.isEmpty then inner n
