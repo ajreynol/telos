@@ -390,7 +390,12 @@ theorem Telos.rewrite_correct (t : Node) (h : t.WellTyped) : t.Equiv (rewrite t)
   spines, so there is one case per `AppShape` and new kinds need no new proof.
 - `LogosFacts.lean`: the class `LogosFacts`, the Logos theorems telos uses,
   restated over Logos's definitions.
-- `Certified.lean`: `Certified.equiv`, from Logos's checker soundness.
+- `Semantic.lean`, `Learn.lean`: `SemProc.equiv`, the semantic steps
+  (`reorg`, conjuncts reorganized; `learn`, literals learned by Boolean
+  propagation added, from the replayed trace of the propagator).
+- `Tri.lean`: `tri_equiv`, triangular substitution steps on a conjunction.
+- `Certified.lean`: `Certified.equiv`, from Logos's checker soundness and the
+  above.
 - `Driver.lean`: `rewriteWith_sound`, for any theory rewriters: the driver's
   result is certified, so this is an instance of `Certified.equiv`.
 - `Rewriter.lean`: `Telos.rewrite_correct_of_logos`, the theorem given

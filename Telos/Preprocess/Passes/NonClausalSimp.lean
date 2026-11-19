@@ -32,12 +32,18 @@ head when it is a variable with coefficient 1 and the other side has at most
 `ppAssertMaxSubSize = 2` terms). Not ported: bit-vector extract solving, and arithmetic's
 mixed integer and real cases.
 
-The pass is one certified rewrite of the conjunction, by one CPC proof
-(`Telos/Preprocess/ConjProof.lean`): assuming the conjunction, the propagator's
-facts, the substitutions' equations, each assertion's simplification
-(congruence with the equations at the leaves, then rewriting) and the new
-conjunction; assuming the new conjunction, the old one, from the definitions;
-and resolution. If any step cannot be proven, the pass does nothing.
+The pass is a few certified steps of the conjunction, checked in time linear
+in the size of the terms as DAGs (`ncsSteps`): the learned literals added
+(`SemProc.learn`, justified by the propagator's trace, `CircuitPure.lean`), and
+the substitutions applied (`Certified.tri`, twice, with reorganizations
+between, `SemProc.reorg`). Where those cannot be built (a conflict, or a
+substitution below an operator `Op.substOk` excludes), it is one CPC proof
+(`ncsProof`, `Telos/Preprocess/ConjProof.lean`): assuming the conjunction, the
+propagator's facts, the substitutions' equations, each assertion's
+simplification (congruence with the equations at the leaves, then rewriting)
+and the new conjunction; assuming the new conjunction, the old one, from the
+definitions; and resolution. If that cannot be proven either, the pass does
+nothing. Both give the same conjunction.
 -/
 
 namespace Telos.Preprocess
@@ -327,17 +333,43 @@ def learnPlanOf (cs : Array Node) (st : CPPState) : Except String LearnPlan := d
         q := q + 1
       else break
     return (skel, skelOf)
+  -- The propagator asserts the children of conjunctions (`assertTrue`), which
+  -- it does not assign: the conjunctions of the conjuncts are first given
+  -- `true`, a conjunct as such and a nested one by its parent, and an asserted
+  -- node that is not a conjunct is forced by its parent.
+  let (syn, parentOf) := Id.run do
+    let mut syn : Array LItem := #[]
+    let mut idx : Std.HashMap Key Nat := {}
+    let mut parentOf : Std.HashMap Key Nat := {}
+    let mut stack : Array Nat := #[]
+    for h : i in [0:cs.size] do
+      if cs[i].getKind == .AND && !idx.contains ⟨cs[i]⟩ then
+        idx := idx.insert ⟨cs[i]⟩ syn.size
+        stack := stack.push syn.size
+        syn := syn.push ⟨cs[i], true, .root i⟩
+    for _ in [0:st.trace.size + cs.size + 1] do
+      let some j := stack.back? | break
+      stack := stack.pop
+      for c in syn[j]!.node.getChildren do
+        if !parentOf.contains ⟨c⟩ then parentOf := parentOf.insert ⟨c⟩ j
+        if c.getKind == .AND && !idx.contains ⟨c⟩ then
+          idx := idx.insert ⟨c⟩ syn.size
+          stack := stack.push syn.size
+          syn := syn.push ⟨c, true, .bwd j⟩
+    return (syn, parentOf)
+  let off := syn.size
   let trace ← st.trace.mapM fun it => do
     let r ← match it.reason with
-      | .root => match posOf.get? ⟨it.node⟩ with
-        | some p => pure (LReason.root p)
-        | none => throw "learn: an asserted node is not a conjunct"
+      | .root => match posOf.get? ⟨it.node⟩, parentOf.get? ⟨it.node⟩ with
+        | some p, _ => pure (LReason.root p)
+        | none, some j => pure (LReason.bwd j)
+        | none, none => throw "learn: an asserted node is not a conjunct"
       | .fwd => match skelOf.get? ⟨it.node⟩ with
         | some s => pure (LReason.fwd s)
         | none => throw "learn: not in the skeleton"
-      | .bwd p => pure (LReason.bwd p)
+      | .bwd p => pure (LReason.bwd (p + off))
     pure (⟨it.node, it.value, r⟩ : LItem)
-  return { skel, trace, lits := st.learned.reverse }
+  return { skel, trace := syn ++ trace, lits := (st.learned.map (· + off)).reverse }
 
 /-- How a learned literal was processed. -/
 inductive LitClass where
@@ -363,7 +395,7 @@ def ncsSteps {input : Node} (p : Pipeline input) : Except String (Pipeline input
   if st.conflict then throw "conflict"
   let L ← learnPlanOf cs st
   let K := st.learned.size
-  let litOf (h : Nat) : Node := LearnPlan.litOf (L.trace[st.learned[h]!]!)
+  let litOf (h : Nat) : Node := LearnPlan.litOf (L.trace[L.lits[K - 1 - h]!]!)
   let C₁ := mkNode .AND (cs ++ L.lits.map fun t => LearnPlan.litOf L.trace[t]!)
   let some p₁ := Profile.time "ncs" (fun _ => "learn") fun _ =>
       p.next? fun m => if h : SemProc.check (.learn L) m C₁ = true then

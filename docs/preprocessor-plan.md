@@ -236,13 +236,20 @@ With cvc5's simplification on (`fuzz-pp.py` no longer passes
 `--simplification=none`), on 150 benchmarks per mode: the default and UF modes
 agree on all, arith on 144, bit-vectors 142, arrays 145, sets 145, strings 135.
 Not ported: bit-vector extract solving (`BvPpAssert`), static learning, and
-`repeat-simp`. Performance: the pass is one CPC proof, built and checked over terms as
-trees (`substFact` is not cached, and Logos's checker translates and compares
-the large terms of each step), so on benchmarks whose solved variables share
-subterms (Certora, hardware) it is orders of magnitude slower than cvc5: 11s on
-a 115KB QF_UF benchmark that cvc5 preprocesses in 0.05s. Its steps are to
-become semantic steps (substitution, Boolean propagation), as the pipeline's
-reorganization (`SemProc.reorg`) already is. `--simplification=none` turns the
+`repeat-simp`. Performance: the pass is now semantic and triangular steps, each
+checked in time linear in the size of the terms as DAGs (`ncsSteps`): the
+learned literals are added by `SemProc.learn` (`Telos/Core/Learn.lean`), whose
+side condition replays the trace of the propagator (`CircuitPure.lean`), and
+the substitutions are applied by two `Certified.tri` steps (`Telos/Core/Tri.lean`;
+two, since learned literals are simplified by the substitutions found before
+them, and the definitions by those found after them), with `SemProc.reorg`
+steps between. Both are proven sound (`verification/TelosProofs/Core/Learn.lean`,
+`Tri.lean`). On Goel's hardware QF_UF benchmarks of about 115KB the pass went
+from 8–11s to under a second (the same output); what remains is mostly the
+rewriter on the substituted terms (the type of each child,
+`driver: children well typed`). The CPC proof of the pass (`ncsProof`) remains
+the fallback, for conflicts and for substitutions below operators that
+`Op.substOk` excludes (arrays' `store`, strings, tuples). `--simplification=none` turns the
 pass off. Output is printed with `let`, as cvc5's default `--dag-thresh=1`.
 
 ## Phases
