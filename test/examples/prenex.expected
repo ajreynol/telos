@@ -1,0 +1,5 @@
+(forall ((qy Int) (qu U)) (or (and (= v qu) c (>= (+ y (* -1 qy)) 0)) (P qy)))
+(or (forall ((x Int)) (P x)) (forall ((x_1 Int)) (P (+ 1 x_1))))
+(or (forall ((u U)) (Q u)) (forall ((u U)) (Q (f u))) (forall ((x Int)) (P x)))
+(ite c (forall ((x Int)) (P x)) (forall ((u U)) (Q u)))
+(or (not (forall ((u U)) (Q u))) (forall ((x Int)) (P x)))

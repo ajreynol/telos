@@ -30,14 +30,19 @@ in stages. Ported so far:
 * variable elimination (`computeVarElimination`): by equalities, Boolean
   variables and solved linear equations (`varElim`), and by bounds of one
   direction (`getVarElimIneq`, `ineqElim`);
-* conditional splitting (`computeCondSplit`, `condSplit`).
+* conditional splitting (`computeCondSplit`, `condSplit`);
+* prenexing (`computePrenex`, cvc5's default `SIMPLE` mode, `prenex`): the
+  quantifiers in positive positions of the body are pulled into the quantifier,
+  certified by miniscoping backwards (`prenexRev`) and `quant-merge-prenex`.
 
 cvc5's steps run in order, the first that changes the quantifier winning
 (`computeOperation`). Not ported yet, and so skipped: eliminating shadowed
-variables, prenexing and datatype variable expansion.
+variables and datatype variable expansion.
 
 Deviations from cvc5: cvc5 gives the quantifiers created by miniscoping fresh
-bound variables (`BoundVarManager`), printed with the same names. telos, like
+bound variables (`BoundVarManager`), printed with the same names, and the
+variables pulled by prenexing fresh ones (`BOUND_VARIABLE_n`); telos renames a
+pulled variable only when it clashes. telos, like
 Logos, identifies bound variables by name and type, so they are the same
 variables. Instantiation patterns are dropped (they have no CPC counterpart).
 -/
@@ -651,6 +656,165 @@ def miniscope (n : Node) : Option (Rw n) := do
   | .OR, _ => (splitOr n).orElse fun _ => dropUnused n
   | _, _ => dropUnused n
 
+/-! ### Prenexing (`COMPUTE_PRENEX`, cvc5's default `SIMPLE` mode) -/
+
+/-- Whether `n` contains a quantifier (cvc5's `hasClosure`). -/
+partial def hasQuant (n : Node) : Bool :=
+  (quant? n).isSome || n.getChildren.any hasQuant
+
+/-- The bound variables occurring free in `n`, and how many quantifiers of `n`
+bind each variable (as a tree). -/
+partial def binderInfo (n : Node) (bound : List Node := []) :
+    StateM (Std.HashSet Node × Std.HashMap Node Nat) Unit := do
+  match n with
+  | .boundVar .. =>
+    if !bound.contains n then modify fun (f, c) => (f.insert n, c)
+  | .app _ cs =>
+    match quant? n with
+    | some (_, vs, b) =>
+      for v in vs do modify fun (f, c) => (f, c.insert v (c.getD v 0 + 1))
+      binderInfo b (vs.toList ++ bound)
+    | none => for c in cs do binderInfo c bound
+  | _ => pure ()
+
+structure PrenexSt where
+  /-- The variables of the quantifier so far: its own, then those pulled. -/
+  args : Array Node
+  /-- Variables that a pulled variable must not be named as. -/
+  taken : Std.HashSet Node
+  /-- All the variables of the quantifier, for fresh names. -/
+  all : Std.HashSet Node
+  /-- Whether a quantifier was pulled from below a negation (not certified). -/
+  underNot : Bool := false
+
+/-- A pulled variable: itself if it is not taken, else a fresh variable of the
+same type (`v_1`, `v_2`, …), as cvc5 gives each pulled variable a fresh one. -/
+def PrenexSt.fresh (v : Node) : StateM PrenexSt Node := do
+  let st ← get
+  let v' := match v with
+    | .boundVar name T =>
+      if !st.taken.contains v then v
+      else Id.run do
+        let mut k := 1
+        let mut w := Node.boundVar s!"{name}_{k}" T
+        for _ in [0:10000] do
+          if !st.all.contains w && !st.taken.contains w then break
+          k := k + 1
+          w := Node.boundVar s!"{name}_{k}" T
+        return w
+    | _ => v
+  set { st with args := st.args.push v', taken := st.taken.insert v', all := st.all.insert v' }
+  return v'
+
+/-- cvc5's `computePrenex` with `pol` and not aggressive: the quantifiers in
+positive positions (below `and`, `or`, the branches of `ite` and negations)
+replaced by their bodies, their variables (renamed) added to the state. -/
+partial def computePrenex (pol : Bool) (b : Node) : StateM PrenexSt Node := do
+  if !hasQuant b then return b
+  match quant? b with
+  | some (.FORALL, vs, body) =>
+    if !pol then return b
+    let mut body := body
+    for v in vs do
+      let v' ← PrenexSt.fresh v
+      if v' != v then body := substitute v v' body
+    return body
+  | some _ => return b
+  | none =>
+    let k := b.getKind
+    let cs := b.getChildren
+    let pols : Array (Option Bool) := match k with
+      | .AND | .OR => cs.map fun _ => some pol
+      | .NOT => #[some !pol]
+      | .ITE => #[none, some pol, some pol]
+      | .IMPLIES => #[some !pol, some pol]
+      | _ => cs.map fun _ => none
+    if b.typeHint != some .boolean || pols.size != cs.size then return b
+    let before := (← get).args.size
+    let mut cs' := #[]
+    for i in [0:cs.size] do
+      match pols[i]! with
+      | some p => cs' := cs'.push (← computePrenex p cs[i]!)
+      | none => cs' := cs'.push cs[i]!
+    if cs' == cs then return b
+    if k != .AND && k != .OR && k != .ITE && (← get).args.size != before then
+      modify fun st => { st with underNot := true }
+    if k == .NOT then
+      if let .app (.kind .NOT) #[u] := cs'[0]! then return u
+    return .app (.kind k) cs'
+
+/-- `(forall ys b₂) = b₁`, for `b₂` the prenexed form of `b₁` whose pulled
+variables are `ys`, as cvc5 elaborates `MACRO_QUANT_PRENEX`: through an `or`,
+`quant-miniscope-or` gives each disjunct its variables; through an `and` or the
+branches of an `ite`, `quant-miniscope-and` (`-ite`) gives each all of them, and
+`quant-unused-vars` keeps its own; a pulled quantifier is itself, or for
+renamed variables its `alpha_equiv` renaming. -/
+partial def prenexRev (ys : Array Node) (b₁ b₂ : Node) : Option (Rw (mkQuant .FORALL ys b₂)) := do
+  let n := mkQuant .FORALL ys b₂
+  if n == b₁ then return Rw.id n
+  let own (c : Node) : Array Node := ys.filter (occursIn · c)
+  match quant? b₁ with
+  | some (.FORALL, vs, body) =>
+    -- a pulled quantifier, its variables renamed (the same quantifier is `Rw.id`)
+    if vs.size != ys.size then none
+    let r ← applyCmds (.cons (.step .alpha_equiv (.cons b₁.toEo (.cons (mkNode .BOUND_VAR_LIST vs).toEo
+      (.cons (mkNode .BOUND_VAR_LIST ys).toEo .nil))) .nil) .nil) b₁
+    if r.1 != n || body == b₂ && vs == ys then none
+    Proof.reverse n r
+  | _ =>
+    match b₁.getKind, b₁.getChildren, b₂.getChildren with
+    | .OR, cs, cs' =>
+      if cs.size != cs'.size then none
+      let gs := cs'.map fun c => let zs := own c; if zs.isEmpty then c else mkQuant .FORALL zs c
+      let r ← checkBy .quant_miniscope_or n (mkNode .OR gs)
+      (List.range cs.size).foldlM (init := r) fun r i => do
+        let zs := own cs'[i]!
+        if zs.isEmpty then (if cs[i]! == cs'[i]! then some r else none)
+        else r.next? fun m => Rw.congrArg m i fun q =>
+          if h : q = mkQuant .FORALL zs cs'[i]! then (prenexRev zs cs[i]! cs'[i]!).map fun s => h ▸ s
+          else none
+    | .AND, cs, cs' =>
+      if cs.size != cs'.size then none
+      let r ← checkBy .quant_miniscope_and n (mkNode .AND (cs'.map (mkQuant .FORALL ys)))
+      (List.range cs.size).foldlM (init := r) fun r i => do
+        let zs := own cs'[i]!
+        r.next? fun m => Rw.congrArg m i fun q => do
+          let tgt := if zs.isEmpty then cs'[i]! else mkQuant .FORALL zs cs'[i]!
+          let r₁ : Rw q ← if q == tgt then some (Rw.id q) else checkBy .quant_unused_vars q tgt
+          if zs.isEmpty then (if r₁.1 == cs[i]! then some r₁ else none)
+          else r₁.next? fun q' => if h : q' = mkQuant .FORALL zs cs'[i]! then
+            (prenexRev zs cs[i]! cs'[i]!).map fun s => h ▸ s else none
+    | .ITE, #[a, t, e], #[a', t', e'] =>
+      if a != a' then none
+      let r ← checkBy .quant_miniscope_ite n (iteNode a (mkQuant .FORALL ys t') (mkQuant .FORALL ys e'))
+      [(1, t, t'), (2, e, e')].foldlM (init := r) fun r (i, c, c') => do
+        let zs := own c'
+        r.next? fun m => Rw.congrArg m i fun q => do
+          let tgt := if zs.isEmpty then c' else mkQuant .FORALL zs c'
+          let r₁ : Rw q ← if q == tgt then some (Rw.id q) else checkBy .quant_unused_vars q tgt
+          if zs.isEmpty then (if r₁.1 == c then some r₁ else none)
+          else r₁.next? fun q' => if h : q' = mkQuant .FORALL zs c' then
+            (prenexRev zs c c').map fun s => h ▸ s else none
+    | _, _, _ => none
+
+/-- `COMPUTE_PRENEX`: `(forall xs F)` is `(forall xs ys F')`, for `F'` the
+prenexed `F` and `ys` its pulled variables: `F = (forall ys F')`
+(`prenexRev`, reversed) below the quantifier, then `quant-merge-prenex`. -/
+def prenex (n : Node) : Option (Rw n) := do
+  let (_, xs, b₁) ← quant? n
+  if !hasQuant b₁ then none
+  let ((), (free, counts)) := (binderInfo n).run ({}, {})
+  let multi := counts.toList.filterMap fun (v, k) => if k > 1 then some v else none
+  let taken := (multi.foldl (·.insert ·) free).insertMany xs
+  let all : Std.HashSet Node := (n.vars.foldl (·.insert ·) {})
+  let (b₂, st) := (computePrenex true b₁).run { args := xs, taken, all }
+  let ys := st.args.extract xs.size st.args.size
+  if ys.isEmpty || st.underNot then none
+  let rev ← prenexRev ys b₁ b₂
+  let fwd ← Proof.reverse b₁ rev
+  let r ← congrBody? n fun b => if h : b = b₁ then h ▸ fwd else Rw.id b
+  r.next? fun m => checkBy .quant_merge_prenex m (mkQuant .FORALL (xs ++ ys) b₂)
+
 def rewriteForall (rw : (m : Node) → Rw m) (n : Node) : RewriteResponse n :=
   match quant? n with
   | none => .done n
@@ -665,6 +829,7 @@ def rewriteForall (rw : (m : Node) → Rw m) (n : Node) : RewriteResponse n :=
         respond .REWRITE_AGAIN_FULL <| firstOf [
           fun _ => congrBody? n Nnf.nnf,  -- COMPUTE_ELIM_SYMBOLS
           fun _ => miniscope n,           -- COMPUTE_MINISCOPING
+          fun _ => prenex n,              -- COMPUTE_PRENEX
           fun _ => varElim rw n,          -- COMPUTE_VAR_ELIMINATION
           fun _ => ineqElim rw n,         -- (its inequality part)
           fun _ => condSplit n]           -- COMPUTE_COND_SPLIT

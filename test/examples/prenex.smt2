@@ -1,0 +1,15 @@
+; Prenexing (COMPUTE_PRENEX): quantifiers in positive positions are pulled,
+; renamed when they clash; not from below a negation.
+(set-logic ALL)
+(declare-sort U 0)
+(declare-fun f (U) U)
+(declare-fun P (Int) Bool)
+(declare-fun Q (U) Bool)
+(declare-const v U)
+(declare-const c Bool)
+(declare-const y Int)
+(simplify (forall ((qy Int)) (or (and (forall ((qu U)) (= v qu)) c (>= y qy)) (P qy))))
+(simplify (forall ((x Int)) (or (P x) (forall ((x Int)) (P (+ x 1))))))
+(simplify (forall ((x Int)) (or (P x) (forall ((u U)) (Q u)) (forall ((u U)) (Q (f u))))))
+(simplify (forall ((x Int)) (ite c (P x) (forall ((u U)) (Q u)))))
+(simplify (forall ((x Int)) (or (P x) (not (forall ((u U)) (Q u))))))

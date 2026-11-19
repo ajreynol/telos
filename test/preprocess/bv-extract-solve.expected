@@ -1,0 +1,17 @@
+;; post-asserts start
+(set-logic QF_BV)
+(declare-fun c () Bool)
+(define-fun x () (_ BitVec 8) (concat @purify_2 #b1010 @purify_3))
+(define-fun y () (_ BitVec 8) (concat @purify_4 #b11))
+(define-fun z () (_ BitVec 8) (concat #b0001 @purify_1))
+(declare-fun @purify_1 () (_ BitVec 4))
+(declare-fun @purify_2 () (_ BitVec 2))
+(declare-fun @purify_3 () (_ BitVec 2))
+(declare-fun @purify_4 () (_ BitVec 6))
+(assert true)
+(assert true)
+(assert true)
+(assert (or c (= (concat #b0001 @purify_1) (bvadd (concat @purify_2 #b1010 @purify_3) (concat @purify_4 #b11)))))
+(assert true)
+(check-sat)
+;; post-asserts end

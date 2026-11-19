@@ -1153,8 +1153,18 @@ tested:
       assumptions (`__eo_is_closed`), and they were `Term.Var`s. Proof output
       supports `assume-push` and `step-pop` (`Proof.toCmds` tracks the stack of
       facts), and prints variables as `(@var "x" T)` outside their binder.
-    - Not ported: eliminating shadowed variables, prenexing (`computePrenex`),
-      and datatype variable expansion.
+    - Prenexing (`computePrenex`, cvc5's default `SIMPLE` mode, `prenex`):
+      the quantifiers in positive positions of the body (below `and`, `or` and
+      the branches of `ite`) are pulled into the enclosing one, their variables
+      kept, or renamed (`x_1`, …) when they clash, as cvc5 gives each a fresh
+      variable. Certified as cvc5 elaborates `MACRO_QUANT_PRENEX`: congruence
+      below the quantifier with `F = (forall ys F')`, then `quant-merge-prenex`;
+      `(forall ys F') = F` by `quant-miniscope-or` (`-and`, `-ite`),
+      `quant-unused-vars`, and `alpha_equiv` for a renamed quantifier
+      (`prenexRev`). A quantifier pulled from below a negation is not
+      certified, and nothing is pulled then.
+    - Not ported: eliminating shadowed variables and datatype variable
+      expansion.
     - `Node.ofEo` reads a binder's body with its variables in scope, so that
       they are the same `boundVar`s (they were read as free variables of the
       same name, with the same translation).
@@ -1165,7 +1175,10 @@ tested:
       `9d7d9ee04b`: on 1000 terms of depth 2, 86.7% identical, 95.7% up to the
       names of bound variables, 96.8% also up to the orientation of equalities
       (15.9% before the port); on 3000 terms of depth 3, 78.4%, 91.7% and
-      94.8%. No semantic disagreements. `fuzz.py` compares up to the names of
+      94.8%. With prenexing, against cvc5 main `eb203989c3`, on 2000 terms of
+      depth 3: 79.2%, 95.0% and 99.5%, 10 differ (cvc5's fresh variables keep
+      copies of quantifiers apart that telos identifies). No semantic
+      disagreements. `fuzz.py` compares up to the names of
       bound variables. Ethos accepts all proofs (`check-proofs.py --fuzz 400
       --quantifiers`). The examples match cvc5 up to bound variable names and
       orientation. The other modes are unchanged.

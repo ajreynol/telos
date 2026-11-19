@@ -206,7 +206,8 @@ against skolems, and so of the lemmas that follow from them.
 Against cvc5 main `eb203989c3` (2026-11-19, with Logos `f2001ba0`), with
 `define-fun` bodies compared as the assertions are: on 150 benchmarks per
 mode, the default, UF and bit-vector modes agree on all; arith 147 (3 differ),
-arrays 147, sets 149, datatypes 147, quantifiers 149, mixed 138, strings 145
+arrays 147, sets 149, datatypes 147, quantifiers 150 (with prenexing), mixed
+138, strings 145
 (with `--seed 7 --logics --options`: arith 150, arrays 146, sets 149,
 datatypes 145, quantifiers 148, mixed 138, strings 144).
 Since the previous count: tuple updaters; bit-vectors' `SolveEq`
@@ -219,7 +220,7 @@ differs: the order of skolems, lemmas and children of stores and `or`s (node
 ids), the solved monomial of an arithmetic equality between two terms with
 the same coefficient (node ids), `IDOF_NORM_PREFIX` (no CPC rule), the
 length-based unifications of strings and a few other string equalities, and
-cvc5's quantifier preprocessing (phase 5).
+copies of quantifiers that cvc5 keeps apart with fresh variables.
 
 Performance: the pipeline's reorganizations of the whole conjunction
 (splitting the input's conjunctions, adding `true` conjuncts for lemmas) were
@@ -253,7 +254,8 @@ follow from the new ones and the definitions; resolution gives the equality.
 With cvc5's simplification on (`fuzz-pp.py` no longer passes
 `--simplification=none`), on 150 benchmarks per mode: the default and UF modes
 agree on all, arith on 144, bit-vectors 142, arrays 145, sets 145, strings 135.
-Not ported: bit-vector extract solving (`BvPpAssert`). Performance: the pass is now semantic and triangular steps, each
+Bit-vector extract solving (`BvPpAssert`) is ported: `(= ((_ extract h l) x) c)`
+is `x := (concat sk₁ c sk₂)`, by `bv-eq-extract-elim*` and `skolem_intro`. Performance: the pass is now semantic and triangular steps, each
 checked in time linear in the size of the terms as DAGs (`ncsSteps`): the
 learned literals are added by `SemProc.learn` (`Telos/Core/Learn.lean`), whose
 side condition replays the trace of the propagator (`CircuitPure.lean`), and
@@ -323,7 +325,11 @@ preprocessing.
    sensitive to order. Then `repeat-simp` for QF_AUFBV.
 4. **Static learning.** `ppStaticLearn` for arith, UF and BV.
 5. **Quantifiers preprocessing.** `QuantifiersRewriter::preprocess` for
-   quantified logics.
+   quantified logics. With cvc5's defaults and proofs it does nothing:
+   pre-skolemization is off (and not supported with proofs), and its prenexing
+   is for `--prenex-quant=normal` only. The default (`simple`) prenexing is the
+   rewriter's (`COMPUTE_PRENEX`), ported there (`QuantifiersRewriter.prenex`).
+   So the pass is the identity, and this phase is done.
 
 ## Testing
 

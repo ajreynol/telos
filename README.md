@@ -118,7 +118,8 @@ input is, in the same models. Ported so far (`docs/preprocessor-plan.md`):
   and `str.from_code` purified, with their skolem lemmas. Skolems are printed as cvc5 prints them
   (`@purify_1`, `@int_div_by_zero_2`).
 
-`define-fun`s are macros. Quantifier preprocessing is next. The theorem relates the input to the preprocessed assertions together
+`define-fun`s are macros. cvc5's `quantifiers-preprocess` pass does nothing
+with its defaults and proofs (its prenexing is the rewriter's, ported there). The theorem relates the input to the preprocessed assertions together
 with the definitions of the solved variables. `python3 scripts/fuzz-pp.py --cvc5 PATH`
 compares the output with cvc5's, with the passes not yet ported switched off.
 

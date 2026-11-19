@@ -5,6 +5,7 @@ import Telos.Preprocess.CircuitPure
 import Telos.Preprocess.TriBuild
 import Telos.Rewriter.Theory.Arith
 import Telos.Rewriter.Theory.Sets
+import Telos.Rewriter.Theory.BVNorm
 
 /-!
 # The `non-clausal-simp` pass
@@ -33,8 +34,9 @@ the other side, of the same type), the Booleans' (a variable, its negation),
 and arithmetic's (an equality normalized by `normalizeEquality`, solved for its
 head when it is a variable with coefficient 1 and the other side has at most
 `ppAssertMaxSubSize = 2` terms; `(= (to_real x) c)` for an integer variable
-`x` and an integral `c` is `x := c`). Not ported: bit-vector extract solving,
-and arithmetic's other mixed integer and real cases.
+`x` and an integral `c` is `x := c`), and bit-vectors' (the default one, then
+`BvPpAssert`: an extract of a variable equal to a constant, `bvExtractSolve`).
+Not ported: arithmetic's other mixed integer and real cases.
 
 The pass is a few certified steps of the conjunction, checked in time linear
 in the size of the terms as DAGs (`ncsSteps`): the learned literals added
@@ -130,6 +132,54 @@ def arithPpAssert (l : Node) : Option Solved := do
   if !isLegalElimination x t then none
   return (x, t, fun p => do eqResolveE p (← rwFact r))
 
+/-- Whether `v` occurs in `n`, with skolems atomic (cvc5's `hasSubterm`),
+visiting each shared subterm once. -/
+partial def occursAtomic (v n : Node) : Bool :=
+  (go n |>.run {}).1
+where
+  go (m : Node) : StateM (Std.HashSet Node) Bool := do
+    if m == v then return true
+    if (← get).contains m then return false
+    modify (·.insert m)
+    match m with
+    | .skolem .. => return false
+    | _ => m.getChildren.anyM go
+
+/-- `BvPpAssert::ppAssert`: `(= ((_ extract h l) x) c)`, for a variable `x` and
+a constant `c`, is `x := (concat sk₁ c sk₂)`, where `sk₁` and `sk₂` purify the
+extracts of `x` above `h` and below `l` (either missing at an end). The equation
+by `bv-eq-extract-elim1` (`2` for `l = 0`, `3` for `h` the top bit), after
+`eq-symm` if the constant is on the left, then `skolem_intro` on the extracts.
+As in cvc5, `x` may occur in the skolems (they are atomic). -/
+def bvExtractSolve (l : Node) : Option (Node × Node × Rw l) := do
+  let .app (.kind .EQUAL) #[a, b] := l | none
+  let isExt (n : Node) : Bool := n.getKind == .BITVECTOR_EXTRACT
+  let (r₀, e, c) ← if isExt a && b.isConst then some (Rw.id l, a, b)
+    else if isExt b && a.isConst then (byRule "eq-symm" l).map (·, b, a)
+    else none
+  let .app (.indexed .BITVECTOR_EXTRACT #[h, lo]) #[x] := e | none
+  if !x.isVar then none
+  let w ← BvNorm.width? x
+  let rule ← if lo == 0 then (if h + 1 < w then some "bv-eq-extract-elim2" else none)
+    else if h + 1 == w then some "bv-eq-extract-elim3" else some "bv-eq-extract-elim1"
+  let _ := c
+  let r₁ ← r₀.next? (byRule rule)
+  let isExtOfX (c : Node) : Bool :=
+    match c with
+    | .app (.indexed .BITVECTOR_EXTRACT _) #[y] => y == x
+    | _ => false
+  let purify (c : Node) : Rw c :=
+    if isExtOfX c then (purifyStep c).getD (Rw.id c) else Rw.id c
+  let r₂ ← r₁.next? fun m => Rw.congrArg m 1 fun cc => some (rewriteChildren (m := Id) purify cc)
+  let #[x', t] := r₂.1.getChildren | none
+  if x' != x || occursAtomic x t || t.typeHint != x.typeHint then none
+  return (x, t, r₂)
+
+/-- `TheoryBV::ppAssert`: the default one, then `BvPpAssert`. -/
+def bvPpAssert (l : Node) : Option Solved :=
+  (defaultPpAssert l).orElse fun _ =>
+    (bvExtractSolve l).map fun (x, t, r) => (x, t, fun p => do eqResolveE p (← rwFact r))
+
 /-- `TheoryEngine::solve`: the `ppAssert` of the theory of the literal's atom. -/
 def solveLit (termBased : Bool) (l : Node) : Option Solved :=
   let atom := match l with
@@ -138,6 +188,7 @@ def solveLit (termBased : Bool) (l : Node) : Option Solved :=
   match ppTheoryOf termBased atom with
   | .THEORY_BOOL => boolPpAssert l
   | .THEORY_ARITH => arithPpAssert l
+  | .THEORY_BV => bvPpAssert l
   | _ => defaultPpAssert l
 
 /-- Substitution facts from an array of `(term, fact, value)`. -/
@@ -326,7 +377,7 @@ def solvedEq (l x t : Node) : Option (Rw l) :=
           let r₂ ← byRuleWithPremises .eq_symm [notNode a, b] [] r₁.1
           some (r₁.trans r₂)
         else none
-      | none => Arith.normalizeEquality l
+      | none => (Arith.normalizeEquality l).orElse fun _ => (bvExtractSolve l).map (·.2.2)
   r.bind fun r => if r.1 == goal then some r else none
 
 /-- The data of `SemProc.learn` from the propagator's state, for the conjuncts
