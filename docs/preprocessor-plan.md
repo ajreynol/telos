@@ -253,8 +253,10 @@ kind: by congruence, which holds model by model where the entries hold
 (`CondEquiv`) and needs the children of a well-typed application to be well
 typed (`ChildTyping.lean`); into the bodies of quantifiers (`JustKind.body`,
 `QuantCong.lean`: the entries are closed, so they hold whatever the values of the
-bound variables); and below `distinct` (`DistinctCong.lean`). The CPC proof of
-the pass (`ncsProof`) remains the fallback, for conflicts, for definitions that
+bound variables); and below `distinct` (`DistinctCong.lean`). A conflict of the
+propagator is one `SemProc.learn` step to `false`, justified by the trace ending
+with the assignment that found it. The CPC proof of
+the pass (`ncsProof`) remains the fallback, for definitions that
 are not ground (with `str.++`, whose nil depends on the type, or a quantifier),
 and for substitutions below applications of terms other than declared functions,
 constructors and selectors. `--simplification=none` turns the

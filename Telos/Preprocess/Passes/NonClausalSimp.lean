@@ -36,9 +36,11 @@ The pass is a few certified steps of the conjunction, checked in time linear
 in the size of the terms as DAGs (`ncsSteps`): the learned literals added
 (`SemProc.learn`, justified by the propagator's trace, `CircuitPure.lean`), and
 the substitutions applied (`Certified.tri`, twice, with reorganizations
-between, `SemProc.reorg`). Where those cannot be built (a conflict, a
-definition that is not ground, or a substitution below an application of a term
-that is not a declared function, constructor or selector), it is one CPC proof
+between, `SemProc.reorg`); a conflict of the propagator is one step to `false`
+(`SemProc.learn`, justified by the trace ending with the assignment that found
+it). Where those cannot be built (a definition that is not ground, or a
+substitution below an application of a term that is not a declared function,
+constructor or selector), it is one CPC proof
 (`ncsProof`, `Telos/Preprocess/ConjProof.lean`): assuming the conjunction, the
 propagator's facts, the substitutions' equations, each assertion's
 simplification (congruence with the equations at the leaves, then rewriting)
@@ -267,7 +269,8 @@ time linear in the size of the terms as DAGs:
 
 1. `SemProc.learn`: the learned literals are added after the conjuncts, last
    learned first (`Telos/Core/Learn.lean`), justified by the propagator's trace
-   (`runCircuitPure`).
+   (`runCircuitPure`); or, if the propagator finds a conflict, the conjunction
+   becomes `false`.
 2. `Certified.tri`: each learned literal is simplified by the substitutions of
    the literals learned before it, which come after it, and solved into its
    equation `(= x t)` or kept as a constant propagation; the assertions are
@@ -308,7 +311,9 @@ def solvedEq (l x t : Node) : Option (Rw l) :=
 
 /-- The data of `SemProc.learn` from the propagator's state, for the conjuncts
 `cs`: the skeleton (the conjuncts, and the children of connectives, breadth
-first), the trace, and the learned literals, last learned first. -/
+first), the trace, and the learned literals, last learned first; after a
+conflict, the trace ends with the assignment that found it, and there are no
+literals. -/
 def learnPlanOf (cs : Array Node) (st : CPPState) : Except String LearnPlan := do
   let posOf : Std.HashMap Key Nat := Id.run do
     let mut m : Std.HashMap Key Nat := {}
@@ -359,7 +364,7 @@ def learnPlanOf (cs : Array Node) (st : CPPState) : Except String LearnPlan := d
           syn := syn.push ⟨c, true, .bwd j⟩
     return (syn, parentOf)
   let off := syn.size
-  let trace ← st.trace.mapM fun it => do
+  let trace ← (st.trace ++ st.conflictItem.toArray).mapM fun it => do
     let r ← match it.reason with
       | .root => match posOf.get? ⟨it.node⟩, parentOf.get? ⟨it.node⟩ with
         | some p, _ => pure (LReason.root p)
@@ -370,7 +375,8 @@ def learnPlanOf (cs : Array Node) (st : CPPState) : Except String LearnPlan := d
         | none => throw "learn: not in the skeleton"
       | .bwd p => pure (LReason.bwd (p + off))
     pure (⟨it.node, it.value, r⟩ : LItem)
-  return { skel, trace := syn ++ trace, lits := (st.learned.map (· + off)).reverse }
+  let lits := if st.conflict then #[] else (st.learned.map (· + off)).reverse
+  return { skel, trace := syn ++ trace, lits }
 
 /-- How a learned literal was processed. -/
 inductive LitClass where
@@ -393,8 +399,12 @@ def ncsSteps {input : Node} (p : Pipeline input) : Except String (Pipeline input
   let nA := asserts.size
   -- 1. the propagator, and the learned literals
   let st := Profile.time "ncs" (fun _ => "propagate") fun _ => runCircuitPure asserts.toList
-  if st.conflict then throw "conflict"
   let L ← learnPlanOf cs st
+  if st.conflict then
+    return ← (Profile.time "ncs" (fun _ => "learn (conflict)") fun _ =>
+      p.next? fun m => if h : SemProc.check (.learn L) m mkFalse = true then
+        some ⟨mkFalse, .semantic (.learn L) (SemProc.check_ok h) (.refl _)⟩ else none).elim
+      (throw "conflict: check failed") pure
   let K := st.learned.size
   let litOf (h : Nat) : Node := LearnPlan.litOf (L.trace[L.lits[K - 1 - h]!]!)
   let C₁ := mkNode .AND (cs ++ L.lits.map fun t => LearnPlan.litOf L.trace[t]!)

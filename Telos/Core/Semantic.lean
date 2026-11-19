@@ -23,7 +23,7 @@ Procedures:
 * `reorg`: two conjunctions with the same conjuncts, up to nesting, `true` and
   repetition (splitting the pipeline's conjuncts, adding `true` for lemmas);
 * `learn`: a conjunction with literals added, learned by Boolean propagation
-  (`Telos/Core/Learn.lean`).
+  (`Telos/Core/Learn.lean`), or `false` if propagation finds a conflict.
 -/
 
 namespace Telos

@@ -19,6 +19,8 @@ reason, and is checked against the values of the earlier items (`Assign`):
   other value would make that node's three-valued value the opposite of its own.
 
 So in a model of `n`, every item holds (`verification/TelosProofs/Core/Learn.lean`).
+If the last item gives its node the value opposite to the one it has (a
+**conflict**), `n` has no model, and `m` may be `false`.
 For the values to be Booleans, the nodes must be well typed; the **skeleton**
 shows it: a conjunct of `n`, or a child of an earlier skeleton node that is a
 Boolean connective. Items with reason `fwd` give the skeleton node they are.
@@ -158,10 +160,28 @@ def replay (L : LearnPlan) (cs : Array Node) : Option Assign :=
 def litOf (it : LItem) : Node :=
   if it.value then it.node else .app (.kind .NOT) #[it.node]
 
+/-- The values of the first `k` items of the trace, checked item by item. -/
+def replayN (L : LearnPlan) (cs : Array Node) (k : Nat) : Option Assign :=
+  (List.range k).foldlM (L.replayStep cs) {}
+
+/-- The last item of the trace is justified by the values of the others, and
+contradicts them: its node has the other value already (or is the other
+Boolean constant). -/
+def conflictOk (L : LearnPlan) (cs : Array Node) : Bool :=
+  match L.trace.size with
+  | 0 => false
+  | k + 1 =>
+    match L.replayN cs k, L.trace[k]? with
+    | some A, some it => L.itemOk cs A k it && A.val it.node == some (!it.value)
+    | _, _ => false
+
 /-- The side condition of `SemProc.learn`: `m` is `n` with the literals of
-`lits` added, and the trace is justified. -/
+`lits` added, and the trace is justified; or `m` is `false`, and the trace ends
+in a conflict (`conflictOk`). -/
 def Ok (L : LearnPlan) (n m : Node) : Bool :=
   match n, m with
+  | .app (.kind .AND) cs, .const (.boolean false) =>
+    2 ≤ cs.size && (List.range L.skel.size).all (L.skelOk cs) && L.conflictOk cs
   | .app (.kind .AND) cs, .app (.kind .AND) ds =>
     2 ≤ cs.size && ds.size == cs.size + L.lits.size &&
       (List.range cs.size).all (fun i => ds[i]? == cs[i]?) &&

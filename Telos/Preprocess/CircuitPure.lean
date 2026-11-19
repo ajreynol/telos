@@ -12,7 +12,8 @@ assignment records why it was made (`Reason`): an assertion, a parent whose
 value forces it (backward), or the values of its children (forward). Non-clausal
 simplification justifies the learned literals by replaying this trace
 (`SemProc.learn`, `Telos/Core/Learn.lean`), with one check for every case: the
-three-valued value of the connective.
+three-valued value of the connective. A conflict is justified the same way,
+by the assignment that found it (`conflictItem`).
 -/
 
 namespace Telos.Preprocess
@@ -42,6 +43,9 @@ structure CPPState where
   /-- The learned literals, as trace indices. -/
   learned : Array Nat := #[]
   conflict : Bool := false
+  /-- The assignment that found the conflict: a node given the value opposite
+  to the one it has (or to the Boolean constant it is). -/
+  conflictItem : Option TraceItem := none
 
 abbrev CPP := StateM CPPState
 
@@ -60,10 +64,11 @@ def isAssignedTo (n : Node) (v : Bool) : CPP Bool := do
 def assign (n : Node) (v : Bool) (r : Reason) : CPP Unit := do
   if (← get).conflict then return
   if let .const (.boolean b) := n then
-    if b != v then modify fun s => { s with conflict := true }
+    if b != v then modify fun s => { s with conflict := true, conflictItem := some ⟨n, v, r⟩ }
     return
   match ← valueOf n with
-  | some w => if w != v then modify fun s => { s with conflict := true }
+  | some w =>
+    if w != v then modify fun s => { s with conflict := true, conflictItem := some ⟨n, v, r⟩ }
   | none =>
     modify fun s =>
       let i := s.trace.size
@@ -99,7 +104,9 @@ def computeBackEdges (n : Node) : CPP Unit := do
 
 partial def assertTrue (a : Node) : CPP Unit := do
   match a with
-  | .const (.boolean false) => modify fun s => { s with conflict := true }
+  | .const (.boolean false) =>
+    if !(← get).conflict then
+      modify fun s => { s with conflict := true, conflictItem := some ⟨a, true, .root⟩ }
   | .app (.kind .AND) cs => for c in cs do assertTrue c
   | _ =>
     computeBackEdges a

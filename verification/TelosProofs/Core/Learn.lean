@@ -6,7 +6,7 @@ import Telos.Core.Learn
 
 `SemProc.learn` (`Telos/Core/Learn.lean`): under `LearnPlan.Ok n m`, `n` is
 equivalent to `m`, the conjunction `n` with the learned literals added
-(`learn_equiv`). With the case of `reorg` (`Semantic.lean`), this gives
+(`learn_equiv`), or `false` after a conflict (`conflict_equiv`). With the case of `reorg` (`Semantic.lean`), this gives
 `SemProc.equiv`.
 
 1. *Skeleton.* Every skeleton node is well typed: a conjunct of `n`, or a child
@@ -19,7 +19,9 @@ equivalent to `m`, the conjunction `n` with the learned literals added
    had the other value, the values with it would hold, so the node of `p`
    would have the opposite of its value.
 4. *The step.* So the added literals are Boolean, and true in every model of
-   `n`, and `m` has the value of `n`.
+   `n`, and `m` has the value of `n`. In a conflict, the last item and the
+   values before it give its node both values in a model of `n`, so `n` has
+   none, and is `false` (`conflict_equiv`).
 -/
 
 open Eo Smtm SmtEval
@@ -890,10 +892,12 @@ theorem replay_inv (L : LearnPlan) (cs : Array Node)
 
 omit [LogosFacts] in
 theorem LearnPlan.ok_shape {L : LearnPlan} {n m : Node} (h : L.Ok n m = true) :
-    ∃ cs ds, n = .app (.kind .AND) cs ∧ m = .app (.kind .AND) ds := by
+    ∃ cs, n = .app (.kind .AND) cs ∧
+      (m = .const (.boolean false) ∨ ∃ ds, m = .app (.kind .AND) ds) := by
   unfold LearnPlan.Ok at h
   split at h
-  · exact ⟨_, _, rfl, rfl⟩
+  · exact ⟨_, rfl, .inl rfl⟩
+  · exact ⟨_, rfl, .inr ⟨_, rfl⟩⟩
   · simp at h
 
 omit [LogosFacts] in
@@ -980,12 +984,59 @@ theorem learn_equiv (L : LearnPlan) (cs ds : Array Node)
     rw [hb, hc, this]
     exact LogosFacts.value_rel_refl _
 
+/-- **A conflict**: no model of the conjuncts satisfies the trace, whose last
+item contradicts the others, so the conjunction is `false`. -/
+theorem conflict_equiv (L : LearnPlan) (cs : Array Node)
+    (hok : L.Ok (.app (.kind .AND) cs) (.const (.boolean false)) = true)
+    (hn : (Node.app (.kind .AND) cs).WellTyped) :
+    (Node.app (.kind .AND) cs).Equiv (.const (.boolean false)) := by
+  simp only [LearnPlan.Ok, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true,
+    List.mem_range] at hok
+  obtain ⟨⟨h2, hskel⟩, hc⟩ := hok
+  have hnb : HasBoolType (Node.app (.kind .AND) cs).toEo := and_smtType_bool cs hn
+  have hcb : ∀ i (hi : i < cs.size), BoolT cs[i] := (and_bool_iff cs h2).1 hnb
+  have hsk := skel_wellTyped L cs (fun i hi => boolT_wellTyped (hcb i hi)) hskel
+  have hno : ∀ M, model_wf M → ¬ ∀ i (hi : i < cs.size), EvalsTo M cs[i] true := by
+    intro M hM hall
+    unfold LearnPlan.conflictOk at hc
+    split at hc
+    · simp at hc
+    · rename_i k hk
+      split at hc
+      · rename_i A it hA hit
+        simp only [Bool.and_eq_true, beq_iff_eq] at hc
+        obtain ⟨hitem, hval⟩ := hc
+        have hkl : k < L.trace.size := by omega
+        obtain ⟨_, rfl⟩ := Array.getElem?_eq_some_iff.1 hit
+        have hI := replay_inv L cs hcb hsk k hA
+        have h₁ := (item_sound L cs hcb hsk hkl hI hitem).2 M hM hall
+        have h₂ := val_holds (hI.2.2 M hM hall).1 hval
+        have := evalsTo_unique h₁ h₂
+        cases hb : L.trace[k].value <;> simp [hb] at this
+      · simp at hc
+  refine (Node.equiv_iff _ _).2 ⟨hn, hnb.trans (boolT_const false).symm, fun M hM => ?_⟩
+  obtain ⟨b, hb⟩ := LogosFacts.eval_bool M _ hM hnb
+  have hn' := and_true_iff cs h2 M hM hcb
+  have hbf : b = false := by
+    cases b
+    · rfl
+    · exfalso; apply hno M hM; unfold TrueIn at hn'; rw [hb] at hn'; exact hn'.1 rfl
+  have hf := evalsTo_const M false
+  unfold EvalsTo at hf
+  change SmtValueRel (__smtx_model_eval M (__eo_to_smt (Node.app (.kind .AND) cs).toEo))
+    (__smtx_model_eval M (__eo_to_smt (Node.const (.boolean false)).toEo))
+  rw [hb, hbf]
+  erw [hf]
+  exact LogosFacts.value_rel_refl _
+
 /-- **Semantically justified steps are equivalences.** -/
 theorem SemProc.equiv : ∀ (p : SemProc) (n m : Node), p.Ok n m → n.WellTyped → n.Equiv m
   | .reorg, n, m, h, hn => SemProc.reorg_equiv n m h hn
   | .learn L, n, m, h, hn => by
     have h' : L.Ok n m = true := h
-    obtain ⟨cs, ds, rfl, rfl⟩ := LearnPlan.ok_shape h'
-    exact learn_equiv L cs ds h' hn
+    obtain ⟨cs, rfl, hm⟩ := LearnPlan.ok_shape h'
+    rcases hm with rfl | ⟨ds, rfl⟩
+    · exact conflict_equiv L cs h' hn
+    · exact learn_equiv L cs ds h' hn
 
 end Telos

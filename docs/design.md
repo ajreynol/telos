@@ -940,6 +940,13 @@ tested:
      (`TelosFull/ChildArgs.lean` proves these fields). So the driver checks no
      child's type at run time where it rewrites, and non-clausal simplification
      substitutes below every operator.
+   - Conflicts without a CPC proof: when the circuit propagator finds a
+     conflict, it records the assignment that found it (`conflictItem`), and
+     non-clausal simplification is one `SemProc.learn` step from the
+     conjunction to `false`, whose trace ends with that assignment
+     (`LearnPlan.conflictOk`: checked like the others, it gives its node the
+     value opposite to the one the earlier items give it, so the conjunction has
+     no model, `conflict_equiv`).
    - Profiling: `--profile` on `telos` and `telos-fuzz` prints where the time
      went (`Telos/Core/Profile.lean`: probes on the checker's phases, per rule, on
      type queries, the RARE matcher and the arithmetic normal form);
