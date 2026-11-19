@@ -133,9 +133,17 @@ at the level of assertion lists.
   already read. Assertions are read through Logos's parser (as `assume`s), as
   `simplify` terms are today.
 - **Output.** A post-asserts printer, and optionally the CPC proof of the whole
-  preprocessing: input assertions as `assume`s, the steps, and the output
-  assertions and definitions as conclusions, checked by Ethos as the rewriter's
-  proofs are.
+  preprocessing (`--proof`): of `(= (and a₁ … aₙ true true) C)`, for `C` the
+  output assertions and the definitions, checked by Ethos as the rewriter's
+  proofs are. Done: the pipeline's certificate is emitted after preprocessing,
+  its semantic and substitution steps turned into CPC proofs
+  (`Telos/Preprocess/ProofExt.lean`: reorganizations by `and_elim`/`and_intro`,
+  learned literals by replaying the propagator's trace with the clausal rules,
+  substitutions by deriving the result's conjuncts from the last one down), and
+  printed with shared terms `define`d once (`Telos/Core/Proof/Shared.lean`).
+  Congruence below `distinct` goes through `distinct_elim`, since Logos does
+  not translate CPC's typed lists. `fuzz-pp.py --proofs` checks every proof
+  with Ethos: 3000 of 3000 accepted (150 benchmarks per mode, seeds 1 and 7).
 
 ## Status
 

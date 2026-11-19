@@ -42,6 +42,13 @@ jobs:
           for f in test/examples/*.smt2; do
             .lake/build/bin/telos "$f" | diff - "${f%.smt2}.expected"
           done
+      - name: Preprocessing gives the expected output, with proofs that Logos accepts
+        run: |
+          for f in test/preprocess/*.smt2; do
+            .lake/build/bin/telos --post-asserts "$f" | diff - "${f%.smt2}.expected"
+            .lake/build/bin/telos --post-asserts --proof-dir "$RUNNER_TEMP/proof" --check-proof "$f" \
+              | diff - "${f%.smt2}.expected"
+          done
 
 
   # telos's proofs, against the Logos theorems they use as a hypothesis

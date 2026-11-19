@@ -48,11 +48,16 @@ Terms are always shared as DAGs: nodes carry their hash, compare in constant
 time when they are the same in memory, and the fast methods never traverse
 shared terms as trees.
 
-**Proof production is a goal for external auditing.** Printing CPC proofs
+**Proof production is for external auditing.** Printing CPC proofs
 (`--proof`, checked by Ethos) lets anyone audit a result without trusting telos
-or Lean. It is kept as a goal, not as the mechanism of verification: today the
-rewriter prints proofs, and the steps that are justified by a Lean theorem
-instead of a checked proof are to get proof production of their own.
+or Lean. It is not the mechanism of verification, and it costs nothing when no
+proof is asked for: a result is computed the same way either way (proven:
+`simplify_output`, `postAssertsFull_output`), and the proof is built afterwards
+from its certificate. The rewriter and the preprocessor both print proofs. The
+steps justified by a Lean theorem (static, semantic and substitution steps)
+are turned into CPC proofs from the data their side conditions checked
+(`Telos/Preprocess/ProofExt.lean`), and large proofs are printed with shared
+terms defined once (`Telos/Core/Proof/Shared.lean`).
 
 Which rule to apply, and when, follows cvc5's C++ and is tested against cvc5 by
 differential fuzzing; that part needs no proof, since every step is justified
@@ -71,6 +76,7 @@ lake build telos
 .lake/build/bin/telos test/examples/bool.smt2                      # rewritten terms
 .lake/build/bin/telos --proof test/examples/bool.smt2              # ... each with a CPC proof
 .lake/build/bin/telos --post-asserts test/preprocess/basic.smt2    # preprocessed assertions
+.lake/build/bin/telos --post-asserts --proof test/preprocess/basic.smt2   # ... with a CPC proof
 ```
 
 ### The rewriter
@@ -120,7 +126,12 @@ input is, in the same models. Ported so far (`docs/preprocessor-plan.md`):
 
 `define-fun`s are macros. cvc5's `quantifiers-preprocess` pass does nothing
 with its defaults and proofs (its prenexing is the rewriter's, ported there). The theorem relates the input to the preprocessed assertions together
-with the definitions of the solved variables. `python3 scripts/fuzz-pp.py --cvc5 PATH`
+with the definitions of the solved variables. With `--proof` (or `--proof-dir
+DIR`), the output is followed by a CPC proof that the conjunction of the input
+assertions equals that of the output and the definitions (skolems as their CPC
+terms, `(@purify t)` for `@purify_k`); telos does not check it unless
+`--check-proof` is given (by Logos, slow on large proofs); Ethos checks it.
+`python3 scripts/fuzz-pp.py --cvc5 PATH`
 compares the output with cvc5's, with the passes not yet ported switched off.
 
 See [`docs/design.md`](docs/design.md) for the architecture and roadmap,
@@ -168,7 +179,7 @@ bash scripts/check-hygiene.sh           # no sorry/axiom; trusted code is listed
 python3 scripts/gen-rules.py            # regenerate Telos/Rewriter/Rules/Generated.lean
 python3 scripts/gen-term-order.py       # regenerate the generated part of TelosProofs/Core/TermOrder.lean
 lake build telos-fuzz && python3 scripts/fuzz.py --cvc5 PATH   # compare the rewriter with cvc5
-python3 scripts/fuzz-pp.py --cvc5 PATH                          # compare the preprocessor with cvc5
+python3 scripts/fuzz-pp.py --cvc5 PATH [--proofs]               # compare the preprocessor with cvc5 (and check its proofs)
 python3 scripts/check-proofs.py --fuzz 500                      # proofs, with Ethos
 python3 scripts/loc-summary.py                                  # lines: spec, core, rewriter, preprocessor, proofs
 bash scripts/profile.sh                                         # where rewriting time goes

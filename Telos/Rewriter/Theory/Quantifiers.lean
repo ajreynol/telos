@@ -471,7 +471,7 @@ def ineqChain (v : Node) (small : Bool) (bds : List IneqBound) : Option IneqChai
     Ts ++ [iteNode (mkNode (if small then .LT else .GEQ) #[B, T]) B T]
   let t := Ts.getLast!
   let st := fun (r : CRule) (args : List Node) (prems : List Nat) =>
-    Proof.push ⟨r, args.map Node.toEo, prems, .step⟩
+    Proof.push ⟨r, args.map .node, prems, .step⟩
   -- `(r X Y)`, from the fact `f` (`(r X₀ Y₀)`, with `X₀ - Y₀ = X - Y`)
   let normRel (f : Nat) (from_ to_ : Node) : Proof.EmitM Nat := do
     match from_.getChildren, to_.getChildren with

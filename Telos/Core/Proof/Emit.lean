@@ -1,6 +1,7 @@
 import Telos.Core.Certified
 import Telos.Core.RuleNames
 import Telos.Core.Proof.Eunoia
+import Telos.Core.Profile
 
 /-!
 # CPC proofs of rewrites
@@ -37,10 +38,25 @@ inductive StepKind where
   | pop
   deriving DecidableEq, Inhabited
 
+/-- An argument of a proof step: a Logos term, or a node, kept as a node so
+that a large shared term is translated (`Node.toEo`, a tree) only when the proof
+is checked, and is printed with its shared subterms defined once
+(`Telos/Core/Proof/Shared.lean`). -/
+inductive PArg where
+  | term (t : Term)
+  | node (n : Node)
+  deriving Inhabited
+
+def PArg.toEo : PArg → Term
+  | .term t => t
+  | .node n => n.toEo
+
+instance : Coe Term PArg := ⟨.term⟩
+
 /-- A proof step, with premises given by position in the proof. -/
 structure Step where
   rule : CRule
-  args : List Term
+  args : List PArg
   premises : List Nat
   kind : StepKind := .step
   deriving Inhabited
@@ -52,9 +68,9 @@ structure EmitState where
 
 abbrev EmitM := StateT EmitState (Except String)
 
-/-- Add a step; return its position. -/
-def push (s : Step) : EmitM Nat := do
-  let st ← get
+/-- Add a step; return its position. (By `modifyGet`, so that the arrays are
+updated in place, not copied.) -/
+def push (s : Step) : EmitM Nat := modifyGet fun st =>
   let i := st.steps.size
   let stack := match s.kind with
     | .pop =>
@@ -63,12 +79,11 @@ def push (s : Step) : EmitM Nat := do
       | some k => st.stack.take (st.stack.size - 1 - k)
       | none => st.stack
     | _ => st.stack
-  set { steps := st.steps.push s, stack := stack.push i : EmitState }
-  return i
+  (i, { steps := st.steps.push s, stack := stack.push i : EmitState })
 
-def argList : CArgList → List Term
+def argList : CArgList → List PArg
   | .nil => []
-  | .cons a as => a :: argList as
+  | .cons a as => .term a :: argList as
 
 def indexList : CIndexList → List Int
   | .nil => []
@@ -77,87 +92,152 @@ def indexList : CIndexList → List Int
 /-- Append a command list that was checked from the empty state. Return the
 position of its last fact. -/
 def emitCmds (cs : CCmdList) : EmitM Nat := do
-  let base := (← get).steps.size
-  let baseStack := (← get).stack.size
+  -- Only sizes are read from the state, so that the arrays stay unshared and
+  -- are updated in place by `push`.
+  let baseStack ← modifyGet fun st => (st.stack.size, st)
   -- a premise `i` is the `i`-th fact from the top of the stack
   let resolve (prems : CIndexList) : EmitM (List Nat) := do
     let stack := (← get).stack
     (indexList prems).mapM fun (i : Int) => do
       if i < 0 || i ≥ ((stack.size - baseStack : Nat) : Int) then throw s!"premise {i} out of range"
       return stack[stack.size - 1 - i.toNat]!
-  let rec go : CCmdList → EmitM Unit
-    | .nil => pure ()
+  -- the position of the last step pushed
+  let rec go (last : Option Nat) : CCmdList → EmitM (Option Nat)
+    | .nil => pure last
     | .cons (.step r args prems) rest => do
-      let _ ← push ⟨r, argList args, ← resolve prems, .step⟩
-      go rest
+      let prems ← resolve prems
+      let p ← push ⟨r, argList args, prems, .step⟩
+      go (some p) rest
     | .cons (.assume_push F) rest => do
-      let _ ← push ⟨.refl, [F], [], .assume⟩
-      go rest
+      let p ← push ⟨.refl, [F], [], .assume⟩
+      go (some p) rest
     | .cons (.step_pop r args prems) rest => do
-      let _ ← push ⟨r, argList args, ← resolve prems, .pop⟩
-      go rest
+      let prems ← resolve prems
+      let p ← push ⟨r, argList args, prems, .pop⟩
+      go (some p) rest
     | .cons _ _ => throw "only `step`, `assume-push` and `step-pop` commands are supported in certificates"
-  go cs
-  let h := (← get).steps.size
-  if h == base then throw "empty certificate"
-  return h - 1
+  match ← go none cs with
+  | some p => return p
+  | none => throw "empty certificate"
 
 /-- The fact `(= a b)` from a chain of facts `(= a a₁) (= a₁ a₂) … (= aₖ b)`:
 `refl` for an empty chain, the fact itself for one, `trans` otherwise. -/
 def closeChain (a : Node) (chain : Array Nat) : EmitM Nat :=
   match chain.toList with
-  | [] => push ⟨.refl, [a.toEo], [], .step⟩
+  | [] => push ⟨.refl, [.node a], [], .step⟩
   | [p] => pure p
   | ps => push ⟨.trans, [], ps, .step⟩
 
+/-- `(= n n')` for `n = (distinct t₁ … tₖ)` and `n' = (distinct t'₁ … t'ₖ)`, from
+the facts `(= tᵢ t'ᵢ)`: both sides by `distinct_elim` to their disequalities,
+which are related by congruence. (CPC's `distinct` takes a typed list, which
+Logos does not translate, so `nary_cong` on the list is not checkable by it.) -/
+def congDistinct (n n' : Node) (eqs : List Nat) : EmitM Nat := do
+  let pairs (ts : Array Node) : List (Nat × Nat) :=
+    (List.range ts.size).flatMap fun i => ((List.range ts.size).filter (i < ·)).map (i, ·)
+  let ts := n.getChildren
+  let ts' := n'.getChildren
+  let blast (ts : Array Node) : Node :=
+    match (pairs ts).map fun (i, j) => Node.notNode (Node.eqNode ts[i]! ts[j]!) with
+    | [d] => d
+    | ds => Node.mkNode .AND ds.toArray
+  let P := blast ts
+  let e₁ ← push ⟨.distinct_elim, [.node (Node.eqNode n P)], [], .step⟩
+  let mut nqs := #[]
+  for (i, j) in pairs ts do
+    let q ← push ⟨.cong, [.node (Node.eqNode ts[i]! ts[j]!)], [eqs[i]!, eqs[j]!], .step⟩
+    nqs := nqs.push (← push ⟨.cong, [.node (Node.notNode (Node.eqNode ts[i]! ts[j]!))], [q], .step⟩)
+  let eP ← if nqs.size == 1 then pure nqs[0]! else push ⟨.nary_cong, [.node P], nqs.toList, .step⟩
+  let e₃ ← push ⟨.distinct_elim, [.node (Node.eqNode n' (blast ts'))], [], .step⟩
+  let e₃' ← push ⟨.symm, [], [e₃], .step⟩
+  push ⟨.trans, [], [e₁, eP, e₃'], .step⟩
+
 /-- The congruence step for `n`, given the facts `(= cᵢ dᵢ)` for its children
-(for a binder, the fact for its body). -/
-def congStep (n : Node) (op : Op) (eqs : List Nat) : EmitM Nat :=
-  match op.eoShape with
-  | .rightAssocNil .. => push ⟨.nary_cong, [n.toEo], eqs, .step⟩
-  | _ => push ⟨.cong, [n.toEo], eqs, .step⟩
+(for a binder, the fact for its body); `n'` is the result, needed for
+`distinct` (`congDistinct`). -/
+def congStep (n : Node) (op : Op) (eqs : List Nat) (n' : Option Node := none) : EmitM Nat :=
+  match op.eoShape, n' with
+  | .rightAssocNil .., _ => push ⟨.nary_cong, [.node n], eqs, .step⟩
+  | .typedList _, some n' => congDistinct n n' eqs
+  | .typedList _, none =>
+    -- `(f (@tlist t₁ … tₙ))`: `nary_cong` on the list, then `cong` on `f`
+    match n.toEo with
+    | .Apply _ l => do
+      let pl ← push ⟨.nary_cong, [.term l], eqs, .step⟩
+      push ⟨.cong, [.node n], [pl], .step⟩
+    | _ => push ⟨.cong, [.node n], eqs, .step⟩
+  | _, _ => push ⟨.cong, [.node n], eqs, .step⟩
+
+/-- How to emit the steps that have no CPC commands: a semantic step from `n`
+to `k` (its fact `(= n k)`), and a substitution step, given the facts of its
+certified rewrites (`TriPlan.rws`). The rewriter has none; the preprocessor's
+are in `Telos/Preprocess/ProofExt.lean`. -/
+structure Ext where
+  semantic : SemProc → Node → Node → EmitM Nat
+  tri : TriPlan → Node → Node → Array Nat → EmitM Nat
+
+/-- No proofs for semantic and substitution steps. -/
+def Ext.none : Ext where
+  semantic _ _ _ := throw "a semantically justified step has no CPC proof"
+  tri _ _ _ _ := throw "a substitution step has no CPC proof"
+
+/-- `act`, timed under `key` in the profile's category `emit`. -/
+def timedE {α : Type} (key : String) (act : EmitM α) : EmitM α :=
+  fun s => Profile.time "emit" (fun _ => key) fun _ => act s
 
 /-- The positions of a chain of facts proving `(= n m)`. -/
-partial def emitChain : {n m : Node} → Certified n m → EmitM (Array Nat)
+partial def emitChainWith (X : Ext) : {n m : Node} → Certified n m → EmitM (Array Nat)
   | _, _, .refl _ => pure #[]
   | _, _, .step cs _ rest => do
     let p ← emitCmds cs
-    return #[p] ++ (← emitChain rest)
-  | _, _, @Certified.congrArg op cs _ i _ hi _ _ hc rest => do
-    let ch ← emitChain hc
+    return #[p] ++ (← emitChainWith X rest)
+  | _, _, @Certified.congrArg op cs _ i c' hi _ _ hc rest => do
+    let ch ← emitChainWith X hc
     -- No step for a child that does not change (no `refl` facts either).
-    if ch.isEmpty then return ← emitChain rest
+    if ch.isEmpty then return ← emitChainWith X rest
     let mut eqs := #[]
     for h : j in [0:cs.size] do
       if j == i then eqs := eqs.push (← closeChain cs[i] ch)
       else eqs := eqs.push (← closeChain cs[j] #[])
-    let p ← congStep (.app op cs) op eqs.toList
-    return #[p] ++ (← emitChain rest)
-  | _, _, @Certified.congr op cs _ _ _ _ _ hc rest => do
+    let p ← congStep (.app op cs) op eqs.toList (some (.app op (cs.set i c')))
+    return #[p] ++ (← emitChainWith X rest)
+  | _, _, @Certified.congr op cs ds _ _ _ _ hc rest => do
     let chains ← (List.range cs.size).attach.mapM fun ⟨j, hj⟩ =>
-      emitChain (hc j (List.mem_range.1 hj))
+      emitChainWith X (hc j (List.mem_range.1 hj))
     let p ← if chains.all (·.isEmpty) then pure none
       else do
         let eqs ← (List.range cs.size).attach.mapM fun ⟨j, hj⟩ =>
           closeChain (cs[j]'(List.mem_range.1 hj)) chains[j]!
-        some <$> congStep (.app op cs) op eqs
-    return p.toArray ++ (← emitChain rest)
+        some <$> congStep (.app op cs) op eqs (some (.app op ds))
+    return p.toArray ++ (← emitChainWith X rest)
   | n, _, @Certified.static _ k _ proc _ rest => do
     let p ← emitCmds (proc.cmds n k)
-    return #[p] ++ (← emitChain rest)
-  | _, _, .semantic .. => throw "a semantically justified step has no CPC proof"
-  | _, _, .tri .. => throw "a substitution step has no CPC proof"
+    return #[p] ++ (← emitChainWith X rest)
+  | n, _, @Certified.semantic _ k _ p _ rest => do
+    let f ← timedE (match p with | .reorg => "reorg" | .learn _ => "learn") (X.semantic p n k)
+    return #[f] ++ (← emitChainWith X rest)
+  | n, _, @Certified.tri _ k _ P _ rws rest => do
+    let mut facts := #[]
+    for h : r in [0:P.rws.size] do
+      let ch ← emitChainWith X (rws r h.upper)
+      facts := facts.push (← closeChain P.rws[r].1 ch)
+    let f ← timedE "tri" (X.tri P n k facts)
+    return #[f] ++ (← emitChainWith X rest)
   | _, _, @Certified.congrBody k vs body _ _ pats _ _ hc rest => do
-    let ch ← emitChain hc
+    let ch ← emitChainWith X hc
     let p ← if ch.isEmpty then pure none
       else do
         let e ← closeChain body ch
         some <$> congStep (.app (.kind k) ⟨vs :: body :: pats⟩) (.kind k) [e]
-    return p.toArray ++ (← emitChain rest)
+    return p.toArray ++ (← emitChainWith X rest)
+
+/-- The positions of a chain of facts proving `(= n m)`, for a chain of
+CPC-checked and static steps. -/
+def emitChain {n m : Node} (c : Certified n m) : EmitM (Array Nat) := emitChainWith .none c
 
 /-- The steps of a CPC proof of `(= t s)`, for the certified rewrite of `t` to `s`. -/
-def emitProof {t : Node} (r : Rw t) : Except String (Array Step) := do
-  let ((_ : Nat), st) ← (do closeChain t (← emitChain r.2)).run {}
+def emitProof {t : Node} (r : Rw t) (X : Ext := .none) : Except String (Array Step) := do
+  let ((_ : Nat), st) ← (do closeChain t (← emitChainWith X r.2)).run {}
   return st.steps
 
 /-- The checker commands of the steps, with premises relative to the top of the
@@ -167,23 +247,26 @@ def toCmds (steps : Array Step) : List CCmd := Id.run do
   let mut slot : Array Nat := #[]
   let mut height : Nat := 0
   let mut cmds : Array CCmd := #[]
+  -- the steps of the assumptions not closed yet, innermost last
+  let mut open_ : Array Nat := #[]
   for s in steps do
     let rel := fun (p : Nat) => Int.ofNat (height - 1 - slot[p]!)
     let prems := s.premises.foldr (fun p acc => .cons (rel p) acc) .nil
     match s.kind with
     | .step =>
-      cmds := cmds.push (.step s.rule (toArgList s.args) prems)
+      cmds := cmds.push (.step s.rule (toArgList (s.args.map PArg.toEo)) prems)
       slot := slot.push height
       height := height + 1
     | .assume =>
-      cmds := cmds.push (.assume_push (s.args.headD .Stuck))
+      cmds := cmds.push (.assume_push ((s.args.headD (.term .Stuck)).toEo))
+      open_ := open_.push slot.size
       slot := slot.push height
       height := height + 1
     | .pop =>
-      cmds := cmds.push (.step_pop s.rule (toArgList s.args) prems)
-      -- the conclusion replaces the last assumption and the facts above it
-      let k := ((List.range slot.size).reverse.find? fun j =>
-        steps[j]!.kind == StepKind.assume && slot[j]! < height).getD 0
+      cmds := cmds.push (.step_pop s.rule (toArgList (s.args.map PArg.toEo)) prems)
+      -- the conclusion replaces the last open assumption and the facts above it
+      let k := open_.back?.getD 0
+      open_ := open_.pop
       let h := slot[k]!
       slot := slot.push h
       height := h + 1
@@ -244,9 +327,9 @@ def CheckedProof.render (p : CheckedProof) (N : Eunoia.Names) (decls : List Stri
   let lines := p.steps.toList.zipIdx.map fun (st, i) =>
     let prems := if st.premises.isEmpty then ""
       else s!" :premises ({" ".intercalate (st.premises.map name)})"
-    let args := if st.args.isEmpty then "" else s!" :args ({" ".intercalate (st.args.map pr)})"
+    let args := if st.args.isEmpty then "" else s!" :args ({" ".intercalate (st.args.map (pr ∘ PArg.toEo))})"
     match st.kind with
-    | .assume => s!"(assume-push {name i} {pr (st.args.headD .Stuck)})"
+    | .assume => s!"(assume-push {name i} {pr (st.args.headD (.term .Stuck)).toEo})"
     | .pop => s!"(step-pop {name i} {pr (p.facts[i]?.getD .Stuck)} :rule {ruleName st.rule}{prems}{args})"
     | .step => s!"(step {name i} {pr (p.facts[i]?.getD .Stuck)} :rule {ruleName st.rule}{prems}{args})"
   let goal := pr (eqFormula t s)

@@ -1297,9 +1297,9 @@ def inReInclusion (n : Node) : Option (Rw n) := do
     | _ => mkNode .REGEXP_CONCAT (gen.map (·.2.1)).toArray
   let inter := mkNode .REGEXP_INTER #[g, mkNode .REGEXP_COMPLEMENT #[r]]
   let st := fun (rl : Eo.CRule) (args : List Node) (prems : List Nat) =>
-    Proof.push ⟨rl, args.map Node.toEo, prems, .step⟩
+    Proof.push ⟨rl, args.map .node, prems, .step⟩
   let run : Proof.EmitM Nat := do
-    let a ← Proof.push ⟨.refl, [(mkNode .NOT #[n]).toEo], [], .assume⟩
+    let a ← Proof.push ⟨.refl, [.node (mkNode .NOT #[n])], [], .assume⟩
     let mems ← gen.mapM fun (c, gc, pre) => do
       let e ← match pre with
         | some cmds => do

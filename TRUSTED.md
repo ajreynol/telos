@@ -57,9 +57,11 @@ text, and are not covered by it:
 - the SMT-LIB front end (`Telos/Frontend/Simplify.lean`) and Logos's parser, which is
   unverified. A parsing bug can make telos rewrite a different term than the one
   written; the result is still equivalent to the term telos read.
-- proof output (`Telos/Core/Proof/`, `Telos/Core/RuleNames.lean`). A printed proof is
-  checked by Logos's checker before it is printed, and is meant to be checked
-  again by its reader (Ethos or Logos).
+- proof output (`Telos/Core/Proof/`, `Telos/Core/RuleNames.lean`,
+  `Telos/Preprocess/ProofExt.lean`). A rewriter proof is checked by Logos's
+  checker before it is printed; a preprocessing proof only with
+  `--check-proof`. Either is meant to be checked by its reader (Ethos or
+  Logos).
 
 ## Tools
 

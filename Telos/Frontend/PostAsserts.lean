@@ -3,6 +3,8 @@ import Std.Data.HashSet
 import Telos.Frontend.Script
 import Telos.Core.Node.PrintLet
 import Telos.Preprocess.Preprocess
+import Telos.Preprocess.ProofExt
+import Telos.Core.Proof.Shared
 
 /-!
 # `-o post-asserts`
@@ -28,6 +30,17 @@ shared subterms bound by `let` (`Telos/Core/Node/PrintLet.lean`).
 Deviations from cvc5: `define-fun`s are macros, expanded when the script is
 read, so they are not printed, nor are the `(assert true)` that cvc5 keeps in
 their place.
+
+With a proof (`telos --post-asserts --proof`), the CPC proof of
+`(= (and a₁ … aₙ true true) C)` follows, for `aᵢ` the input assertions and `C`
+the conjunction of the preprocessed assertions and the definitions (the
+pipeline, `Telos/Preprocess/Pipeline.lean`), in which the skolems are their
+CPC terms (`(@purify t)` for `@purify_k`). It is built from the pipeline's
+certificate after preprocessing (`Proof.emitProof` with
+`Preprocess.preprocessExt`), printed with shared terms defined once
+(`Proof.renderShared`), and checked by Logos only on request (`check`). The
+output does not depend on whether a proof is produced (`postAssertsFull`
+computes it from the same pipeline, and the proof only from it).
 -/
 
 namespace Telos.Frontend
@@ -96,10 +109,10 @@ def nameSkolems (N : DtNames) (ns : List Node) : List Node × List String :=
     return (k, Node.var name T, declareFun N name T)
   (ns.map (substSkolems (named.map fun (k, v, _) => (k, v))), named.map (·.2.2))
 
-/-- Preprocess the assertions of `sc`, and print the result as cvc5's
-`-o post-asserts` does, with the user's options `u` and the defaults of the
-script's logic (`ALL` if it has none). -/
-def postAsserts (sc : Script) (u : Preprocess.UserOptions := {}) : Except String String := do
+/-- The assertions of `sc`, and the preprocessing options for its logic and
+the user's options `u`. -/
+def ppInput (sc : Script) (u : Preprocess.UserOptions) :
+    Except String (Preprocess.PPOptions × List Node) := do
   let logic ← Preprocess.Logic.parse (sc.logic.getD "ALL")
   let opts := Preprocess.PPOptions.ofLogic logic u
   let as ← sc.assertions.mapM fun a => match a.node with
@@ -107,7 +120,11 @@ def postAsserts (sc : Script) (u : Preprocess.UserOptions := {}) : Except String
       if n.typeHint == some .boolean then pure n
       else throw s!"the assertion is not a well-typed formula: {a.source}"
     | .error e => throw s!"{e}: {a.source}"
-  let (out, defs) := if as.isEmpty then (#[], []) else Preprocess.preprocess as opts
+  return (opts, as)
+
+/-- Print the preprocessed assertions `out` and definitions `defs` as cvc5's
+`-o post-asserts` does. -/
+def printPostAsserts (sc : Script) (out : Array Node) (defs : List Node) : String :=
   -- the definitions `(= x t)`, printed as `define-fun`s; skolems named in both
   let defPairs := defs.filterMap fun
     | .app (.kind .EQUAL) #[.var x T, t] => some (x, T, t)
@@ -127,6 +144,52 @@ def postAsserts (sc : Script) (u : Preprocess.UserOptions := {}) : Except String
   let lines := [";; post-asserts start", s!"(set-logic {sc.logic.getD "ALL"})"] ++
     (decls.filter isType ++ decls.filter (!isType ·)).map (·.decl) ++ defLines ++ skolemDecls ++
     asserts ++ ["(check-sat)", ";; post-asserts end"]
-  return "\n".intercalate lines ++ "\n"
+  "\n".intercalate lines ++ "\n"
+
+/-- The CPC proof of the preprocessing `p` of the assertions `as`, printed in
+parentheses as cvc5's `get-proof` prints a proof; with `check`, first checked
+by Logos. -/
+def ppProof (sc : Script) (as : List Node) (p : Preprocess.Pipeline (Preprocess.inputNode as))
+    (check : Bool) : Except String String := do
+  let steps ← Profile.time "proof" (fun _ => "emit") fun _ =>
+    Proof.emitProof p (X := Preprocess.preprocessExt)
+  if steps.isEmpty then throw "preprocessing did not change the assertions"
+  if check then
+    let _ ← Profile.time "proof" (fun _ => "check") fun _ =>
+      Proof.checkProof steps (eqFormula (Preprocess.inputNode as) p.1)
+  let text := Profile.time "proof" (fun _ => "print") fun _ =>
+    Proof.renderShared sc.names sc.decls steps (Preprocess.inputNode as) p.1
+  return "(\n" ++ text ++ ")\n"
+
+/-- The result of `--post-asserts`: the output, and the proof if requested. -/
+structure PPResult where
+  output : Except String String
+  proof : Option (Except String String) := none
+
+/-- Preprocess the assertions of `sc` and print the result as cvc5's
+`-o post-asserts` does, with the user's options `u` and the defaults of the
+script's logic (`ALL` if it has none); with `withProof`, also its CPC proof
+(checked by Logos with `check`). The output is computed from the pipeline
+alone, whatever the other arguments (`postAssertsFull_output`). -/
+def postAssertsFull (sc : Script) (u : Preprocess.UserOptions := {}) (withProof check : Bool := false) :
+    PPResult :=
+  match ppInput sc u with
+  | .error e => { output := .error e }
+  | .ok (opts, as) =>
+    if as.isEmpty then { output := .ok (printPostAsserts sc #[] []) }
+    else
+      let p := Preprocess.preprocessCert as opts
+      { output := .ok (printPostAsserts sc (Preprocess.Pipeline.assertions p) (Preprocess.Pipeline.defs p))
+        proof := if withProof then some (ppProof sc as p check) else none }
+
+/-- The output of `--post-asserts`. -/
+def postAsserts (sc : Script) (u : Preprocess.UserOptions := {}) : Except String String :=
+  (postAssertsFull sc u).output
+
+/-- The output does not depend on whether a proof is produced, or checked. -/
+theorem postAssertsFull_output (sc : Script) (u : Preprocess.UserOptions) (b₁ c₁ b₂ c₂ : Bool) :
+    (postAssertsFull sc u b₁ c₁).output = (postAssertsFull sc u b₂ c₂).output := by
+  unfold postAssertsFull
+  split <;> (try split) <;> rfl
 
 end Telos.Frontend

@@ -5,7 +5,7 @@ import Telos
 
 ```
 telos [--proof] [--proof-dir DIR] [--profile] FILE
-telos --post-asserts [PREPROCESSING OPTIONS] [--profile] FILE
+telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE
 ```
 
 Reads an SMT-LIB script of declarations and `(simplify t)` commands (`-` for
@@ -29,7 +29,14 @@ simplification, to that of the input assertions (`Telos.preprocess_correct`).
 The preprocessing options are cvc5's, with cvc5's defaults for the script's
 logic (`Telos/Preprocess/Options.lean`): `--simplification=none|batch`,
 `--[no-]arith-rewrite-equalities`, `--[no-]static-learning`,
-`--[no-]arith-static-learning` and `--[no-]repeat-simp`.
+`--[no-]arith-static-learning` and `--[no-]repeat-simp`. With `--proof`, the
+output is followed by a CPC proof that the conjunction of the input assertions
+(and `true`, twice) equals that of the output assertions and definitions, with
+skolems as their CPC terms; with `--proof-dir DIR`, it is written to
+`DIR/proof.eo`. Shared terms are `define`d once. The proof is not checked by
+telos unless `--check-proof` is given (by Logos's checker, which is slow on
+large proofs); Ethos checks it. The output is the same with or without a proof
+(`postAssertsFull_output`; for `simplify`, `simplify_output`).
 -/
 
 open Telos Telos.Frontend
@@ -37,6 +44,7 @@ open Telos Telos.Frontend
 structure Options where
   proof : Bool := false
   proofDir : Option String := none
+  checkProof : Bool := false
   file : Option String := none
   profile : Bool := false
   postAsserts : Bool := false
@@ -46,6 +54,7 @@ def parseArgs : List String → Options → Except String Options
   | [], o => .ok o
   | "--proof" :: rest, o => parseArgs rest { o with proof := true }
   | "--profile" :: rest, o => parseArgs rest { o with profile := true }
+  | "--check-proof" :: rest, o => parseArgs rest { o with checkProof := true }
   | "--post-asserts" :: rest, o => parseArgs rest { o with postAsserts := true }
   | "--proof-dir" :: d :: rest, o => parseArgs rest { o with proofDir := some d }
   | ["--proof-dir"], _ => .error "--proof-dir needs a directory"
@@ -56,7 +65,7 @@ def parseArgs : List String → Options → Except String Options
     else parseArgs rest { o with file := some f }
 
 def usage : String :=
-  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [PREPROCESSING OPTIONS] [--profile] FILE"
+  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE"
 
 def main (args : List String) : IO UInt32 := do
   let opts ← match parseArgs args {} with
@@ -69,11 +78,22 @@ def main (args : List String) : IO UInt32 := do
     | .ok sc => pure sc
     | .error e => IO.eprintln s!"telos: {e}"; return 1
   if opts.postAsserts then
-    let r ← Profile.measure "total" "preprocess" fun _ => postAsserts sc opts.pp
-    if opts.profile then Profile.report
-    match r with
-    | .ok out => IO.print out; return 0
+    let withProof := opts.proof || opts.proofDir.isSome
+    let r := postAssertsFull sc opts.pp withProof opts.checkProof
+    let out ← Profile.measure "total" "preprocess" fun _ => r.output
+    match out with
+    | .ok out => IO.print out
     | .error e => IO.eprintln s!"telos: {e}"; return 1
+    let mut status : UInt32 := 0
+    match ← Profile.measure "total" "proof" fun _ => r.proof with
+    | some (.ok text) =>
+      match opts.proofDir with
+      | some d => IO.FS.createDirAll d; IO.FS.writeFile s!"{d}/proof.eo" text
+      | none => IO.print text
+    | some (.error e) => IO.eprintln s!"telos: no proof: {e}"; status := 1
+    | none => pure ()
+    if opts.profile then Profile.report
+    return status
   if let some d := opts.proofDir then IO.FS.createDirAll d
   let mut status : UInt32 := 0
   for (q, i) in sc.queries.zipIdx do

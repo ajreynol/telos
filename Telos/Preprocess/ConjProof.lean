@@ -26,10 +26,14 @@ open Eo Node Proof
 
 /-- Push a step. -/
 def stepE (r : CRule) (args : List Term) (prems : List Nat) : EmitM Nat :=
+  push ⟨r, args.map .term, prems, .step⟩
+
+/-- Push a step whose arguments may be nodes (`PArg`). -/
+def stepN (r : CRule) (args : List PArg) (prems : List Nat) : EmitM Nat :=
   push ⟨r, args, prems, .step⟩
 
 /-- `assume_push t`. -/
-def assumeE (t : Node) : EmitM Nat := push ⟨.refl, [t.toEo], [], .assume⟩
+def assumeE (t : Node) : EmitM Nat := push ⟨.refl, [.node t], [], .assume⟩
 
 /-- `scope` over the fact at `p`: `(=> A p)` for the last assumption `A`. -/
 def scopeE (p : Nat) : EmitM Nat := push ⟨.scope, [], [p], .pop⟩
@@ -96,7 +100,7 @@ partial def substFact (σ : SubstFacts) (fuel : Nat) (n : Node) : EmitM (Node ×
         match e with
         | some e => pure e
         | none => closeChain c #[]
-    let p ← congStep n op eqs
+    let p ← congStep n op eqs (some n')
     -- a rebuilt term of `σ`
     if let some (q, s) := σ n' then
       let (s', r) ← substFact σ (fuel - 1) s
@@ -141,6 +145,20 @@ def equivOfE (ta tb : Term) (i₁ i₂ : Nat) : EmitM Nat := do
   let r₂ ← stepE .resolution [.Boolean true, ta] [c₃, c₄]
   let f₂ ← stepE .factoring [] [r₂]
   let r₃ ← stepE .resolution [.Boolean false, tb] [f₁, f₂]
+  stepE .factoring [] [r₃]
+
+/-- `equivOfE`, with the formulas as nodes. -/
+def equivOfN (a b : Node) (i₁ i₂ : Nat) : EmitM Nat := do
+  let c₄ ← stepE .implies_elim [] [i₁]
+  let c₂ ← stepE .implies_elim [] [i₂]
+  let e := eqNode a b
+  let c₁ ← stepN .cnf_equiv_neg2 [.node e] []
+  let c₃ ← stepN .cnf_equiv_neg1 [.node e] []
+  let r₁ ← stepN .resolution [.term (.Boolean false), .node a] [c₁, c₂]
+  let f₁ ← stepE .factoring [] [r₁]
+  let r₂ ← stepN .resolution [.term (.Boolean true), .node a] [c₃, c₄]
+  let f₂ ← stepE .factoring [] [r₂]
+  let r₃ ← stepN .resolution [.term (.Boolean false), .node b] [f₁, f₂]
   stepE .factoring [] [r₃]
 
 /-- `(= a false)` from the fact `(=> a false)` at `i`: `implies_elim` gives the

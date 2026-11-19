@@ -69,7 +69,7 @@ def resolveOut (p : Nat) (elims : List (Node × Bool)) : CPM (Option Nat) := do
   let mut p := p
   for (c, neg) in elims do
     let some q ← factPos c | return none
-    p ← CPM.lift (stepE .resolution [.Boolean (!neg), c.toEo] [p, q])
+    p ← CPM.lift (stepN .resolution [.term (.Boolean (!neg)), .node c] [p, q])
   return some p
 
 /-- A clause by `rule` on the premise at `p`, then `resolveOut`. -/
@@ -79,8 +79,8 @@ def byClause (rule : CRule) (p : Nat) (elims : List (Node × Bool)) : CPM (Optio
 /-- A clause by the premise-free CNF rule `rule` on `P` (with optional index), then `resolveOut`. -/
 def byAxiom (rule : CRule) (P : Node) (idx : Option Nat) (elims : List (Node × Bool)) :
     CPM (Option Nat) := do
-  let args := [P.toEo] ++ (idx.map fun i => [Term.Numeral (Int.ofNat i)]).getD []
-  resolveOut (← CPM.lift (stepE rule args [])) elims
+  let args : List PArg := [.node P] ++ (idx.map fun i => [.term (Term.Numeral (Int.ofNat i))]).getD []
+  resolveOut (← CPM.lift (stepN rule args [])) elims
 
 /-- The child `h` of an `and` that is `false` while the others are `true`:
 `not_and` on the fact `(not (and …))`, the others resolved away. -/

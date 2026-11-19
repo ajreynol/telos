@@ -33,9 +33,12 @@ defaults that depend on the logic are compared. With `--options`, each
 benchmark is run, on both sides, with one of the preprocessing options telos
 has (`PP_OPTIONS`), or none, at random: safe mode allows one regular option.
 
+With `--proofs`, each benchmark is also run with `--proof-dir`: the output must
+be the same, and Ethos must accept the proof.
+
 Usage:
   scripts/fuzz-pp.py [--cvc5 PATH] [--seed N] [--count N] [--depth N] [--show N]
-                     [--logics] [--options] [MODE]
+                     [--logics] [--options] [--proofs] [MODE]
   scripts/fuzz-pp.py [--cvc5 PATH] [--show N] FILE.smt2 ...
 
 MODE is one of `fuzz.py`'s term modes (`--arith`, `--uf`, …). Build first:
@@ -201,6 +204,36 @@ def run(cmd, path, timeout=120):
     return r.stdout if r.returncode == 0 else None, r.stderr.strip()
 
 
+SIGNATURE = ROOT / ".lake" / "packages" / "Cpc" / "install" / "defs" / "Cpc.cached.eo"
+
+
+def check_proof(ethos, cmd, path, output, tmp):
+    """Run telos with `--proof-dir`, check that the output is the same as
+    without a proof, and check the proof with Ethos: (`accepted` | `rejected` |
+    `missing`, message)."""
+    d = tmp / (path.stem + ".proof")
+    try:
+        r = subprocess.run(cmd + ["--proof-dir", str(d), str(path)], capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        return ("missing", "timeout")
+    if r.stdout != output:
+        return ("rejected", "the output differs with a proof")
+    f = d / "proof.eo"
+    if r.returncode != 0 or not f.exists():
+        return ("missing", (r.stderr.strip().splitlines() or ["no proof"])[0])
+    text = f.read_text().strip()
+    eo = d / "proof-body.eo"
+    eo.write_text(text[1:-1] if text.startswith("(") else text)
+    try:
+        e = subprocess.run([ethos, f"--include={SIGNATURE}", str(eo)], capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        return ("rejected", "ethos timeout")
+    # Ethos prints its verdict on standard output (warnings go to standard error)
+    if e.returncode == 0 and e.stdout.strip().endswith("correct"):
+        return ("accepted", "")
+    return ("rejected", (e.stdout + e.stderr).strip()[-300:])
+
+
 def compare(ours, theirs):
     """`same`, `renamed`, `oriented`, `ordered` or None."""
     if ours == theirs:
@@ -226,6 +259,9 @@ def main():
     ap.add_argument("--show", type=int, default=5, help="mismatches to print")
     ap.add_argument("--logics", action="store_true", help="the smallest logic of each benchmark")
     ap.add_argument("--options", action="store_true", help="one random preprocessing option")
+    ap.add_argument("--proofs", action="store_true",
+                    help="also print telos's CPC proof of each preprocessing (--proof) and check it with Ethos")
+    ap.add_argument("--ethos", default=shutil.which("ethos") or "ethos")
     for m in MODES:
         ap.add_argument(f"--{m}", action="store_true")
     ap.add_argument("files", nargs="*")
@@ -268,12 +304,19 @@ def main():
     # no need to solve the benchmarks: post-asserts is printed after preprocessing
     cvc5 = cvc5 + ["--preprocess-only"]
     orng = random.Random(a.seed + 1)
+    proof_counts = {"accepted": 0, "rejected": 0, "missing": 0}
+    proof_failures = []
     for path in files:
         opt = []
         if a.options:
             choice = orng.randrange(len(PP_OPTIONS) + 1)
             opt = PP_OPTIONS[choice:choice + 1]
         ours, err = run([str(TELOS), "--post-asserts", *opt], path)
+        if a.proofs and ours is not None:
+            verdict_p = check_proof(a.ethos, [str(TELOS), "--post-asserts", *opt], path, ours, tmp)
+            proof_counts[verdict_p[0]] += 1
+            if verdict_p[0] != "accepted":
+                proof_failures.append((path, verdict_p[1]))
         theirs, cerr = run(cvc5 + opt, path)
         if ours is None or theirs is None:
             failures.append((path, err if ours is None else cerr))
@@ -319,6 +362,11 @@ def main():
             print(f"  {mark} telos: {x}\n  {mark} cvc5:  {y}")
         if dd:
             print(f"    declarations differing: {sorted(dd)}")
+    if a.proofs:
+        print(f"proofs: {proof_counts['accepted']} accepted by Ethos, {proof_counts['rejected']} rejected, "
+              f"{proof_counts['missing']} missing")
+        for path, msg in proof_failures[:a.show]:
+            print(f"  {path}: {msg}")
     for path, err in failures[:a.show]:
         print(f"\n  {path}: {err.splitlines()[0] if err else 'failed'}")
 

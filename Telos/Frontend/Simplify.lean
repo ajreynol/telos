@@ -47,4 +47,10 @@ def simplify (sc : Script) (q : Query) (withProof : Bool) : Result :=
         else none
       { source := q.source, output := .ok (r.1.toSmtLibLet sc.dtNames), proof }
 
+/-- The output does not depend on whether a proof is produced. -/
+theorem simplify_output (sc : Script) (q : Query) (b₁ b₂ : Bool) :
+    (simplify sc q b₁).output = (simplify sc q b₂).output := by
+  unfold simplify
+  split <;> (try split) <;> rfl
+
 end Telos.Frontend
