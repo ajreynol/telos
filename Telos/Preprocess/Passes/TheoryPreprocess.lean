@@ -35,8 +35,7 @@ cvc5's last for the whole run, so a term already purified in an earlier
 assertion gets no second lemma. Quantifier bodies are not traversed.
 
 Ported theory hooks: arithmetic (`TheoryArith::ppRewrite`), bit-vectors
-(`TheoryBV::ppRewrite`), datatypes (`TheoryDatatypes::ppRewrite`, but for
-tuple updaters) and strings (`TheoryStrings::ppRewrite`). Sets and UF have
+(`TheoryBV::ppRewrite`), datatypes (`TheoryDatatypes::ppRewrite`) and strings (`TheoryStrings::ppRewrite`). Sets and UF have
 nothing to do on the input telos supports. Not ported: arrays (`select` over
 `store` and store reordering at indices known disequal), which the rewriter
 already does in the cases that arise without non-clausal simplification.

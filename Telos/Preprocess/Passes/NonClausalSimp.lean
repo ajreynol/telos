@@ -4,6 +4,7 @@ import Telos.Preprocess.CircuitPropagator
 import Telos.Preprocess.CircuitPure
 import Telos.Preprocess.TriBuild
 import Telos.Rewriter.Theory.Arith
+import Telos.Rewriter.Theory.Sets
 
 /-!
 # The `non-clausal-simp` pass
@@ -12,12 +13,13 @@ cvc5's `NonClausalSimp` (`src/preprocessing/passes/non_clausal_simp.cpp`):
 
 1. the circuit propagator learns literals from the assertions
    (`Telos/Preprocess/CircuitPropagator.lean`); a conflict makes the pipeline
-   `false`;
+   `false` (with the definitions of earlier runs: a conflict in this pass, as in
+   cvc5, drops the substitutions it found);
 2. each learned literal, simplified by the substitutions found so far
    (`processLearnedLit`), is `true` (dropped), `false` (a conflict), solved by
    its theory into a substitution `x := t` (`TheoryEngine::solve`, the theories'
    `ppAssert`), a constant propagation `t := c` if it equates a term to a
-   constant, or kept;
+   constant (cvc5's `isConst`, with set constants in normal form), or kept;
 3. the substitutions, then the constant propagations (to a fixed point), are
    applied to every assertion, which is rewritten;
 4. the kept literals and the constant propagations `(= t c)`, simplified, are
@@ -30,8 +32,9 @@ Ported `ppAssert`: the default one (an equality with a variable side, not in
 the other side, of the same type), the Booleans' (a variable, its negation),
 and arithmetic's (an equality normalized by `normalizeEquality`, solved for its
 head when it is a variable with coefficient 1 and the other side has at most
-`ppAssertMaxSubSize = 2` terms). Not ported: bit-vector extract solving, and arithmetic's
-mixed integer and real cases.
+`ppAssertMaxSubSize = 2` terms; `(= (to_real x) c)` for an integer variable
+`x` and an integral `c` is `x := c`). Not ported: bit-vector extract solving,
+and arithmetic's other mixed integer and real cases.
 
 The pass is a few certified steps of the conjunction, checked in time linear
 in the size of the terms as DAGs (`ncsSteps`): the learned literals added
@@ -109,6 +112,17 @@ if it is a variable (coefficient 1), the other side with at most 2 terms. -/
 def arithPpAssert (l : Node) : Option Solved := do
   if l.getKind != .EQUAL then none
   let r : Rw l := (Arith.normalizeEquality l).getD (Rw.id l)
+  -- `(= (to_real x) c)` for an integer variable `x` and an integral constant
+  -- `c`: solved as `x := c` (cvc5 strips the cast, then makes `c` an integer),
+  -- `(= x c)` by `arith_poly_norm_rel`
+  let r : Rw l := match r.1 with
+    | .app (.kind .EQUAL) #[.app (.kind .TO_REAL) #[v], .const (.rational q)] =>
+      if v.isVar && q.isInt then
+        let c : Node := .const (.integer q.num)
+        (r.next? fun m => Arith.polyNormRel m 1 1 (mkNode .SUB m.getChildren)
+          (Arith.toReal (mkNode .SUB #[v, c])) (eqNode v c)).getD r
+      else r
+    | _ => r
   let #[x, t] := r.1.getChildren | none
   if r.1.getKind != .EQUAL then none
   let size := if t.getKind == .ADD then t.getNumChildren else 1
@@ -159,8 +173,10 @@ the derivation of `(= t c)`. -/
 def constProp? (l : Node) : Option (Node × Node × (Nat → EmitM Nat)) :=
   match l with
   | .app (.kind .EQUAL) #[a, b] =>
-    if a.isConst && !b.isConst then some (b, a, fun p => stepE .symm [] [p])
-    else if b.isConst && !a.isConst then some (a, b, pure)
+    -- cvc5's `isConst`, with set constants in normal form (unions of singletons)
+    let isC (n : Node) : Bool := n.isConst || SetsRewriter.isConstNode n
+    if isC a && !isC b then some (b, a, fun p => stepE .symm [] [p])
+    else if isC b && !isC a then some (a, b, pure)
     else none
   | _ => none
 
@@ -409,7 +425,7 @@ def ncsSteps {input : Node} (termBased : Bool) (p : Pipeline input) :
     return ← (Profile.time "ncs" (fun _ => "learn (conflict)") fun _ =>
       p.next? fun m => if h : SemProc.check (.learn L) m mkFalse = true then
         some ⟨mkFalse, .semantic (.learn L) (SemProc.check_ok h) (.refl _)⟩ else none).elim
-      (throw "conflict: check failed") (fun q => pure (q, #[]))
+      (throw "conflict: check failed") (fun q => pure (Pipeline.toConflict p q, #[]))
   let K := st.learned.size
   let litOf (h : Nat) : Node := LearnPlan.litOf (L.trace[L.lits[K - 1 - h]!]!)
   let C₁ := mkNode .AND (cs ++ L.lits.map fun t => LearnPlan.litOf L.trace[t]!)
@@ -477,7 +493,7 @@ def ncsSteps {input : Node} (termBased : Bool) (p : Pipeline input) :
     | throw "tri: check failed"
   if conflict then
     let some p₃ := p₂.next? fun m => checkBy .absorb m mkFalse | throw "conflict"
-    return (p₃, solvedLits)
+    return (Pipeline.toConflict p p₃, solvedLits)
   -- 3. reorganized: assertions, kept literals, constant propagations, equations
   let kept := (List.range K).filterMap fun h => match cls[h]? with
     | some LitClass.kept => some (litOf h) | _ => none
@@ -565,14 +581,14 @@ def Pipeline.nonClausalSimpB {input : Node} (p : Pipeline input) (termBased : Bo
       | .ok q => some q
       | .error e => Profile.time "ncs" (fun _ => s!"fallback: {e}") fun _ => none
     match fast with
-    | some (q, lits) => (Pipeline.conflict? q, lits)
+    | some (q, lits) => (Pipeline.conflictFrom? p q, lits)
     | none =>
       -- `ncsProof` assumes no earlier definitions: a later run is skipped
       if Pipeline.slot p != mkTrue then (p, #[]) else
       match (ncsProof termBased p.1).run {} with
       | .ok ((_, lits), st) =>
         match applyCmds (cmdList (toCmds st.steps)) p.1 with
-        | some r => (Pipeline.conflict? (p.trans r), lits)
+        | some r => (Pipeline.conflictFrom? p (p.trans r), lits)
         | none => (p, #[])
       | .error _ => (p, #[])
 

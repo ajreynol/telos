@@ -174,9 +174,9 @@ still needed no new proof. Skolems are printed as cvc5 prints them
 Then the `ppRewrite` of bit-vectors (`UltAddOne`, and the overflow predicates
 eliminated, `Telos/Preprocess/Theory/BVPreprocess.lean`) and of datatypes
 (updaters as an `ite` on the tester, by `dt-updater-elim`;
-`DatatypesPreprocess.lean`). Tuple updaters are blocked on Logos, which does not
-translate a tester on the `tuple` constructor (`upstream-requests.md`,
-request 9); selectors stay as they are (cvc5's shared selectors have no CPC
+`DatatypesPreprocess.lean`; tuple updaters as the tuple of the fields, by
+`dt-updater-elim`, since cvc5 #13176 removed the tuple tester from CPC);
+selectors stay as they are (cvc5's shared selectors have no CPC
 term, and cvc5 prints them as the selectors). On the way: `static-rewrite`'s
 `MACRO_DT_CONS_EQ` now splits tuple equalities (the fields were those of the
 binary `TUPLE` node), and the rule matcher takes a premise after the premises
@@ -202,6 +202,24 @@ datatypes 111 agree, 39 differ (37 of them by tuple updaters). The remaining dif
 from cvc5's node ids, which order skolems by creation: the order of two
 skolems in a sum or an equality, and of terms built during preprocessing
 against skolems, and so of the lemmas that follow from them.
+
+Against cvc5 main `eb203989c3` (2026-11-19, with Logos `f2001ba0`), with
+`define-fun` bodies compared as the assertions are: on 150 benchmarks per
+mode, the default, UF and bit-vector modes agree on all; arith 147 (3 differ),
+arrays 147, sets 149, datatypes 147, quantifiers 149, mixed 138, strings 145
+(with `--seed 7 --logics --options`: arith 150, arrays 146, sets 149,
+datatypes 145, quantifiers 148, mixed 138, strings 144).
+Since the previous count: tuple updaters; bit-vectors' `SolveEq`
+(`static-rewrite`); arithmetic's `ppAssert` of `(= (to_real x) c)` as
+`x := c`; the `str.substr` cases of `rewriteStrEqualityExt`; `CTN_SPLIT`'s
+order of disjuncts; and definitions kept in a conflict found after
+non-clausal simplification, as cvc5 keeps its top-level substitutions; set
+constants in normal form are constants for constant propagation. What
+differs: the order of skolems, lemmas and children of stores and `or`s (node
+ids), the solved monomial of an arithmetic equality between two terms with
+the same coefficient (node ids), `IDOF_NORM_PREFIX` (no CPC rule), the
+length-based unifications of strings and a few other string equalities, and
+cvc5's quantifier preprocessing (phase 5).
 
 Performance: the pipeline's reorganizations of the whole conjunction
 (splitting the input's conjunctions, adding `true` conjuncts for lemmas) were

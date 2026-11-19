@@ -28,7 +28,9 @@ conjunction. They are part of the conjunction, so that the preprocessed
 assertions and the definitions together are equivalent to the input
 (`Telos.preprocess_correct`), and they are printed as `define-fun`s. A
 conflict, an assertion that is `false`, makes the pipeline the single assertion
-`false` (`markConflict`); the conjunction is then the node `false`.
+`false` (`markConflict`), followed by the definitions: the conjunction is then
+`(and false slot)`, or the node `false` if there are none. As cvc5 keeps its
+top-level substitutions in conflict, they are printed.
 -/
 
 namespace Telos.Preprocess
@@ -68,7 +70,25 @@ def defs {input : Node} (p : Pipeline input) : List Node :=
   (flattenAnd (slot p)).filter (· != mkTrue)
 
 /-- Whether the pipeline is in conflict (`isInConflict`). -/
-def inConflict {input : Node} (p : Pipeline input) : Bool := p.1 == mkFalse
+def inConflict {input : Node} (p : Pipeline input) : Bool :=
+  p.1 == mkFalse || assertions p == #[mkFalse]
+
+/-- The pipeline in conflict with definitions `slot`: `(and false slot)`, or
+`false` if `slot` is `true`. -/
+def conflictNode (slot : Node) : Node :=
+  if slot == mkTrue then mkFalse else mkNode .AND #[mkFalse, slot]
+
+/-- `false` rewritten to `conflictNode slot`: `absorb` gives
+`(= (and false slot) false)`, then `symm`. -/
+def withSlot (slot : Node) : Option (Rw mkFalse) :=
+  if slot == mkTrue then some (Rw.id _)
+  else applyCmds (cmdList [stepWith .absorb [eqFormula (conflictNode slot) mkFalse],
+    .step .symm .nil prevPremise]) mkFalse
+
+/-- A conflict found from `p`, a certified rewrite `q` of `p` to `false`: the
+pipeline `conflictNode (slot p)`, which keeps `p`'s definitions. -/
+def toConflict {input : Node} (p : Pipeline input) (q : Pipeline input) : Pipeline input :=
+  if h : q.1 = mkFalse then ((withSlot (slot p)).map fun s => q.trans (h ▸ s)).getD q else q
 
 /-- The pipeline with the assertions `as` in place of the current ones, if the
 two conjunctions have the same conjuncts, up to nested conjunctions, `true` and
@@ -82,12 +102,19 @@ def rearrange {input : Node} (p : Pipeline input) (as : List Node) : Option (Pip
       some (p.trans ⟨target, .semantic .reorg (SemProc.check_ok h) (.refl target)⟩)
     else p.next? fun m => (andReorg m target).orElse fun _ => checkBy .aci_norm m target
 
-/-- `markConflict`: if an assertion is `false`, the pipeline is `false`
-(`absorb`). -/
-def conflict? {input : Node} (p : Pipeline input) : Pipeline input :=
+/-- `markConflict` for `p`, a pipeline reached from `p₀`: if an assertion is
+`false`, the pipeline is `false` (`absorb`), with the definitions of `p₀`.
+(cvc5's non-clausal simplification returns in conflict before it adds its
+substitutions.) -/
+def conflictFrom? {input : Node} (p₀ p : Pipeline input) : Pipeline input :=
   if !inConflict p && (assertions p).contains mkFalse then
-    Profile.time "pipeline" (fun _ => "conflict") fun _ => (p.next? fun m => checkBy .absorb m mkFalse).getD p
+    Profile.time "pipeline" (fun _ => "conflict") fun _ =>
+      ((p.next? fun m => checkBy .absorb m mkFalse).map (toConflict p₀)).getD p
   else p
+
+/-- `markConflict`: if an assertion is `false`, the pipeline is `false`
+(`absorb`), with its definitions. -/
+def conflict? {input : Node} (p : Pipeline input) : Pipeline input := conflictFrom? p p
 
 /-- The conjunct at each position `i` rewritten by `g i`, in one congruence
 step below the conjunction. -/

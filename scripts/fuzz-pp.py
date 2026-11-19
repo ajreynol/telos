@@ -151,6 +151,35 @@ def renumber_skolems(asserts, decls):
     return [sub(a) for a in asserts], {norm(sub(d)) for d in decls}
 
 
+DEF0 = re.compile(r"\(define-fun (\S+) \(\) ")
+
+
+def split_defs(decls):
+    """The `define-fun`s of constants among `decls`, by name."""
+    out = {}
+    for d in decls:
+        m = DEF0.match(d)
+        if m:
+            out[m.group(1)] = d
+    return out
+
+
+def def_body(d):
+    """The body of `(define-fun x () T body)`: the text after the sort."""
+    e = fuzz.parse_sexpr(d)
+    return print_sexpr(e[4])
+
+
+def print_sexpr(e):
+    return e if isinstance(e, str) else "(" + " ".join(print_sexpr(x) for x in e) + ")"
+
+
+def read_labeled(x):
+    """A term, or `[x] t` (the body of `x`'s `define-fun`) as `["[x]", t]`."""
+    m = re.match(r"\[(\S+)\] (.*)", x, re.S)
+    return [f"[{m.group(1)}]", fuzz.read_term(m.group(2))] if m else fuzz.read_term(x)
+
+
 def cast_free(e):
     """`e` without Int/Real casts: `(to_real t)` is `t`, and `n/1` is `n`."""
     if isinstance(e, str):
@@ -176,7 +205,7 @@ def compare(ours, theirs):
     """`same`, `renamed`, `oriented`, `ordered` or None."""
     if ours == theirs:
         return "same"
-    o, t = [fuzz.alpha_free(fuzz.read_term(x)) for x in ours], [fuzz.alpha_free(fuzz.read_term(x)) for x in theirs]
+    o, t = [fuzz.alpha_free(read_labeled(x)) for x in ours], [fuzz.alpha_free(read_labeled(x)) for x in theirs]
     if o == t:
         return "renamed"
     if [fuzz.orient_free(x) for x in o] == [fuzz.orient_free(x) for x in t]:
@@ -223,7 +252,12 @@ def main():
                 quantified = "forall" in body or "exists" in body
                 for logic in logic_candidates(theories, quantified):
                     path.write_text(f"(set-logic {logic})\n" + "\n".join(decls) + "\n" + body + "(check-sat)\n")
-                    r = subprocess.run(cvc5 + [str(path)], capture_output=True, text=True)
+                    # whether cvc5 accepts the logic: preprocessing is enough
+                    try:
+                        r = subprocess.run(cvc5 + ["--preprocess-only", str(path)],
+                                           capture_output=True, text=True, timeout=60)
+                    except subprocess.TimeoutExpired:
+                        continue
                     if r.returncode == 0 and "(error" not in r.stdout:
                         break
             else:
@@ -231,9 +265,8 @@ def main():
             files.append(path)
     counts = {"same": 0, "renamed": 0, "oriented": 0, "ordered": 0, "casts": 0}
     mismatches, failures = [], []
-    if a.files:
-        # benchmarks: no need to solve them
-        cvc5 = cvc5 + ["--preprocess-only"]
+    # no need to solve the benchmarks: post-asserts is printed after preprocessing
+    cvc5 = cvc5 + ["--preprocess-only"]
     orng = random.Random(a.seed + 1)
     for path in files:
         opt = []
@@ -257,6 +290,15 @@ def main():
             ta = [x for x in ta if x != "true"]
             od = {d for d in od if not d.startswith("(define-fun")}
             td = {d for d in td if not d.startswith("(define-fun")}
+        # the solved variables' `define-fun`s are compared as the assertions are
+        # (their bodies up to orientation, …), in the order of their names
+        ofs, tfs = split_defs(od), split_defs(td)
+        od, td = od - set(ofs.values()), td - set(tfs.values())
+        if ofs.keys() == tfs.keys():
+            oa = oa + [f"[{k}] " + def_body(ofs[k]) for k in sorted(ofs)]
+            ta = ta + [f"[{k}] " + def_body(tfs[k]) for k in sorted(tfs)]
+        else:
+            od, td = od | set(ofs.values()), td | set(tfs.values())
         verdict = compare(oa, ta)
         if verdict and od == td:
             counts[verdict] += 1

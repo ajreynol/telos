@@ -1,0 +1,6 @@
+;; post-asserts start
+(set-logic ALL)
+(define-fun a () Bool true)
+(assert false)
+(check-sat)
+;; post-asserts end

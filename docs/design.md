@@ -859,8 +859,8 @@ tested:
      the rule step itself, whose side condition is CPC's `$str_re_includes`.
      That test is weaker than cvc5's `regExpIncludes` for ranges: cvc5 rewrites
      `(re.union (re.++ (re.range "a" "c") (re.* re.allchar)) (re.comp (re.range "a" "c")))`
-     to `(re.* re.allchar)`, but its `re-union-inclusion` step fails Ethos;
-     telos leaves it unchanged (`cvc5-re-includes.md`, with a fix).
+     to `(re.* re.allchar)`; its `re-union-inclusion` step failed Ethos until
+     cvc5 #13182 (`cvc5-re-includes.md`), and telos now does the same.
    - Then `rewriteLoopRegExp`: `re-loop-neg` (`u < l`), the empty string for
      `u = 0` and the union of `l` to `u` copies otherwise (`re-loop-elim`, the
      result computed as cvc5's `rewriteViaReLoopElim`), and `re-loop-star`.
@@ -1056,11 +1056,9 @@ tested:
       its argument, with the result computed in telos: `dt-collapse-selector`,
       `dt-collapse-tester`, `dt-inst` (a tester for a nullary constructor is an
       equality), `dt-collapse-tester-singleton`, and `dt-cons-eq-clash` for
-      clashing equalities (cvc5's `checkClash`). `dt-collapse-updater` never
-      applies: its side condition takes `eo::len` of a list and counts the field
-      from the wrong end, so cvc5's own proofs fail there (`cvc5-dt-collapse-updater.md`).
-      telos certifies the updater rewrite by `dt-updater-elim`, then the tester,
-      the `ite` and the selectors (`collapseUpdater`).
+      clashing equalities (cvc5's `checkClash`), and `dt-collapse-updater`
+      (`collapseUpdater`; until cvc5 #13176 its side condition did not evaluate,
+      `cvc5-dt-collapse-updater.md`).
     - `Node.isConst` is cvc5's: constructors applied to constants are constants.
       The Boolean rewriter's `eq-cond-deq` (cvc5's `rewriteViaEqConstEq`) proves
       its premise `(= (= k z) false)` for datatype values by

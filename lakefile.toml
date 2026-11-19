@@ -8,7 +8,7 @@ defaultTargets = ["Telos", "TelosTests", "telos"]
 [[require]]
 name = "Cpc"
 git = "https://github.com/ajreynol/logos"
-rev = "58c89a48005fac77e7af10029bd16927507128b5"
+rev = "f2001ba09e5236a64e3235a3488bc45fd95421ce"
 
 # One library per layer, each depending only on the ones above it
 # (`scripts/check-hygiene.sh` checks the imports):

@@ -99,28 +99,12 @@ def rewriteTester (n : Node) : RewriteResponse n :=
 
 /-- `((_ update s_j) t u)` for a constructor application `t = (C_k t₁ … tₙ)` and a
 selector `s_j` of `C_i`: `(C_i t₁ … u … tₙ)` if `k = i`, else `t` (cvc5's
-`rewriteUpdater`). CPC's `dt-collapse-updater` states this, but its side
-condition does not evaluate (`$mk_dt_collapse_updater_rhs` takes `eo::len` of a
-list, and counts the field from the wrong end), so it is certified as
-`dt-updater-elim`, `(ite ((_ is C_i) t) (C_i (s₁ t) … u … (sₙ t)) t)`, then the
-tester (`dt-collapse-tester`), the `ite` (`ite-true-cond`, `ite-false-cond`), and
-the selectors (`dt-collapse-selector`). -/
+`rewriteUpdater`), by `dt-collapse-updater`. -/
 def collapseUpdater (T : TypeNode) (i j : Nat) (t u : Node) (k : Nat) (cs : Array Node)
-    (n : Node) : Option (Rw n) := do
-  let fields ← T.dtFields? i
-  let sel (m : Nat) : Node := .app (.node .APPLY_SELECTOR (.const (.dtSel T i m))) #[t]
+    (n : Node) : Option (Rw n) :=
   let ci : Node := .const (.dtCons T i)
-  let tu : Node := .app (.node .APPLY_CONSTRUCTOR ci)
-    ((List.range fields.length).map fun m => if m == j then u else sel m).toArray
-  let tester : Node := .app (.node .APPLY_TESTER ci) #[t]
-  let r ← checkBy .dt_updater_elim n (iteNode tester tu t)
-  let r ← r.next? fun m => Rw.congrArg m 0 fun c => checkBy .dt_collapse_tester c (mkBool (i == k))
-  let r ← r.next? (byRule (if i == k then "ite-true-cond" else "ite-false-cond"))
-  if i != k then return r
-  -- `(C_i … (s_m t) …)` to `(C_i … t_m …)`, one field at a time.
-  (List.range fields.length).foldlM (init := r) fun r m =>
-    if m == j then some r
-    else r.next? fun m' => Rw.congrArg m' m fun c => cs[m]?.bind (checkBy .dt_collapse_selector c)
+  let target := if i == k then .app (.node .APPLY_CONSTRUCTOR ci) (cs.set! j u) else t
+  checkBy .dt_collapse_updater n target
 
 /-- cvc5's `rewriteUpdater`. -/
 def rewriteUpdater (n : Node) : RewriteResponse n :=

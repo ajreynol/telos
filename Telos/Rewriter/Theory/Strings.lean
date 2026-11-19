@@ -385,11 +385,21 @@ def stripEndpoints (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) := do
   let (d2, nc2) := if ne.isEmpty then (emp, nc2) else (nc2.getLast!, nc2.dropLast)
   let c1 := nb.headD emp
   let c2 := ne.headD emp
-  -- Everything is stripped from a substring (of a `str.from_int`, which `b`
-  -- cannot be in): cvc5 gets `(str.contains "" b)`, which is `false`; here
-  -- `str-substr-ctn-contra`, the premise by the rewriter
+  -- Everything is stripped: cvc5 gets `(str.contains "" b)`, which is `false`.
+  -- Certified through `false`, then `evaluate` backwards, so that the result is
+  -- cvc5's (`EQ_NCTN` tests whether two calls give a constant): for a
+  -- substring (of a `str.from_int`, which `b` cannot be in),
+  -- `str-substr-ctn-contra`, the premise by the rewriter; for a `str.from_int`,
+  -- `str-from-int-no-ctn-nondigit`
+  let viaFalse (r : Rw n) : Option (Rw n) :=
+    let target := ctnNode (mkWord []) b
+    if h : r.1 = mkFalse then
+      (byEvaluate target).bind (Proof.reverse mkFalse) |>.map fun s => r.trans (h ▸ s)
+    else none
   if isCtn && rem.isEmpty && a.getKind == .STRING_SUBSTR then
-    return ← byRuleE rw "str-substr-ctn-contra" n
+    return ← viaFalse (← byRuleE rw "str-substr-ctn-contra" n)
+  if isCtn && rem.isEmpty && a.getKind == .STRING_ITOS then
+    return ← viaFalse (← byRuleE rw "str-from-int-no-ctn-nondigit" n)
   -- A `str.from_int` endpoint, which `b` cannot start (end) in: one endpoint at a
   -- time, by `str-contains-strip-from-int-pre` (`-post`)
   if isCtn && (c1.getKind == .STRING_ITOS || c2.getKind == .STRING_ITOS) then
@@ -486,6 +496,24 @@ def ctnLenIneqCmds (n : Node) : Option (List Eo.CCmd) := do
 def ctnLenIneq (n : Node) : Option (Rw n) := do
   applyCmds ((← ctnLenIneqCmds n).foldr .cons .nil) n
 
+/-- `CTN_SPLIT`: `(str.contains "c₁…cₖ" t)`, for `t` of length at most one, is
+`(or (= "" t) (= c₁ t) … (= cₖ t))`, in that order. One character at a time:
+`(or (= c₁ t) (str.contains "c₂…cₖ" t))` (`str-contains-cnst-split-leq-one`),
+the last `(or (= "" t) (= cₖ t))` (`str-contains-char`); then `aci_norm` to
+cvc5's flat disjunction. -/
+def ctnSplit (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) := do
+  let #[a, b] := n.getChildren | none
+  let cs ← word? a
+  let rec go : List Nat → (m : Node) → Option (Rw m)
+    | c :: cs'@(_ :: _), m => do
+      let r ← Rw.congrArg m 0 fun t => regroup t (mkNode .STRING_CONCAT #[mkWord [c], mkWord cs'])
+      let r ← r.next? (byRuleE rw "str-contains-cnst-split-leq-one")
+      r.next? fun o => Rw.congrArg o 1 (go cs')
+    | _, m => byRuleE rw "str-contains-char" m
+  let r ← go cs n
+  let target := mkNode .OR ((eqNode (mkWord []) b :: cs.map fun c => eqNode (mkWord [c]) b).toArray)
+  r.next? fun m => aci m target
+
 /-- cvc5's `rewriteContains`. Each case is `some r` when cvc5 rewrites, with
 `r` the certificate (`none` when telos cannot certify it, and leaves the node
 as it is). -/
@@ -515,15 +543,8 @@ def rewriteContains (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
         else if word? a == some [] then
           -- `CTN_LHS_EMPTYSTR`, certified as cvc5 does, by the multiset rule
           if ArithEntail.check lenB true then some (checkBy .str_ctn_multiset_subset n ff) else none
-        -- `CTN_SPLIT` for a constant first argument, one character at a time:
-        -- `(or (= c b) (str.contains rest b))`, or `(or (= "" b) (= c b))` for
-        -- the last (`str-contains-cnst-split-leq-one`, `str-contains-char`)
-        else if ArithEntail.checkLengthOne b then
-          match word? a with
-          | some (c :: cs@(_ :: _)) => some do
-            let r ← Rw.congrArg n 0 fun t => regroup t (mkNode .STRING_CONCAT #[mkWord [c], mkWord cs])
-            r.next? (byRuleE rw "str-contains-cnst-split-leq-one")
-          | _ => some (byRuleE rw "str-contains-char" n)
+        -- `CTN_SPLIT` for a constant first argument (`ctnSplit`)
+        else if ArithEntail.checkLengthOne b then some (ctnSplit rw n)
         else none,
       fun _ => match word? b with
         -- `CTN_RHS_EMPTYSTR`

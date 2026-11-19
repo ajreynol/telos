@@ -122,26 +122,25 @@ def read_term(text):
     return let_free(parse_sexpr(text))
 
 
-def alpha_free(e, env=None, counter=None):
-    """`e` with its bound variables renamed `@b0`, `@b1`, … in order of binding:
-    equal for terms that differ only in the names of bound variables (cvc5
-    gives the quantifiers it creates fresh variables)."""
+def alpha_free(e, env=None, depth=0):
+    """`e` with its bound variables renamed `@b<d>_<i>`, the `i`-th variable of
+    a quantifier below `d` others: equal for terms that differ only in the names
+    of bound variables (cvc5 gives the quantifiers it creates fresh variables),
+    whatever the order of the subterms (which orientation may change)."""
     env = env or {}
-    counter = counter if counter is not None else [0]
     if isinstance(e, str):
         return env.get(e, e)
     if len(e) == 3 and e[0] in ("forall", "exists") and isinstance(e[1], list):
         env = dict(env)
         decls = []
-        for d in e[1]:
+        for i, d in enumerate(e[1]):
             if isinstance(d, list) and len(d) == 2 and isinstance(d[0], str):
-                env[d[0]] = f"@b{counter[0]}"
-                counter[0] += 1
+                env[d[0]] = f"@b{depth}_{i}"
                 decls.append([env[d[0]], d[1]])
             else:
                 decls.append(d)
-        return [e[0], decls, alpha_free(e[2], env, counter)]
-    return [alpha_free(x, env, counter) for x in e]
+        return [e[0], decls, alpha_free(e[2], env, depth + 1)]
+    return [alpha_free(x, env, depth) for x in e]
 
 
 COMMUTATIVE = {"and", "or", "xor", "+", "*", "distinct", "bvand", "bvor", "bvxor",

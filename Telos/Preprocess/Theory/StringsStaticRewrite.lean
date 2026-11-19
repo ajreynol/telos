@@ -19,10 +19,12 @@ telos certifies each case by CPC rules:
   then `str-concat-unify`, `str-concat-clash` and their variants;
 * the `str.replace` cases: `STR_EMP_REPL_X_Y_X`, `STR_EMP_REPL_EMP` (both
   forms), `STR_EQ_REPL_EMP`, `STR_EQ_REPL_TO_EQ`, `STR_EQ_REPL_NOT_CTN` and
-  `STR_EQ_REPL_TO_DIS`, each a `str-eq-repl-*` rule.
+  `STR_EQ_REPL_TO_DIS`, each a `str-eq-repl-*` rule;
+* the `str.substr` cases `STR_EMP_SUBSTR_LEQ_LEN` and `STR_EMP_SUBSTR_LEQ_Z`
+  (`str-substr-eq-empty`, `str-substr-eq-empty-leq-len`,
+  `str-substr-z-eq-empty-leq`).
 
-Not ported: the `str.substr` cases (`STR_EMP_SUBSTR_*`, no CPC rule), and the
-length-based unifications (`rewriteViaStrEqLenUnifyPrefix`,
+Not ported: the length-based unifications (`rewriteViaStrEqLenUnifyPrefix`,
 `rewriteViaStrEqLenUnify`). Regular expression equalities (`RE_EQ_ELIM`) are
 not ported either.
 -/
@@ -192,12 +194,36 @@ def strEqReplace (n : Node) : Option (Rw n) := do
     if r₂ == x && ArithEntail.checkEq (len r₁) (len r₂) then return ← by_ "str-eq-repl-tgt-eq-len"
     none)
 
+/-- The `str.substr` cases of `(= "" (str.substr x n m))`: with `n ≥ 0` and
+`m > 0` entailed, `(= x "")` if `n` is `0` (`STR_EMP_SUBSTR_LEQ_LEN`,
+`str-substr-eq-empty`), else `(<= (str.len x) n)`
+(`str-substr-eq-empty-leq-len`); for a non-empty `x` and `n = 0`, `(<= m 0)`
+(`STR_EMP_SUBSTR_LEQ_Z`, `str-substr-z-eq-empty-leq`). Each rule has the
+`str.substr` on the left: `eq-symm` first when it is on the right. -/
+def strEmpSubstr (n : Node) : Option (Rw n) := do
+  let #[a, b] := n.getChildren | none
+  let empty := mkWord []
+  firstOf ([0, 1].map fun i _ => do
+    let (e, ne) := if i == 0 then (a, b) else (b, a)
+    if e != empty then none
+    let .app (.kind .STRING_SUBSTR) #[x, st, ln] := ne | none
+    let oriented : Rw n := if i == 1 then Rw.id n else (byRule "eq-symm" n).getD (Rw.id n)
+    if oriented.1.getChildren[0]? != some ne then none
+    let zero : Node := .const (.integer 0)
+    let by_ (rule : String) : Option (Rw n) := oriented.next? (byRuleE strRw rule)
+    if ArithEntail.check st false && ArithEntail.check ln true then
+      if st == zero then return ← by_ "str-substr-eq-empty"
+      return ← by_ "str-substr-eq-empty-leq-len"
+    if checkNonEmpty x && st == zero then return ← by_ "str-substr-z-eq-empty-leq"
+    none)
+
 /-- `rewriteStrEqualityExt`, in cvc5's order of cases. -/
 def strEqualityExt (n : Node) : Option (Rw n) := do
   let #[a, b] := n.getChildren | none
   if n.getKind != .EQUAL then none
   let isStrTerm (t : Node) : Bool := !t.isConst && t.getKind.theoryId == .THEORY_STRINGS
   if !(isStrTerm a || isStrTerm b) then none
-  firstOf [fun _ => eqNctn n, fun _ => eqNfix n, fun _ => strEqUnify n, fun _ => strEqReplace n]
+  firstOf [fun _ => eqNctn n, fun _ => eqNfix n, fun _ => strEqUnify n, fun _ => strEqReplace n,
+    fun _ => strEmpSubstr n]
 
 end Telos.Preprocess
