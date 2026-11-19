@@ -100,7 +100,7 @@ partial def substFact (σ : SubstFacts) (fuel : Nat) (n : Node) : EmitM (Node ×
         match e with
         | some e => pure e
         | none => closeChain c #[]
-    let p ← congStep n op eqs (some n')
+    let p ← congStep n op eqs
     -- a rebuilt term of `σ`
     if let some (q, s) := σ n' then
       let (s', r) ← substFact σ (fuel - 1) s

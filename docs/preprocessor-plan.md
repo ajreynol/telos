@@ -141,8 +141,7 @@ at the level of assertion lists.
   learned literals by replaying the propagator's trace with the clausal rules,
   substitutions by deriving the result's conjuncts from the last one down), and
   printed with shared terms `define`d once (`Telos/Core/Proof/Shared.lean`).
-  Congruence below `distinct` goes through `distinct_elim`, since Logos does
-  not translate CPC's typed lists. `fuzz-pp.py --proofs` checks every proof
+  Congruence below `distinct` is `pairwise_cong`. `fuzz-pp.py --proofs` checks every proof
   with Ethos: 3000 of 3000 accepted (150 benchmarks per mode, seeds 1 and 7).
 
 ## Status

@@ -128,45 +128,14 @@ def closeChain (a : Node) (chain : Array Nat) : EmitM Nat :=
   | [p] => pure p
   | ps => push ⟨.trans, [], ps, .step⟩
 
-/-- `(= n n')` for `n = (distinct t₁ … tₖ)` and `n' = (distinct t'₁ … t'ₖ)`, from
-the facts `(= tᵢ t'ᵢ)`: both sides by `distinct_elim` to their disequalities,
-which are related by congruence. (CPC's `distinct` takes a typed list, which
-Logos does not translate, so `nary_cong` on the list is not checkable by it.) -/
-def congDistinct (n n' : Node) (eqs : List Nat) : EmitM Nat := do
-  let pairs (ts : Array Node) : List (Nat × Nat) :=
-    (List.range ts.size).flatMap fun i => ((List.range ts.size).filter (i < ·)).map (i, ·)
-  let ts := n.getChildren
-  let ts' := n'.getChildren
-  let blast (ts : Array Node) : Node :=
-    match (pairs ts).map fun (i, j) => Node.notNode (Node.eqNode ts[i]! ts[j]!) with
-    | [d] => d
-    | ds => Node.mkNode .AND ds.toArray
-  let P := blast ts
-  let e₁ ← push ⟨.distinct_elim, [.node (Node.eqNode n P)], [], .step⟩
-  let mut nqs := #[]
-  for (i, j) in pairs ts do
-    let q ← push ⟨.cong, [.node (Node.eqNode ts[i]! ts[j]!)], [eqs[i]!, eqs[j]!], .step⟩
-    nqs := nqs.push (← push ⟨.cong, [.node (Node.notNode (Node.eqNode ts[i]! ts[j]!))], [q], .step⟩)
-  let eP ← if nqs.size == 1 then pure nqs[0]! else push ⟨.nary_cong, [.node P], nqs.toList, .step⟩
-  let e₃ ← push ⟨.distinct_elim, [.node (Node.eqNode n' (blast ts'))], [], .step⟩
-  let e₃' ← push ⟨.symm, [], [e₃], .step⟩
-  push ⟨.trans, [], [e₁, eP, e₃'], .step⟩
-
 /-- The congruence step for `n`, given the facts `(= cᵢ dᵢ)` for its children
-(for a binder, the fact for its body); `n'` is the result, needed for
-`distinct` (`congDistinct`). -/
-def congStep (n : Node) (op : Op) (eqs : List Nat) (n' : Option Node := none) : EmitM Nat :=
-  match op.eoShape, n' with
-  | .rightAssocNil .., _ => push ⟨.nary_cong, [.node n], eqs, .step⟩
-  | .typedList _, some n' => congDistinct n n' eqs
-  | .typedList _, none =>
-    -- `(f (@tlist t₁ … tₙ))`: `nary_cong` on the list, then `cong` on `f`
-    match n.toEo with
-    | .Apply _ l => do
-      let pl ← push ⟨.nary_cong, [.term l], eqs, .step⟩
-      push ⟨.cong, [.node n], [pl], .step⟩
-    | _ => push ⟨.cong, [.node n], eqs, .step⟩
-  | _, _ => push ⟨.cong, [.node n], eqs, .step⟩
+(for a binder, the fact for its body). For `distinct`, whose CPC argument is a
+typed list, `pairwise_cong`. -/
+def congStep (n : Node) (op : Op) (eqs : List Nat) : EmitM Nat :=
+  match op.eoShape with
+  | .rightAssocNil .. => push ⟨.nary_cong, [.node n], eqs, .step⟩
+  | .typedList _ => push ⟨.pairwise_cong, [.node n], eqs, .step⟩
+  | _ => push ⟨.cong, [.node n], eqs, .step⟩
 
 /-- How to emit the steps that have no CPC commands: a semantic step from `n`
 to `k` (its fact `(= n k)`), and a substitution step, given the facts of its
@@ -191,7 +160,7 @@ partial def emitChainWith (X : Ext) : {n m : Node} → Certified n m → EmitM (
   | _, _, .step cs _ rest => do
     let p ← emitCmds cs
     return #[p] ++ (← emitChainWith X rest)
-  | _, _, @Certified.congrArg op cs _ i c' hi _ _ hc rest => do
+  | _, _, @Certified.congrArg op cs _ i _ hi _ _ hc rest => do
     let ch ← emitChainWith X hc
     -- No step for a child that does not change (no `refl` facts either).
     if ch.isEmpty then return ← emitChainWith X rest
@@ -199,16 +168,16 @@ partial def emitChainWith (X : Ext) : {n m : Node} → Certified n m → EmitM (
     for h : j in [0:cs.size] do
       if j == i then eqs := eqs.push (← closeChain cs[i] ch)
       else eqs := eqs.push (← closeChain cs[j] #[])
-    let p ← congStep (.app op cs) op eqs.toList (some (.app op (cs.set i c')))
+    let p ← congStep (.app op cs) op eqs.toList
     return #[p] ++ (← emitChainWith X rest)
-  | _, _, @Certified.congr op cs ds _ _ _ _ hc rest => do
+  | _, _, @Certified.congr op cs _ _ _ _ _ hc rest => do
     let chains ← (List.range cs.size).attach.mapM fun ⟨j, hj⟩ =>
       emitChainWith X (hc j (List.mem_range.1 hj))
     let p ← if chains.all (·.isEmpty) then pure none
       else do
         let eqs ← (List.range cs.size).attach.mapM fun ⟨j, hj⟩ =>
           closeChain (cs[j]'(List.mem_range.1 hj)) chains[j]!
-        some <$> congStep (.app op cs) op eqs (some (.app op ds))
+        some <$> congStep (.app op cs) op eqs
     return p.toArray ++ (← emitChainWith X rest)
   | n, _, @Certified.static _ k _ proc _ rest => do
     let p ← emitCmds (proc.cmds n k)

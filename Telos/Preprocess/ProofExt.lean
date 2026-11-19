@@ -292,7 +292,7 @@ partial def justE (P : TriPlan) (k : Node) (j : Nat) : TriEM Nat := do
     | .congr ks =>
       let .app op _ := J.a | throw "tri: congruence of an atom"
       let eqs ← ks.toList.mapM (justE P k)
-      (congStep J.a op eqs (some J.b) : EmitM Nat)
+      (congStep J.a op eqs : EmitM Nat)
     | .body k' =>
       let .app op _ := J.a | throw "tri: body of an atom"
       let e ← justE P k k'
