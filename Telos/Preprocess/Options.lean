@@ -1,3 +1,5 @@
+import Telos.Rewriter.Rewriter
+
 /-!
 # Preprocessing options
 
@@ -14,6 +16,13 @@ defaults, which cvc5 sets from the logic (`SetDefaults`,
   and arithmetic's part in it;
 * `--repeat-simp`: non-clausal simplification again after static learning; on
   for quantifier-free logics with arrays, UF and bit-vectors.
+
+The logic also fixes cvc5's `--theoryof-mode` (`SetDefaults`): term-based when
+several theories share terms and none is bit-vectors, strings or sets (nor
+quantifier-free non-linear arithmetic), so that, for example, `(= x 0)` belongs
+to UF rather than arithmetic. It decides which theory's hooks the preprocessor
+calls on a term (`ppTheoryOf`: `ppAssert`, `ppStaticRewrite`), not the
+rewriter's, which is always type-based.
 
 The logic is cvc5's `LogicInfo` (`src/theory/logic_info.cpp`), widened as
 `SetDefaults::widenLogic` does: strings add integers, and arrays, datatypes,
@@ -127,6 +136,8 @@ structure UserOptions where
 
 /-- The options the preprocessor runs with. -/
 structure PPOptions where
+  /-- `--theoryof-mode=term` (otherwise `type`). -/
+  termBased : Bool := false
   simplification : Bool := true
   arithRewriteEq : Bool := false
   staticLearning : Bool := true
@@ -138,11 +149,50 @@ structure PPOptions where
 for the others. -/
 def PPOptions.ofLogic (logic : Logic) (u : UserOptions := {}) : PPOptions :=
   let l := logic.widen
-  { simplification := u.simplification.getD true
+  { termBased := l.numTheories > 1 && !l.bv && !l.strings && !l.sets &&
+      !(l.arith && !l.linear && !l.quantified)
+    simplification := u.simplification.getD true
     arithRewriteEq := u.arithRewriteEq.getD (l.pureArith && l.linear && !l.quantified)
     staticLearning := u.staticLearning.getD true
     arithStaticLearning := u.arithStaticLearning.getD true
     repeatSimp := u.repeatSimp.getD (!l.quantified && l.arrays && l.uf && l.bv) }
+
+/-- The position of a theory in cvc5's `TheoryId`, which orders them. -/
+def _root_.Telos.TheoryId.cvc5Index : TheoryId → Nat
+  | .THEORY_BUILTIN => 0
+  | .THEORY_BOOL => 1
+  | .THEORY_UF => 2
+  | .THEORY_ARITH => 3
+  | .THEORY_BV => 4
+  | .THEORY_ARRAYS => 7
+  | .THEORY_DATATYPES => 8
+  | .THEORY_SETS => 10
+  | .THEORY_STRINGS => 12
+  | .THEORY_QUANTIFIERS => 13
+
+/-- `Env::theoryOf`: `Theory::theoryOf` in the mode of the options. Type-based,
+it is the rewriter's `theoryOf`. Term-based: a non-Boolean variable (or skolem)
+belongs to UF, and an equality of two terms of the same non-Boolean type to
+the theory of its sides if they agree, else to the one that is not the type's
+(UF for `(= x 0)`), else to the least. -/
+partial def ppTheoryOf (termBased : Bool) (n : Node) : TheoryId :=
+  if !termBased then theoryOf n else
+  match n with
+  | .var .. | .skolem .. | .boundVar .. =>
+    if theoryOf n == .THEORY_BOOL then .THEORY_BOOL else .THEORY_UF
+  | .app (.kind .EQUAL) #[l, r] =>
+    let tl := l.typeHint
+    if tl != r.typeHint || tl == some .boolean then theoryOf n
+    else
+      let t₁ := ppTheoryOf true l
+      let t₂ := ppTheoryOf true r
+      if t₁ == t₂ then t₁
+      else
+        let t₃ := theoryOf n
+        if t₁ == t₃ then t₂
+        else if t₂ == t₃ then t₁
+        else if t₁.cvc5Index < t₂.cvc5Index then t₁ else t₂
+  | n => theoryOf n
 
 /-- A Boolean option of cvc5's command line (`--name`, `--no-name`,
 `--name=true|false`) with the name `name`, if `arg` is one. -/

@@ -58,7 +58,7 @@ def arithEqSplit (n : Node) : Option (Rw n) := do
 def ppStaticRewrite (opts : PPOptions) (n : Node) : Option (Rw n) :=
   match n.getKind with
   | .EQUAL =>
-    match theoryOf n with
+    match ppTheoryOf opts.termBased n with
     | .THEORY_ARITH => if opts.arithRewriteEq then arithEqSplit n else Arith.normalizeEquality n
     | .THEORY_DATATYPES => DatatypesRewriter.consEq n
     | .THEORY_STRINGS => if n.getChildren[0]?.bind (·.typeHint) == some .string then strEqualityExt n else none

@@ -34,9 +34,9 @@ def preprocessCert (as : List Node) (opts : PPOptions := {}) : Pipeline (inputNo
   -- `simplifyAssertions`: non-clausal simplification, twice with `repeat-simp`
   let simplifyAssertions (p : Pipeline (inputNode as)) : Pipeline (inputNode as) × Array Node :=
     if !opts.simplification then (p, #[]) else
-    let (p, lits) := pass "non-clausal-simp" fun _ => Pipeline.nonClausalSimpB p
+    let (p, lits) := pass "non-clausal-simp" fun _ => Pipeline.nonClausalSimpB p opts.termBased
     if !opts.repeatSimp then (p, lits) else
-    let (p, lits') := pass "non-clausal-simp" fun _ => Pipeline.nonClausalSimpB p
+    let (p, lits') := pass "non-clausal-simp" fun _ => Pipeline.nonClausalSimpB p opts.termBased
     (p, lits ++ lits')
   let (p, lits) := simplifyAssertions p
   let p := if opts.staticLearning then

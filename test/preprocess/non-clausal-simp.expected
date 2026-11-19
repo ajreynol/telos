@@ -4,7 +4,7 @@
 (declare-fun w () Int)
 (declare-fun f (Int) Int)
 (declare-fun g (Int) Int)
-(define-fun x () Int (+ 1 (+ 2 z)))
+(define-fun x () Int (+ 1 y))
 (define-fun y () Int (+ 2 z))
 (define-fun a () Bool true)
 (define-fun b () Bool true)

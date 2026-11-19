@@ -266,11 +266,14 @@ options that change it, with the defaults cvc5 gives them from the logic, with
 proofs on (`Telos/Preprocess/Options.lean`): `--simplification`,
 `--arith-rewrite-equalities` (on for pure linear quantifier-free arithmetic),
 `--static-learning`, `--arith-static-learning` and `--repeat-simp` (on for
-quantifier-free logics with arrays, UF and bit-vectors). `static-learning` is
+quantifier-free logics with arrays, UF and bit-vectors), and the term-based
+`--theoryof-mode` of logics whose theories share terms without bit-vectors,
+strings or sets. `static-learning` is
 ported (`Passes/StaticLearning.lean`: UF's diamonds and arithmetic's `ite`
 lemmas, each proven in CPC; not bit-vectors' power-of-two lemma, which cvc5
 does not prove), and so is `repeat-simp` (non-clausal simplification again, with
-the earlier definitions substituted). `fuzz-pp.py` now runs cvc5 with
+the earlier definitions kept; with proofs, cvc5 keeps every definition as
+solved). `fuzz-pp.py` now runs cvc5 with
 `--produce-proofs` and static learning, and with `--logics` gives each random
 benchmark its smallest logic, and with `--options` one random option on both
 sides. Not ported: the regular options for passes outside this list

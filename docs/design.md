@@ -969,9 +969,18 @@ tested:
      A lemma it cannot prove is left out. Not ported: bit-vectors' lemma on
      sums of powers of two, which cvc5 adds without a proof.
    - `repeat-simp`: non-clausal simplification runs again with the definitions
-     of the earlier run in the slot; the fast path substitutes their
-     right-hand sides by the new equations (step 2) and keeps them before the
-     new ones. Without the fast path, a later run does nothing.
+     of the earlier run in the slot, which it keeps before the new ones.
+     Without the fast path, a later run does nothing.
+   - `--theoryof-mode`: the logic makes cvc5's mode term-based when theories
+     share terms and none is bit-vectors, strings or sets (`QF_UFLIA`,
+     `QF_AUFLIA`, `QF_DT`, …), so that `(= x 0)` belongs to UF: its `ppAssert`
+     (variable elimination) and `ppStaticRewrite` (none) are UF's
+     (`ppTheoryOf`). The rewriter's dispatch is always type-based.
+   - Definitions with proofs: cvc5 adds each run's proven equations to its
+     top-level substitutions as they are, so with `--produce-proofs` (which
+     telos matches) a definition's right-hand side is as solved, not
+     substituted by the later ones (`(define-fun y () Int (f x))`, where
+     without proofs cvc5 prints `(f (+ 1 z))`).
    - Bit-vector numerals `(_ bvN w)` are read (as `#b…`), so the SMT-LIB
      bit-vector benchmarks parse.
    - Profiling: `--profile` on `telos` and `telos-fuzz` prints where the time
