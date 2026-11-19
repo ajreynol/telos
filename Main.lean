@@ -5,7 +5,7 @@ import Telos
 
 ```
 telos [--proof] [--proof-dir DIR] [--profile] FILE
-telos --post-asserts [--simplification=none] [--profile] FILE
+telos --post-asserts [PREPROCESSING OPTIONS] [--profile] FILE
 ```
 
 Reads an SMT-LIB script of declarations and `(simplify t)` commands (`-` for
@@ -26,8 +26,10 @@ With `--post-asserts`, `FILE` is a benchmark (declarations, assertions and
 with `-o post-asserts` (`Telos/Frontend/PostAsserts.lean`). Their conjunction is
 equivalent, with the definitions of the variables solved by non-clausal
 simplification, to that of the input assertions (`Telos.preprocess_correct`).
-With `--simplification=none`, non-clausal simplification is off, as with cvc5's
-option of that name.
+The preprocessing options are cvc5's, with cvc5's defaults for the script's
+logic (`Telos/Preprocess/Options.lean`): `--simplification=none|batch`,
+`--[no-]arith-rewrite-equalities`, `--[no-]static-learning`,
+`--[no-]arith-static-learning` and `--[no-]repeat-simp`.
 -/
 
 open Telos Telos.Frontend
@@ -38,24 +40,23 @@ structure Options where
   file : Option String := none
   profile : Bool := false
   postAsserts : Bool := false
-  simplify : Bool := true
+  pp : Preprocess.UserOptions := {}
 
 def parseArgs : List String → Options → Except String Options
   | [], o => .ok o
   | "--proof" :: rest, o => parseArgs rest { o with proof := true }
   | "--profile" :: rest, o => parseArgs rest { o with profile := true }
   | "--post-asserts" :: rest, o => parseArgs rest { o with postAsserts := true }
-  | "--simplification=none" :: rest, o => parseArgs rest { o with simplify := false }
-  | "--simplification=batch" :: rest, o => parseArgs rest { o with simplify := true }
   | "--proof-dir" :: d :: rest, o => parseArgs rest { o with proofDir := some d }
   | ["--proof-dir"], _ => .error "--proof-dir needs a directory"
   | f :: rest, o =>
-    if f.startsWith "--" && f != "-" then .error s!"unknown option {f}"
+    if let some pp := o.pp.parseArg f then parseArgs rest { o with pp }
+    else if f.startsWith "--" && f != "-" then .error s!"unknown option {f}"
     else if o.file.isSome then .error "only one input file is accepted"
     else parseArgs rest { o with file := some f }
 
 def usage : String :=
-  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [--simplification=none] [--profile] FILE"
+  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [PREPROCESSING OPTIONS] [--profile] FILE"
 
 def main (args : List String) : IO UInt32 := do
   let opts ← match parseArgs args {} with
@@ -68,7 +69,7 @@ def main (args : List String) : IO UInt32 := do
     | .ok sc => pure sc
     | .error e => IO.eprintln s!"telos: {e}"; return 1
   if opts.postAsserts then
-    let r ← Profile.measure "total" "preprocess" fun _ => postAsserts sc opts.simplify
+    let r ← Profile.measure "total" "preprocess" fun _ => postAsserts sc opts.pp
     if opts.profile then Profile.report
     match r with
     | .ok out => IO.print out; return 0

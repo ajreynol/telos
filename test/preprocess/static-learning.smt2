@@ -1,0 +1,22 @@
+; static-learning: arithmetic's ite bounds (with the bounds x >= 5 and y >= 0 that
+; non-clausal simplification saw, weakened where tighter), its min/max lemmas,
+; and UF's diamonds, each proven in CPC.
+(set-logic QF_UFLIA)
+(declare-sort U 0)
+(declare-const c Bool)
+(declare-const d Bool)
+(declare-const x Int)
+(declare-const y Int)
+(declare-const z Int)
+(declare-const a U)
+(declare-const b U)
+(declare-const e U)
+(declare-const f U)
+(assert (>= x 5))
+(assert (>= y 0))
+(assert (> (+ (ite c x 4) (ite d 0 1)) z))
+(assert (> (+ (ite c x y) (ite (>= z 3) z 3)) 7))
+(assert (< (ite (>= y 2) 2 y) z))
+(assert (or (and (= a b) (= b e)) (and (= a f) (= f e))))
+(assert (> (ite c (ite d x 7) 3) y))
+(check-sat)

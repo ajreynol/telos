@@ -1,0 +1,12 @@
+;; post-asserts start
+(set-logic QF_AUFBVLIRA)
+(declare-fun c () Bool)
+(declare-fun y () Int)
+(define-fun x () Int 0)
+(define-fun a () Bool false)
+(assert (ite (>= y 4) (not (>= y 1)) (or (not (= (to_real y) -3/1)) c)))
+(assert true)
+(assert true)
+(assert true)
+(check-sat)
+;; post-asserts end

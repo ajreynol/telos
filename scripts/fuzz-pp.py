@@ -23,10 +23,19 @@ telos, like cvc5's `simplify`, keeps the casts (`(+ r (to_real (* -1 x)))`, `0/1
 
 The benchmarks are random (default): scripts of 1 to 4 assertions, each a
 random Boolean term from `telos-fuzz` (with the declarations of `fuzz.py`), or
-the SMT-LIB files given as arguments.
+the SMT-LIB files given as arguments. cvc5 runs with proofs on
+(`--produce-proofs`), which telos matches (`Telos/Preprocess/Options.lean`).
+
+With `--logics`, a random benchmark declares only the symbols it uses, and its
+logic is the smallest that cvc5 accepts for it (quantifier-free if it can be,
+with the theories of its declarations and the least arithmetic), so that cvc5's
+defaults that depend on the logic are compared. With `--options`, each
+benchmark is run, on both sides, with one of the preprocessing options telos
+has (`PP_OPTIONS`), or none, at random: safe mode allows one regular option.
 
 Usage:
-  scripts/fuzz-pp.py [--cvc5 PATH] [--seed N] [--count N] [--depth N] [--show N] [MODE]
+  scripts/fuzz-pp.py [--cvc5 PATH] [--seed N] [--count N] [--depth N] [--show N]
+                     [--logics] [--options] [MODE]
   scripts/fuzz-pp.py [--cvc5 PATH] [--show N] FILE.smt2 ...
 
 MODE is one of `fuzz.py`'s term modes (`--arith`, `--uf`, …). Build first:
@@ -50,8 +59,68 @@ ROOT = Path(__file__).resolve().parent.parent
 TELOS = ROOT / ".lake" / "build" / "bin" / "telos"
 # cvc5's passes that telos does not port yet, switched off. `theory-preprocess`
 # and `static-rewrite` cannot be: benchmarks they change differ.
-CVC5_OPTS = ["--no-static-learning"]
+CVC5_OPTS = []
 MODES = ["arith", "uf", "bv", "arrays", "mixed", "strings", "sets", "datatypes", "quantifiers"]
+# cvc5's regular options that change preprocessing, and that telos has.
+PP_OPTIONS = ["--simplification=none", "--arith-rewrite-equalities",
+              "--no-arith-rewrite-equalities", "--no-static-learning",
+              "--no-arith-static-learning"]
+# The arithmetic of logics, least first.
+ARITH = ["", "LIA", "LRA", "LIRA", "NIA", "NRA", "NIRA"]
+
+
+BUILTIN = {"declare-const", "declare-fun", "declare-sort", "declare-datatypes", "par", "T", "S",
+           "0", "1", "2", "4", "_", "Int", "Real", "Bool", "String", "BitVec", "Array", "Set", "Tuple"}
+
+
+def declared(line):
+    """The names a prelude line declares (for a datatype: its sorts, constructors
+    and selectors), and the names it uses."""
+    toks = re.findall(r"[^\s()]+", line)
+    if line.startswith("(declare-datatypes"):
+        names = set(toks) - BUILTIN
+        return names, names
+    return {toks[1]}, set(toks[2:]) - BUILTIN
+
+
+def prelude_for(body):
+    """The declarations of `fuzz.PRELUDE` that `body` needs (without `set-logic`),
+    in order, and the theory letters of the logics they need."""
+    lines = [l for l in fuzz.PRELUDE.splitlines() if l and not l.startswith("(set-logic")]
+    want = set(re.findall(r"[^\s()]+", body))
+    keep = set()
+    changed = True
+    while changed:
+        changed = False
+        for i, l in enumerate(lines):
+            names, uses = declared(l)
+            if i not in keep and names & want:
+                keep.add(i)
+                want |= uses
+                changed = True
+    out = [l for i, l in enumerate(lines) if i in keep]
+    text = " ".join(out) + " " + body
+    theories = set()
+    if re.search(r"\bU\b", text) or "(declare-fun" in text: theories.add("UF")
+    if "Array" in text: theories.add("A")
+    if "BitVec" in text or "#b" in body: theories.add("BV")
+    if "declare-datatypes" in text or "Tuple" in text or "tuple" in body: theories.add("DT")
+    if "String" in text or "str." in body or "re." in body: theories.add("S")
+    if "Set" in text or "set." in body: theories.add("FS")
+    return out, theories
+
+
+def logic_candidates(theories, quantified):
+    order = ["A", "UF", "BV", "DT", "S"]
+    base = "".join(t for t in order if t in theories)
+    tail = "FS" if "FS" in theories else ""
+    qs = [""] if quantified else ["QF_", ""]
+    out = []
+    for q in qs:
+        for ar in ARITH:
+            core = base + ar + tail
+            out.append(q + (core if core else "SAT" if q == "" else "SAT"))
+    return out + ["ALL"]
 
 
 def post_asserts(text):
@@ -95,8 +164,11 @@ def is_number(t):
     return t.lstrip("-").isdigit()
 
 
-def run(cmd, path):
-    r = subprocess.run(cmd + [str(path)], capture_output=True, text=True)
+def run(cmd, path, timeout=120):
+    try:
+        r = subprocess.run(cmd + [str(path)], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return None, f"timeout ({timeout}s)"
     return r.stdout if r.returncode == 0 else None, r.stderr.strip()
 
 
@@ -123,13 +195,15 @@ def main():
     ap.add_argument("--count", type=int, default=200, help="random benchmarks")
     ap.add_argument("--depth", type=int, default=2)
     ap.add_argument("--show", type=int, default=5, help="mismatches to print")
+    ap.add_argument("--logics", action="store_true", help="the smallest logic of each benchmark")
+    ap.add_argument("--options", action="store_true", help="one random preprocessing option")
     for m in MODES:
         ap.add_argument(f"--{m}", action="store_true")
     ap.add_argument("files", nargs="*")
     a = ap.parse_args()
     if not TELOS.exists():
         sys.exit("error: build telos first: lake build telos telos-fuzz")
-    cvc5 = [a.cvc5, "-o", "post-asserts", "--print-arith-lit-token",
+    cvc5 = [a.cvc5, "-o", "post-asserts", "--print-arith-lit-token", "--produce-proofs",
             "--no-var-ent-eq-elim-quant", *CVC5_OPTS]
     tmp = Path(tempfile.mkdtemp())
     files = [Path(f) for f in a.files]
@@ -144,13 +218,30 @@ def main():
             path = tmp / f"b{i}.smt2"
             body = "".join(f"(assert {t})\n" for t in terms[:k])
             terms = terms[k:]
-            path.write_text(fuzz.PRELUDE + body + "(check-sat)\n")
+            if a.logics:
+                decls, theories = prelude_for(body)
+                quantified = "forall" in body or "exists" in body
+                for logic in logic_candidates(theories, quantified):
+                    path.write_text(f"(set-logic {logic})\n" + "\n".join(decls) + "\n" + body + "(check-sat)\n")
+                    r = subprocess.run(cvc5 + [str(path)], capture_output=True, text=True)
+                    if r.returncode == 0 and "(error" not in r.stdout:
+                        break
+            else:
+                path.write_text(fuzz.PRELUDE + body + "(check-sat)\n")
             files.append(path)
     counts = {"same": 0, "renamed": 0, "oriented": 0, "ordered": 0, "casts": 0}
     mismatches, failures = [], []
+    if a.files:
+        # benchmarks: no need to solve them
+        cvc5 = cvc5 + ["--preprocess-only"]
+    orng = random.Random(a.seed + 1)
     for path in files:
-        ours, err = run([str(TELOS), "--post-asserts"], path)
-        theirs, cerr = run(cvc5, path)
+        opt = []
+        if a.options:
+            choice = orng.randrange(len(PP_OPTIONS) + 1)
+            opt = PP_OPTIONS[choice:choice + 1]
+        ours, err = run([str(TELOS), "--post-asserts", *opt], path)
+        theirs, cerr = run(cvc5 + opt, path)
         if ours is None or theirs is None:
             failures.append((path, err if ours is None else cerr))
             continue

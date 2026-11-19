@@ -97,14 +97,17 @@ def nameSkolems (N : DtNames) (ns : List Node) : List Node × List String :=
   (ns.map (substSkolems (named.map fun (k, v, _) => (k, v))), named.map (·.2.2))
 
 /-- Preprocess the assertions of `sc`, and print the result as cvc5's
-`-o post-asserts` does. -/
-def postAsserts (sc : Script) (simplify : Bool := true) : Except String String := do
+`-o post-asserts` does, with the user's options `u` and the defaults of the
+script's logic (`ALL` if it has none). -/
+def postAsserts (sc : Script) (u : Preprocess.UserOptions := {}) : Except String String := do
+  let logic ← Preprocess.Logic.parse (sc.logic.getD "ALL")
+  let opts := Preprocess.PPOptions.ofLogic logic u
   let as ← sc.assertions.mapM fun a => match a.node with
     | .ok n =>
       if n.typeHint == some .boolean then pure n
       else throw s!"the assertion is not a well-typed formula: {a.source}"
     | .error e => throw s!"{e}: {a.source}"
-  let (out, defs) := if as.isEmpty then (#[], []) else Preprocess.preprocess as simplify
+  let (out, defs) := if as.isEmpty then (#[], []) else Preprocess.preprocess as opts
   -- the definitions `(= x t)`, printed as `define-fun`s; skolems named in both
   let defPairs := defs.filterMap fun
     | .app (.kind .EQUAL) #[.var x T, t] => some (x, T, t)

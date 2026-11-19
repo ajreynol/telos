@@ -1,6 +1,7 @@
 import Telos.Preprocess.Pipeline
 import Telos.Rewriter.Rewrite
 import Telos.Preprocess.Theory.StringsStaticRewrite
+import Telos.Preprocess.Options
 
 /-!
 # The `static-rewrite` pass
@@ -11,8 +12,10 @@ assertion is traversed bottom up, and each node is replaced by its theory's
 traversed again. The result is not rewritten (the `theory-preprocess` pass that
 follows rewrites). Ported theory hooks:
 
-* arithmetic equalities: normalized (`ArithRewriter::rewriteEqualityExt`, via
-  `PreprocessRewriteEq::ppRewriteEq`; `Arith.normalizeEquality`);
+* arithmetic equalities (`PreprocessRewriteEq::ppRewriteEq`): with
+  `--arith-rewrite-equalities`, `(= a b)` becomes `(and (<= a b) (>= a b))`
+  (`arith-eq-elim-int`/`-real`, then `aci_norm` for the order); otherwise
+  normalized (`ArithRewriter::rewriteEqualityExt`; `Arith.normalizeEquality`);
 * datatype equalities: `MACRO_DT_CONS_EQ` (`DatatypesRewriter.consEq`);
 * `distinct`: blasted into disequalities (`TheoryBuiltin::ppStaticRewrite`,
   `distinct-elim`);
@@ -38,12 +41,25 @@ def blastDistinct (n : Node) : Option (Rw n) := do
     | ds => mkNode .AND ds.toArray
   checkBy .distinct_elim n target
 
+/-- `PreprocessRewriteEq::ppRewriteEq` with `--arith-rewrite-equalities`:
+`(= a b)` is `(and (<= a b) (>= a b))`. -/
+def arithEqSplit (n : Node) : Option (Rw n) := do
+  let #[a, b] := n.getChildren | none
+  let rule ← match a.typeHint, b.typeHint with
+    | some .integer, some .integer => some Eo.CRule.arith_eq_elim_int
+    | some .real, some .real => some Eo.CRule.arith_eq_elim_real
+    | _, _ => none
+  let r ← byRuleWithPremises rule [a, b] [] n
+  let target := mkNode .AND #[mkNode .LEQ #[a, b], mkNode .GEQ #[a, b]]
+  if r.1 == target then return r
+  return r.trans (← checkBy .aci_norm r.1 target)
+
 /-- The theory's `ppStaticRewrite` of a node. -/
-def ppStaticRewrite (n : Node) : Option (Rw n) :=
+def ppStaticRewrite (opts : PPOptions) (n : Node) : Option (Rw n) :=
   match n.getKind with
   | .EQUAL =>
     match theoryOf n with
-    | .THEORY_ARITH => Arith.normalizeEquality n
+    | .THEORY_ARITH => if opts.arithRewriteEq then arithEqSplit n else Arith.normalizeEquality n
     | .THEORY_DATATYPES => DatatypesRewriter.consEq n
     | .THEORY_STRINGS => if n.getChildren[0]?.bind (·.typeHint) == some .string then strEqualityExt n else none
     | _ => none
@@ -52,16 +68,17 @@ def ppStaticRewrite (n : Node) : Option (Rw n) :=
 
 /-- `StaticRewrite::rewriteAssertion`: the children first, then the node, whose
 static rewrite is traversed again (`fuel` bounds the repetitions). -/
-def staticRewriteWith : Nat → (n : Node) → Rw n
+def staticRewriteWith (opts : PPOptions) : Nat → (n : Node) → Rw n
   | 0, n => Rw.id n
   | fuel + 1, n =>
-    let r := rewriteChildren (m := Id) (fun c => staticRewriteWith fuel c) n
-    match ppStaticRewrite r.1 with
-    | some s => if s.1 == r.1 then r else (r.trans s).trans (staticRewriteWith fuel s.1)
+    let r := rewriteChildren (m := Id) (fun c => staticRewriteWith opts fuel c) n
+    match ppStaticRewrite opts r.1 with
+    | some s => if s.1 == r.1 then r else (r.trans s).trans (staticRewriteWith opts fuel s.1)
     | none => r
 
 /-- The `static-rewrite` pass. -/
-def Pipeline.staticRewrite {input : Node} (p : Pipeline input) : Pipeline input :=
-  Pipeline.mapAssertions p (staticRewriteWith 1000)
+def Pipeline.staticRewrite {input : Node} (p : Pipeline input) (opts : PPOptions := {}) :
+    Pipeline input :=
+  Pipeline.mapAssertions p (staticRewriteWith opts 1000)
 
 end Telos.Preprocess

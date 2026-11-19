@@ -947,6 +947,33 @@ tested:
      (`LearnPlan.conflictOk`: checked like the others, it gives its node the
      value opposite to the one the earlier items give it, so the conjunction has
      no model, `conflict_equiv`).
+   - Preprocessing options (`Telos/Preprocess/Options.lean`): cvc5's options
+     that change preprocessing, with the defaults cvc5's `SetDefaults` gives
+     them from the logic (`LogicInfo`, widened as `widenLogic` does), with proofs
+     on, as telos matches: `--simplification`, `--arith-rewrite-equalities` (on
+     for pure linear quantifier-free arithmetic: `static-rewrite` splits
+     arithmetic equalities, by `arith-eq-elim-*`), `--static-learning` and
+     `--arith-static-learning`, `--repeat-simp` (on for quantifier-free logics
+     with arrays, UF and bit-vectors). Proofs turn on unsat cores, so cvc5
+     keeps simplification on for `QF_SAT` and unconstrained simplification
+     off. The theorem holds for every setting (`preprocess_correct_of_logos`
+     takes the options).
+   - `static-learning` (`Telos/Preprocess/Passes/StaticLearning.lean`): UF's
+     diamonds and arithmetic's `ite` lemmas (`iteMinMax`, `iteConstant`, with
+     the lower bounds that arithmetic's `ppAssert` saw in non-clausal
+     simplification). cvc5 trusts these lemmas; telos proves each in CPC: the
+     relation lifted into the `ite` (`arith-geq-ite-lift`), the bounded
+     branches `true` by their antecedents (weakened by `arith_sum_ub` and
+     `arith_poly_norm_rel`), the rest by the rewriter, or `arith-max-geq*` and
+     `arith-min-lt*`; diamonds by transitivity under `scope` and resolution.
+     A lemma it cannot prove is left out. Not ported: bit-vectors' lemma on
+     sums of powers of two, which cvc5 adds without a proof.
+   - `repeat-simp`: non-clausal simplification runs again with the definitions
+     of the earlier run in the slot; the fast path substitutes their
+     right-hand sides by the new equations (step 2) and keeps them before the
+     new ones. Without the fast path, a later run does nothing.
+   - Bit-vector numerals `(_ bvN w)` are read (as `#b…`), so the SMT-LIB
+     bit-vector benchmarks parse.
    - Profiling: `--profile` on `telos` and `telos-fuzz` prints where the time
      went (`Telos/Core/Profile.lean`: probes on the checker's phases, per rule, on
      type queries, the RARE matcher and the arithmetic normal form);

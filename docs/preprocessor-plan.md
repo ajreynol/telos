@@ -235,8 +235,7 @@ follow from the new ones and the definitions; resolution gives the equality.
 With cvc5's simplification on (`fuzz-pp.py` no longer passes
 `--simplification=none`), on 150 benchmarks per mode: the default and UF modes
 agree on all, arith on 144, bit-vectors 142, arrays 145, sets 145, strings 135.
-Not ported: bit-vector extract solving (`BvPpAssert`), static learning, and
-`repeat-simp`. Performance: the pass is now semantic and triangular steps, each
+Not ported: bit-vector extract solving (`BvPpAssert`). Performance: the pass is now semantic and triangular steps, each
 checked in time linear in the size of the terms as DAGs (`ncsSteps`): the
 learned literals are added by `SemProc.learn` (`Telos/Core/Learn.lean`), whose
 side condition replays the trace of the propagator (`CircuitPure.lean`), and
@@ -261,6 +260,23 @@ are not ground (with `str.++`, whose nil depends on the type, or a quantifier),
 and for substitutions below applications of terms other than declared functions,
 constructors and selectors. `--simplification=none` turns the
 pass off. Output is printed with `let`, as cvc5's default `--dag-thresh=1`.
+
+Options and the rest of `simplifyAssertions`: the preprocessor takes cvc5's
+options that change it, with the defaults cvc5 gives them from the logic, with
+proofs on (`Telos/Preprocess/Options.lean`): `--simplification`,
+`--arith-rewrite-equalities` (on for pure linear quantifier-free arithmetic),
+`--static-learning`, `--arith-static-learning` and `--repeat-simp` (on for
+quantifier-free logics with arrays, UF and bit-vectors). `static-learning` is
+ported (`Passes/StaticLearning.lean`: UF's diamonds and arithmetic's `ite`
+lemmas, each proven in CPC; not bit-vectors' power-of-two lemma, which cvc5
+does not prove), and so is `repeat-simp` (non-clausal simplification again, with
+the earlier definitions substituted). `fuzz-pp.py` now runs cvc5 with
+`--produce-proofs` and static learning, and with `--logics` gives each random
+benchmark its smallest logic, and with `--options` one random option on both
+sides. Not ported: the regular options for passes outside this list
+(`bv-to-bool`, `bool-to-bv`, `solve-real-as-int`, eager bit-blasting,
+`strings-exp`), the quantifier rewriter's options, and `--produce-models`
+(which restricts which variables may be eliminated).
 
 ## Phases
 

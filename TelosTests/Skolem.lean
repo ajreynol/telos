@@ -49,7 +49,7 @@ def rw (n : Node) : String := (rewrite n).toSmtLib
 def a : Node := .var "a" .boolean
 def y : Node := .var "y" .integer
 def three : Node := .const (.integer 3)
-def pp (as : List Node) : List String := (Preprocess.preprocess as (simplify := false)).1.toList.map (·.toSmtLib)
+def pp (as : List Node) : List String := (Preprocess.preprocess as (opts := { simplification := false })).1.toList.map (·.toSmtLib)
 
 -- A non-Boolean `ite` is purified, with its lemma after the `true` placeholder.
 #guard pp [mkNode .GT #[iteNode a x y, three]] ==

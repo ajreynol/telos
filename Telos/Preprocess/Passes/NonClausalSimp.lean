@@ -168,8 +168,10 @@ assumption `C`. -/
 def conflictE (p : Nat) : EmitM Nat := do falseOfE (← scopeE p)
 
 /-- The proof of `(= C C')`, where `C` is the pipeline's conjunction (with the
-definitions slot `true`); its last fact. -/
-def ncsProof (C : Node) : EmitM Nat := do
+definitions slot `true`); its last fact, and the literals given to `solveLit`
+(`TheoryEngine::solve`, whose arithmetic `ppAssert` records bounds for static
+learning). -/
+def ncsProof (C : Node) : EmitM (Nat × Array Node) := do
   let .app (.kind .AND) cs := C | throw "not a conjunction"
   -- Forward: assume C.
   let pC ← assumeE C
@@ -179,16 +181,18 @@ def ncsProof (C : Node) : EmitM Nat := do
   let ((), cp) ← (do
       for (a, p) in asserts do assertTrue a p
       propagate).run {}
-  if let some pFalse := cp.conflict then return ← conflictE pFalse
+  if let some pFalse := cp.conflict then return (← conflictE pFalse, #[])
   -- 2. the learned literals
   let mut nss : Array (Node × Nat × Node) := #[]
   let mut cps : Array (Node × Nat × Node) := #[]
   let mut kept : Array (Node × Nat) := #[]
+  let mut solvedLits : Array Node := #[]
   for (l, pl) in cp.learned do
     let (l', e) ← simplifyE (factsOf nss) (factsOf cps) l
     let pl' ← eqResolveE pl e
     if l' == mkTrue then continue
-    if l' == mkFalse then return ← conflictE pl'
+    if l' == mkFalse then return (← conflictE pl', solvedLits)
+    solvedLits := solvedLits.push l'
     match solveLit l' with
     | some (x, t, der) => nss := nss.push (x, ← der pl', t)
     | none =>
@@ -260,7 +264,7 @@ def ncsProof (C : Node) : EmitM Nat := do
     olds := olds.push (← eqResolveE p (← symmOpt e))
   olds := olds.push (← trueE)
   let i₂ ← scopeE (← andIntroE olds.toList)
-  equivOfE C.toEo C'.toEo i₁ i₂
+  return (← equivOfE C.toEo C'.toEo i₁ i₂, solvedLits)
 
 /-! ## Without a CPC proof
 
@@ -282,8 +286,13 @@ time linear in the size of the terms as DAGs:
    those of the later ones (cvc5's `TopLevelSubstitutions`, to a fixed point).
 5. `SemProc.reorg`: the conjunction of `ncsProof`, with the definitions slot.
 
+A later run (`repeat-simp`) finds the definitions of the earlier ones in the
+slot: in step 2 their right-hand sides are substituted (cvc5's top-level
+substitutions are applied to a fixed point), and in step 5 they are kept before
+the new ones.
+
 If a step cannot be built, or its check fails, the pass falls back to
-`ncsProof`. -/
+`ncsProof`, or, in a later run, does nothing. -/
 
 /-- The equation `(= x t)` of a solved literal `l`, by a certified rewrite. -/
 def solvedEq (l x t : Node) : Option (Rw l) :=
@@ -393,7 +402,7 @@ inductive LitClass where
 def runTri {α : Type} (m : TriM α) (B : TriB) : Except String (α × TriB) := m.run B
 
 /-- The steps of the pass, without a CPC proof (steps 1 to 5 above). -/
-def ncsSteps {input : Node} (p : Pipeline input) : Except String (Pipeline input) := do
+def ncsSteps {input : Node} (p : Pipeline input) : Except String (Pipeline input × Array Node) := do
   let .app (.kind .AND) cs := p.1 | throw "not a conjunction"
   let asserts := cs.pop
   let nA := asserts.size
@@ -404,7 +413,7 @@ def ncsSteps {input : Node} (p : Pipeline input) : Except String (Pipeline input
     return ← (Profile.time "ncs" (fun _ => "learn (conflict)") fun _ =>
       p.next? fun m => if h : SemProc.check (.learn L) m mkFalse = true then
         some ⟨mkFalse, .semantic (.learn L) (SemProc.check_ok h) (.refl _)⟩ else none).elim
-      (throw "conflict: check failed") pure
+      (throw "conflict: check failed") (fun q => pure (q, #[]))
   let K := st.learned.size
   let litOf (h : Nat) : Node := LearnPlan.litOf (L.trace[L.lits[K - 1 - h]!]!)
   let C₁ := mkNode .AND (cs ++ L.lits.map fun t => LearnPlan.litOf L.trace[t]!)
@@ -420,6 +429,7 @@ def ncsSteps {input : Node} (p : Pipeline input) : Except String (Pipeline input
   let mut cls : Array LitClass := #[]
   let mut fin₁ : Array (Node × Array ChainStep) := #[]
   let mut conflict := false
+  let mut solvedLits : Array Node := #[]
   for h in [0:K] do
     let l := litOf h
     if conflict then
@@ -430,25 +440,27 @@ def ncsSteps {input : Node} (p : Pipeline input) : Except String (Pipeline input
       cls := cls.push .drop; fin₁ := fin₁.push (l', steps)
     else if l' == mkFalse then
       cls := cls.push .conflict; fin₁ := fin₁.push (l', steps); conflict := true
-    else match solveLit l' with
-      | some (x, t, _) =>
-        let some r := solvedEq l' x t | throw "solve: no equation"
-        let eq := eqNode x t
-        let (steps', B') ← runTri (do
-            let st ← if r.1 == l' then pure #[] else pure #[← TriM.rw r]
-            let e ← TriM.entry x t (litPos h) eq
-            pure (steps ++ st, e)) B
-        B := B'
-        σn := σn.insert ⟨x⟩ steps'.2
-        cls := cls.push (.solved x t); fin₁ := fin₁.push (eq, steps'.1)
-      | none =>
-        match constProp? l' with
-        | some (t, c, _) =>
-          let (e, B') ← runTri (TriM.entry t c (litPos h) l') B
+    else
+      solvedLits := solvedLits.push l'
+      match solveLit l' with
+        | some (x, t, _) =>
+          let some r := solvedEq l' x t | throw "solve: no equation"
+          let eq := eqNode x t
+          let (steps', B') ← runTri (do
+              let st ← if r.1 == l' then pure #[] else pure #[← TriM.rw r]
+              let e ← TriM.entry x t (litPos h) eq
+              pure (steps ++ st, e)) B
           B := B'
-          σc := σc.insert ⟨t⟩ e
-          cls := cls.push (.cprop t c l'); fin₁ := fin₁.push (l', steps)
-        | none => cls := cls.push .kept; fin₁ := fin₁.push (l, #[])
+          σn := σn.insert ⟨x⟩ steps'.2
+          cls := cls.push (.solved x t); fin₁ := fin₁.push (eq, steps'.1)
+        | none =>
+          match constProp? l' with
+          | some (t, c, _) =>
+            let (e, B') ← runTri (TriM.entry t c (litPos h) l') B
+            B := B'
+            σc := σc.insert ⟨t⟩ e
+            cls := cls.push (.cprop t c l'); fin₁ := fin₁.push (l', steps)
+          | none => cls := cls.push .kept; fin₁ := fin₁.push (l, #[])
   let mut newA : Array (Node × Array ChainStep) := #[]
   if conflict then
     newA := asserts.map fun a => (a, #[])
@@ -459,14 +471,26 @@ def ncsSteps {input : Node} (p : Pipeline input) : Except String (Pipeline input
       let ((r, cn', cc'), B') ← runTri (simplifyJ σn σc cn cc a) B
       B := B'; cn := cn'; cc := cc'
       newA := newA.push r
-  let parts₂ := newA ++ #[(mkTrue, #[])] ++ fin₁.reverse
+  -- the definitions of an earlier run (`repeat-simp`): their right-hand sides
+  -- substituted, as cvc5 applies its top-level substitutions
+  let slot := cs.back!
+  let mut slotPart : Node × Array ChainStep := (slot, #[])
+  if !conflict && slot != mkTrue then
+    let ((j?, _), B') ← runTri ((substJ σn slot).run {}) B
+    B := B'
+    if let some j := j? then
+      let (J, B') ← runTri (TriM.just j) B
+      B := B'
+      slotPart := (J.b, #[ChainStep.subst j])
+  let slot' := slotPart.1
+  let parts₂ := newA ++ #[slotPart] ++ fin₁.reverse
   let C₂ := mkNode .AND (parts₂.map (·.1))
   let some p₂ := Profile.time "ncs" (fun _ => "tri") fun _ =>
       p₁.next? fun m => triRw m C₂ B (parts₂.map (·.2))
     | throw "tri: check failed"
   if conflict then
     let some p₃ := p₂.next? fun m => checkBy .absorb m mkFalse | throw "conflict"
-    return p₃
+    return (p₃, solvedLits)
   -- 3. reorganized: assertions, kept literals, constant propagations, equations
   let kept := (List.range K).filterMap fun h => match cls[h]? with
     | some LitClass.kept => some (litOf h) | _ => none
@@ -474,7 +498,7 @@ def ncsSteps {input : Node} (p : Pipeline input) : Except String (Pipeline input
   let solved := cls.toList.filterMap fun | .solved x t => some (x, t) | _ => none
   let newAs := newA.map (·.1)
   let C₂' := mkNode .AND (newAs ++ kept.toArray ++ (cprops.map (·.2.2)).toArray ++
-    (solved.map fun (x, t) => eqNode x t).toArray ++ #[mkTrue])
+    (solved.map fun (x, t) => eqNode x t).toArray ++ #[slot'])
   let some p₃ := p₂.next? fun m =>
       if h : SemProc.reorg.check m C₂' = true then
         some ⟨C₂', .semantic .reorg (SemProc.check_ok h) (.refl _)⟩ else none
@@ -527,7 +551,7 @@ def ncsSteps {input : Node} (p : Pipeline input) : Except String (Pipeline input
     B₂ := B'; cnD := cn'; ccF := cc'
     keptF := keptF.push r
   let parts₃ := newAs.map (fun a => (a, (#[] : Array ChainStep))) ++ keptF ++ cpF ++
-    defs.map (fun (x, t', st) => (eqNode x t', st)) ++ #[(mkTrue, #[])]
+    defs.map (fun (x, t', st) => (eqNode x t', st)) ++ #[(slot', #[])]
   let C₃ := mkNode .AND (parts₃.map (·.1))
   let some p₄ := Profile.time "ncs" (fun _ => "tri (2)") fun _ =>
       p₃.next? fun m => triRw m C₃ B₂ (parts₃.map (·.2))
@@ -539,7 +563,11 @@ def ncsSteps {input : Node} (p : Pipeline input) : Except String (Pipeline input
     if seen.contains ⟨l'⟩ then continue
     seen := seen.insert ⟨l'⟩
     extra := extra.push l'
-  let defNodes := defs.toList.map fun (x, t', _) => eqNode x t'
+  let oldDefs := match slot' with
+    | .app (.kind .AND) ds => ds.toList
+    | .const (.boolean true) => []
+    | d => [d]
+  let defNodes := oldDefs ++ defs.toList.map fun (x, t', _) => eqNode x t'
   let slotNode := match defNodes with
     | [] => mkTrue
     | [d] => d
@@ -550,20 +578,29 @@ def ncsSteps {input : Node} (p : Pipeline input) : Except String (Pipeline input
       else if h : SemProc.reorg.check m target = true then
         some ⟨target, .semantic .reorg (SemProc.check_ok h) (.refl _)⟩ else none
     | throw "reorg (2): check failed"
-  return p₅
+  return (p₅, solvedLits)
 
-/-- The `non-clausal-simp` pass. -/
-def Pipeline.nonClausalSimp {input : Node} (p : Pipeline input) : Pipeline input :=
-  if Pipeline.inConflict p || Pipeline.slot p != mkTrue then p
+/-- The `non-clausal-simp` pass, and the literals given to `solveLit`. -/
+def Pipeline.nonClausalSimpB {input : Node} (p : Pipeline input) : Pipeline input × Array Node :=
+  if Pipeline.inConflict p then (p, #[])
   else
     let fast := match ncsSteps p with
       | .ok q => some q
       | .error e => Profile.time "ncs" (fun _ => s!"fallback: {e}") fun _ => none
     match fast with
-    | some q => Pipeline.conflict? q
+    | some (q, lits) => (Pipeline.conflict? q, lits)
     | none =>
-      match runE p.1 (ncsProof p.1) with
-      | some r => Pipeline.conflict? (p.trans r)
-      | none => p
+      -- `ncsProof` assumes no earlier definitions: a later run is skipped
+      if Pipeline.slot p != mkTrue then (p, #[]) else
+      match (ncsProof p.1).run {} with
+      | .ok ((_, lits), st) =>
+        match applyCmds (cmdList (toCmds st.steps)) p.1 with
+        | some r => (Pipeline.conflict? (p.trans r), lits)
+        | none => (p, #[])
+      | .error _ => (p, #[])
+
+/-- The `non-clausal-simp` pass. -/
+def Pipeline.nonClausalSimp {input : Node} (p : Pipeline input) : Pipeline input :=
+  (Pipeline.nonClausalSimpB p).1
 
 end Telos.Preprocess

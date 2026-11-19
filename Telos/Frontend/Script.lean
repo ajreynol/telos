@@ -24,6 +24,7 @@ Supported commands: `declare-const`, `declare-fun`, `declare-sort`,
 Scripts of `simplify` queries have no assertions; a benchmark for the
 preprocessor has assertions and one `check-sat` after them (incremental scripts
 are not supported).
+Bit-vector numerals `(_ bvN w)` are read as `#b…` literals (`bvNumerals`).
 A `define-fun` is a macro, as Eunoia's `define`: its uses are expanded when the
 script is read, and it is not recorded.
 Everything else is an error. Logos's datatypes have no constructor or selector
@@ -72,6 +73,19 @@ structure Script where
   symbols : List Symbol := []
 
 def ignored : List String := ["set-option", "set-info", "exit"]
+
+/-- The SMT-LIB bit-vector numerals `(_ bvN w)` of `s` written as binary
+literals `#b…` of width `w`, which Logos's parser reads. -/
+partial def bvNumerals : Sexp → Sexp
+  | .expr [.atom "_", .atom v, .atom w] =>
+    match (if v.startsWith "bv" then (v.drop 2).toString.toNat? else none), w.toNat? with
+    | some n, some w =>
+      if w == 0 then .expr [.atom "_", .atom v, .atom (toString w)] else
+      let bits := (List.range w).reverse.map fun i => if n.testBit i then '1' else '0'
+      .atom ("#b" ++ String.ofList bits)
+    | _, _ => .expr [.atom "_", .atom v, .atom w]
+  | .expr xs => .expr (xs.map bvNumerals)
+  | a => a
 
 /-- A declared field type, over the parameters `ps` of a parametric datatype. -/
 partial def typeTemplate (ps : List String) : Sexp → TypeTemplate
@@ -163,6 +177,7 @@ def readScript (input : String) : Except String Script := do
   let mut symbols : Array Symbol := #[]
   let mut checkSat := false
   for s in ss do
+    let s := bvNumerals s
     match s with
     | .expr (.atom c :: _) =>
       if ignored.contains c then continue

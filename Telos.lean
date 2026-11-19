@@ -30,11 +30,13 @@ import Telos.Rewriter.Rewrite
 import Telos.Core.RuleNames
 import Telos.Core.Proof.Eunoia
 import Telos.Core.Proof.Emit
+import Telos.Preprocess.Options
 import Telos.Preprocess.Pipeline
 import Telos.Preprocess.Passes.Rewrite
 import Telos.Preprocess.Passes.StaticRewrite
 import Telos.Preprocess.Passes.TheoryPreprocess
 import Telos.Preprocess.Passes.NonClausalSimp
+import Telos.Preprocess.Passes.StaticLearning
 import Telos.Preprocess.SkolemSteps
 import Telos.Preprocess.Conjunctions
 import Telos.Preprocess.ConjProof

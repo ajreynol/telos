@@ -118,9 +118,10 @@ theorem rewrite_correct (t : Node) (h : t.WellTyped) : t.Equiv (rewrite t) :=
 
 /-- **Correctness of the preprocessor.** The conjunction of the preprocessed
 assertions is equivalent to that of the input assertions (and `true`). -/
-theorem preprocess_correct (as : List Node) (h : (Preprocess.inputNode as).WellTyped) :
-    (Preprocess.inputNode as).Equiv (Preprocess.preprocessCert as).1 :=
-  preprocess_correct_of_logos as h
+theorem preprocess_correct (as : List Node) (h : (Preprocess.inputNode as).WellTyped)
+    (opts : Preprocess.PPOptions := {}) :
+    (Preprocess.inputNode as).Equiv (Preprocess.preprocessCert as opts).1 :=
+  preprocess_correct_of_logos as h opts
 
 end Telos
 
