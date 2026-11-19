@@ -14,9 +14,12 @@ come from, the certified rewrites, and the chain of each conjunct.
 justification in place of a proof: a term of the substitution is replaced by
 its value, which is substituted again (fixed point), and otherwise its children
 are, by congruence. Justifications are shared, as terms are, so the step is
-linear in the size of the terms as DAGs. Substitution does not go below the
-operators `Op.substOk` excludes; if it would change something there, building
-fails, and the caller falls back.
+linear in the size of the terms as DAGs. Substitution goes below every operator
+kind and indexed operator: by congruence below those of `Op.substOk`, and into the
+body of a quantifier. Below an application of a function that is not a declared
+one, or of a constructor or selector of a type that is not a datatype, it does
+not; if it would change something there, building fails, and the caller falls
+back.
 
 Nothing here needs a proof: the step is checked (`TriPlan.Ok`) before use.
 -/
@@ -36,6 +39,8 @@ structure TriB where
   groundIdx : Std.HashMap Key Nat := {}
   rws : Array ((a : Node) × Rw a) := #[]
   reflIdx : Std.HashMap Key Nat := {}
+  /-- The rewriter's cache, kept between the rewrites of a pass. -/
+  rwCache : Cache := {}
 
 abbrev TriM := StateT TriB (Except String)
 
@@ -105,9 +110,16 @@ partial def substJ (σ : TSubst) (n : Node) : SubstM (Option Nat) := do
             if σ.contains ⟨n'⟩ then throw "tri: rebuilt term of the substitution"
             let minPos := Js.foldl (fun m J => min m J.minPos) noPos
             some <$> liftM (TriM.addJust ⟨n, n', minPos, .congr kids⟩)
+        else if op == .kind .FORALL || op == .kind .EXISTS then do
+          -- only the body: the variables and patterns are left as they are
+          let some body := cs[1]? | pure none
+          let some j ← substJ σ body | pure none
+          let J ← liftM (TriM.just j)
+          let n' : Node := .app op (cs.set! 1 J.b)
+          if σ.contains ⟨n'⟩ then throw "tri: rebuilt term of the substitution"
+          some <$> liftM (TriM.addJust ⟨n, n', J.minPos, .body j⟩)
         else do
-          let below := if op.getKind.isQuantifier then (cs[1]?.toArray) else cs
-          let ks ← below.mapM (substJ σ)
+          let ks ← cs.mapM (substJ σ)
           if ks.any (·.isSome) then throw "tri: substitution below an operator"
           pure none
       | _ => pure none
@@ -127,7 +139,9 @@ rewrite; the result and the chain steps (none when the result is `n`). -/
 def applyRwJ (σ : TSubst) (n : Node) : SubstM (Node × Array ChainStep) := do
   let some j ← substJ σ n | return (n, #[])
   let n₁ := (← liftM (TriM.just j)).b
-  let r := rewriteCert n₁
+  let r ← liftM (modifyGet fun s : TriB =>
+    let (r, c) := rewriteCertCached s.rwCache n₁
+    (r, { s with rwCache := c }) : TriM (Rw n₁))
   if r.1 == n then return (n, #[])
   if r.1 == n₁ then return (n₁, #[.subst j])
   return (r.1, #[.subst j, ← liftM (TriM.rw r)])

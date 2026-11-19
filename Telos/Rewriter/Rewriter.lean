@@ -23,8 +23,9 @@ Differences from cvc5:
   sound, since the identity is an equivalence, and it avoids `partial def`, which
   proofs cannot see through. Fuel bounds the recursion depth, not the work.
 * Recursion instead of cvc5's explicit stack. The rewrite cache (`Cache`) lasts
-  for one call of `rewriteWith`, where cvc5's lasts for the whole run.
-* Children are rewritten only when each is well typed: for the kinds of
+  for one call of `rewriteWith`, where cvc5's lasts for the whole run;
+  `rewriteCertCached` keeps it between calls, as non-clausal simplification does.
+* Children are rewritten only when each is well typed: for the operators of
   `Op.childrenTypedOfParent` this is proved (`ChildTyping.children_wellTyped`),
   and for the others it is checked at run time. Under a quantifier only the body
   is rewritten.

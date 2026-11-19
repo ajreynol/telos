@@ -618,7 +618,6 @@ theorem isBoolConn_children {P : Node} (h : isBoolConn P = true) :
   unfold isBoolConn at h
   split at h <;> first | exact ⟨_, _, rfl, rfl⟩ | simp at h
 
-omit [LogosFacts] in
 /-- **Skeleton nodes are well typed.** -/
 theorem skel_wellTyped (L : LearnPlan) (cs : Array Node)
     (hcs : ∀ i (hi : i < cs.size), cs[i].WellTyped)

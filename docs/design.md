@@ -393,7 +393,11 @@ theorem Telos.rewrite_correct (t : Node) (h : t.WellTyped) : t.Equiv (rewrite t)
 - `Semantic.lean`, `Learn.lean`: `SemProc.equiv`, the semantic steps
   (`reorg`, conjuncts reorganized; `learn`, literals learned by Boolean
   propagation added, from the replayed trace of the propagator).
-- `Tri.lean`: `tri_equiv`, triangular substitution steps on a conjunction.
+- `ChildTyping.lean`: `children_wellTyped`, the children of a well-typed
+  application are well typed, for the operators of `Op.childrenTypedOfParent`.
+- `Tri.lean`: `tri_equiv`, triangular substitution steps on a conjunction, with
+  congruence under a condition for quantifiers, in their body (`QuantCong.lean`),
+  and for `distinct` (`DistinctCong.lean`).
 - `Certified.lean`: `Certified.equiv`, from Logos's checker soundness and the
   above.
 - `Driver.lean`: `rewriteWith_sound`, for any theory rewriters: the driver's
@@ -403,7 +407,9 @@ theorem Telos.rewrite_correct (t : Node) (h : t.WellTyped) : t.Equiv (rewrite t)
 - `Axioms.lean`: the axiom audit (`TRUSTED.md`).
 - `TelosFull/Main.lean` (`lake build TelosFull`, not a default target): proves
   the `LogosFacts` instance from Logos's theorems, and so `Telos.rewrite_correct`,
-  and audits its axioms.
+  and audits its axioms. `TelosFull/ChildArgs.lean` proves the fields about the
+  arguments of well-typed applications, from Logos's type preservation and
+  closedness developments only.
 
 Upstream requests are collected in `upstream-requests.md`. Bugs in the CPC
 signature are fixed in cvc5 first (Logos compiles its checker from cvc5's
@@ -923,6 +929,17 @@ tested:
      0.89s to 0.76s; Booleans 0.27s to 0.22s. Remaining: checking the
      remaining RARE, `evaluate` and `aci_norm` steps (run, read back, compare:
      about 28%).
+   - Child typing for every operator: `Op.childrenTypedOfParent` covers every
+     operator kind and indexed operator except binders, and applications of
+     declared functions, of datatype constructors and selectors, testers and
+     updaters. `children_wellTyped` proves it with one tactic for the operators
+     whose typing rule is `None` on an ill-typed argument, and from Logos theorems
+     restated in `LogosFacts` for the others: `select`, `store` and `set.member`,
+     which compare an argument's type with a component of another's
+     (`type_no_none`), and tuples, updaters, selectors and constructors
+     (`TelosFull/ChildArgs.lean` proves these fields). So the driver checks no
+     child's type at run time where it rewrites, and non-clausal simplification
+     substitutes below every operator.
    - Profiling: `--profile` on `telos` and `telos-fuzz` prints where the time
      went (`Telos/Core/Profile.lean`: probes on the checker's phases, per rule, on
      type queries, the RARE matcher and the arithmetic normal form);

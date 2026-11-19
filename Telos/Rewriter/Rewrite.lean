@@ -64,6 +64,11 @@ def defaultFuel : Nat := 10000
 /-- Rewrite a node to its normal form, with the certificate of the rewrite. -/
 def rewriteCert (t : Node) : Rw t := rewriteWith theoryRewriter defaultFuel t
 
+/-- `rewriteCert` with a rewrite cache kept between calls, as cvc5's rewriter
+keeps its cache: the rewrite, and the cache after it. -/
+def rewriteCertCached (c : Cache) (t : Node) : Rw t × Cache :=
+  (rewriteWithM theoryRewriter defaultFuel t).run c
+
 /-- cvc5's `Rewriter::rewrite`: rewrite a node to its normal form. -/
 def rewrite (t : Node) : Node := (rewriteCert t).1
 

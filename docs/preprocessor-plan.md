@@ -245,11 +245,19 @@ two, since learned literals are simplified by the substitutions found before
 them, and the definitions by those found after them), with `SemProc.reorg`
 steps between. Both are proven sound (`verification/TelosProofs/Core/Learn.lean`,
 `Tri.lean`). On Goel's hardware QF_UF benchmarks of about 115KB the pass went
-from 8–11s to under a second (the same output); what remains is mostly the
-rewriter on the substituted terms (the type of each child,
-`driver: children well typed`). The CPC proof of the pass (`ncsProof`) remains
-the fallback, for conflicts and for substitutions below operators that
-`Op.substOk` excludes (arrays' `store`, strings, tuples). `--simplification=none` turns the
+from 8–11s to under a second (the same output), and on the largest (`collision`)
+from over 60s to 7.7s; what remains is the rewriter's CPC checks of steps on the
+substituted terms, whose translations are trees. The rewriter's cache is kept
+for the whole pass (`rewriteCertCached`). Substitution goes below every operator
+kind: by congruence, which holds model by model where the entries hold
+(`CondEquiv`) and needs the children of a well-typed application to be well
+typed (`ChildTyping.lean`); into the bodies of quantifiers (`JustKind.body`,
+`QuantCong.lean`: the entries are closed, so they hold whatever the values of the
+bound variables); and below `distinct` (`DistinctCong.lean`). The CPC proof of
+the pass (`ncsProof`) remains the fallback, for conflicts, for definitions that
+are not ground (with `str.++`, whose nil depends on the type, or a quantifier),
+and for substitutions below applications of terms other than declared functions,
+constructors and selectors. `--simplification=none` turns the
 pass off. Output is printed with `let`, as cvc5's default `--dag-thresh=1`.
 
 ## Phases

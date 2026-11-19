@@ -1,4 +1,5 @@
 import TelosProofs.Axioms
+import TelosFull.ChildArgs
 import Cpc.Proofs.ProvenFromEmpty
 import Cpc.Proofs.RuleSupport.Cong.Spine
 import Cpc.Proofs.RuleSupport.SpineArgsSupport
@@ -101,6 +102,14 @@ instance logosFacts : LogosFacts where
   closed_eval P hc M N h := smt_model_eval_eq_of_eo_closed P hc M N (agrees_of h)
   uf_args i T xs h x hx :=
     SpineArgsSupport.spine_args_have_smt_translation (Term.UConst i T) xs (.uconst i T _) h x hx
+  type_no_none := ChildArgs.type_no_none
+  tuple_args := ChildArgs.tuple_args
+  uop1_arg := ChildArgs.uop1_arg
+  update_args op idx x y hop h := by
+    rcases hop with rfl | rfl
+    exacts [ChildArgs.tuple_update_args idx x y h, ChildArgs.update_args idx x y h]
+  dt_sel_arg := ChildArgs.dt_sel_arg
+  dt_cons_args := ChildArgs.dt_cons_args
 
 /-- **Correctness of the rewriter.** Rewriting a well-typed node gives an
 equivalent node. -/

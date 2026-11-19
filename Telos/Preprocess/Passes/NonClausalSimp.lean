@@ -36,8 +36,9 @@ The pass is a few certified steps of the conjunction, checked in time linear
 in the size of the terms as DAGs (`ncsSteps`): the learned literals added
 (`SemProc.learn`, justified by the propagator's trace, `CircuitPure.lean`), and
 the substitutions applied (`Certified.tri`, twice, with reorganizations
-between, `SemProc.reorg`). Where those cannot be built (a conflict, or a
-substitution below an operator `Op.substOk` excludes), it is one CPC proof
+between, `SemProc.reorg`). Where those cannot be built (a conflict, a
+definition that is not ground, or a substitution below an application of a term
+that is not a declared function, constructor or selector), it is one CPC proof
 (`ncsProof`, `Telos/Preprocess/ConjProof.lean`): assuming the conjunction, the
 propagator's facts, the substitutions' equations, each assertion's
 simplification (congruence with the equations at the leaves, then rewriting)
@@ -472,7 +473,7 @@ def ncsSteps {input : Node} (p : Pipeline input) : Except String (Pipeline input
   let posK := nA
   let posC := posK + kept.length
   let posD := posC + cprops.length
-  let mut B₂ : TriB := {}
+  let mut B₂ : TriB := { rwCache := B.rwCache }
   let mut σD : TSubst := {}
   let mut defs : Array (Node × Node × Array ChainStep) := #[]
   for ((x, t), i) in solved.zipIdx.reverse do

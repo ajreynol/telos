@@ -41,6 +41,18 @@ def SmtValueRel (v w : SmtValue) : Prop :=
 def HasSmtType (t : Term) : Prop :=
   __smtx_typeof (__eo_to_smt t) ≠ SmtType.None
 
+/-- Logos's `Smtm.type_has_no_none_components`: no component of the type is
+`None` (or an unresolved reference). -/
+def NoNoneParts : SmtType → Prop
+  | SmtType.None => False
+  | SmtType.TypeRef _ => False
+  | SmtType.Seq A => NoNoneParts A
+  | SmtType.Set A => NoNoneParts A
+  | SmtType.Map A B => NoNoneParts A ∧ NoNoneParts B
+  | SmtType.FunType A B => NoNoneParts A ∧ NoNoneParts B
+  | SmtType.DtcAppType A B => NoNoneParts A ∧ NoNoneParts B
+  | _ => True
+
 /-- Logos's `eo_has_bool_type`. -/
 def HasBoolType (t : Term) : Prop :=
   __smtx_typeof (__eo_to_smt t) = SmtType.Bool
@@ -139,6 +151,28 @@ class LogosFacts : Prop where
   the arguments of a well-typed application are well typed. -/
   uf_args : ∀ (i : native_Nat) (T : Term) (xs : List Term),
     HasSmtType (xs.foldl Term.Apply (Term.UConst i T)) → ∀ x ∈ xs, HasSmtType x
+  /-- `Smtm.term_type_has_no_none_components_of_non_none`: the type of a
+  well-typed term has no `None` component. -/
+  type_no_none : ∀ (t : SmtTerm), __smtx_typeof t ≠ SmtType.None → NoNoneParts (__smtx_typeof t)
+  /-- `Smtm.tuple_args_have_smt_translation_of_has_smt_translation`. -/
+  tuple_args : ∀ (x y : Term), HasSmtType (Term.Apply (Term.Apply (Term.UOp UserOp.tuple) x) y) →
+    HasSmtType x ∧ HasSmtType y
+  /-- `Smtm.apply_uop1_arg_has_smt_translation_of_has_smt_translation`: the
+  argument of a well-typed application of an indexed operator. -/
+  uop1_arg : ∀ (op : UserOp1) (idx x : Term), HasSmtType (Term.Apply (Term.UOp1 op idx) x) →
+    HasSmtType x
+  /-- `Smtm.tuple_update_index_nat_valid_and_args_have_smt_translation` and
+  `Smtm.update_index_sel_and_args_have_smt_translation`. -/
+  update_args : ∀ (op : UserOp1) (idx x y : Term), (op = UserOp1.tuple_update ∨ op = UserOp1.update) →
+    HasSmtType (Term.Apply (Term.Apply (Term.UOp1 op idx) x) y) → HasSmtType x ∧ HasSmtType y
+  /-- `Smtm.apply_dt_sel_arg_has_smt_translation_of_has_smt_translation`. -/
+  dt_sel_arg : ∀ (s : native_String) (d : DatatypeDecl) (i j : native_Nat) (x : Term),
+    HasSmtType (Term.Apply (Term.DtSel s d i j) x) → HasSmtType x
+  /-- The arguments of a well-typed application of a datatype constructor are
+  well typed: from `CongSupport.eo_to_smt_appSpineRev_dtcons` and
+  `Smtm.generic_apply_type_of_non_special_head_closed`. -/
+  dt_cons_args : ∀ (s : native_String) (d : DatatypeDecl) (i : native_Nat) (xs : List Term),
+    HasSmtType (xs.foldl Term.Apply (Term.DtCons s d i)) → ∀ x ∈ xs, HasSmtType x
 
 /-! ## Facts that need no Logos proof -/
 

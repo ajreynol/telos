@@ -1,4 +1,5 @@
 import TelosProofs.Core.CondEquiv
+import TelosProofs.Core.QuantCong
 import TelosProofs.Core.ChildTyping
 import TelosProofs.Core.Semantic
 
@@ -14,7 +15,10 @@ certified rewrites, `n` is equivalent to `k` (`tri_equiv`).
    stable (`StableCond`).
 2. *Entries.* Each entry, read off a true conjunct, relates its sides.
 3. *Justifications* relate their pairs under the entries with position at least
-   their `minPos` (`justs_sound`), by congruence (`CondEquiv.lean`).
+   their `minPos` (`justs_sound`), by congruence (`CondEquiv.lean`; for
+   `distinct`, `DistinctCong.lean`; in the body of a quantifier,
+   `QuantCong.lean`), given that the children of a well-typed application are
+   well typed (`ChildTyping.lean`).
 4. *Chains* relate each conjunct to its result (`chain_sound`).
 5. *The step.* By induction from the last conjunct down, each conjunct of the
    result is `Bool` and holds iff the one of `n` does, in every model where the
@@ -180,17 +184,9 @@ variable [LogosFacts]
 
 /-- The children of a well-typed application below which substitution may go are
 well typed. -/
-theorem children_typed_subst {op : Op} {cs : Array Node} (hc : op.childrenTypedForSubst = true)
-    (h : HasSmtType (Node.app op cs).toEo) : ∀ c ∈ cs.toList, HasSmtType c.toEo := by
-  unfold Op.childrenTypedForSubst at hc
-  split at hc
-  · rw [Node.toEo_app] at h
-    simp only [Op.eoShape, nodeEoShape, Node.toEo, AppShape.toEo] at h
-    split at h
-    · intro c hc'
-      exact LogosFacts.uf_args _ _ _ h _ (List.mem_map_of_mem hc')
-    · exact absurd h not_translation_stuck
-  · exact ChildTyping.children_wellTyped hc h
+theorem children_typed_subst {op : Op} {cs : Array Node} (hc : op.childrenTypedOfParent = true)
+    (h : HasSmtType (Node.app op cs).toEo) : ∀ c ∈ cs.toList, HasSmtType c.toEo :=
+  ChildTyping.children_wellTyped hc h
 
 theorem substCongruent_ne {op : UserOp} {nil : Nil}
     (h : (AppShape.rightAssocNil op nil).substCongruent = true) :
@@ -276,6 +272,9 @@ theorem groundOrder_closed (order : Array GroundItem)
             exact Or.inr (Or.inr (h.resolve_right hsh.2))
         refine closed_rightAssocNil hf he ?_ _ hcl
         exact closed_typedNil hop _ (fun e => not_translation_stuck (by unfold typedNil at hnil; rw [e] at hnil; exact hnil))
+    | none =>
+      simp only [AppShape.toEo] at ht; exact absurd ht ChildTyping.typed_stuck
+    | typedList _ => simp at hsh
     | _ => simp [AppShape.substCongruent] at hsc
 
 /-! ## Booleans -/
@@ -447,9 +446,45 @@ theorem shape_condCongr {Φ : SmtModel → Prop} (hΦ : StableCond Φ) (sh : App
       exact condEquiv_rightAssocNil hΦ op hf he _ hrest h ht
     · rw [AppShape.toEo, ite_eq_right hle] at ht
       exact absurd ht not_translation_stuck
+  | typedList op =>
+    simp only [AppShape.substCongruent, beq_iff_eq] at hsh
+    subst hsh
+    exact condEquiv_distinct h ht
+  | none => simp only [AppShape.toEo] at ht; exact absurd ht ChildTyping.typed_stuck
   | _ => simp [AppShape.substCongruent] at hsh
 
 /-! ## Justifications -/
+
+theorem bodyOk_inv {a b : Node} {K : Just} (h : Just.bodyOk a b K = true) :
+    ∃ q cs ds, a = .app (.kind q) cs ∧ b = .app (.kind q) ds ∧ (q = .FORALL ∨ q = .EXISTS) ∧
+      cs.size = ds.size ∧ cs[0]? = ds[0]? ∧ cs[1]? = some K.a ∧ ds[1]? = some K.b := by
+  unfold Just.bodyOk at h
+  split at h
+  · simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, and_assoc] at h
+    obtain ⟨hq, rfl, hsz, h0, -, h1, h1'⟩ := h
+    exact ⟨_, _, _, rfl, rfl, hq, hsz, h0, h1, h1'⟩
+  · simp at h
+
+/-- The translations of two quantifiers with the same variables. -/
+theorem quant_toEo_pair {q : Kind} (hq : q = .FORALL ∨ q = .EXISTS) {cs ds : Array Node}
+    (hsz : cs.size = ds.size) (h0 : cs[0]? = ds[0]?)
+    {B B' : Node} (h1 : cs[1]? = some B) (h1' : ds[1]? = some B')
+    (ht : HasSmtType (Node.app (.kind q) cs).toEo) :
+    ∃ op X, IsQuant op ∧ (Node.app (.kind q) cs).toEo = eoApp2 op X B.toEo ∧
+      (Node.app (.kind q) ds).toEo = eoApp2 op X B'.toEo := by
+  obtain ⟨op, hop, hsh⟩ : ∃ op, IsQuant op ∧ q.eoShape = .binder op := by
+    rcases hq with rfl | rfl
+    exacts [⟨_, .inl rfl, rfl⟩, ⟨_, .inr rfl, rfl⟩]
+  rw [Node.toEo_app] at ht ⊢; rw [Node.toEo_app]
+  simp only [Op.eoShape, hsh] at ht ⊢
+  obtain ⟨l⟩ := cs; obtain ⟨m⟩ := ds
+  simp only [List.size_toArray] at hsz
+  simp only [List.getElem?_toArray] at h0 h1 h1'
+  rcases l with _ | ⟨v, _ | ⟨b, _ | ⟨p, _ | ⟨r, rest⟩⟩⟩⟩ <;> simp at h1
+  all_goals rcases m with _ | ⟨v', _ | ⟨b', _ | ⟨p', _ | ⟨r', rest'⟩⟩⟩⟩ <;> simp at hsz h1' h0
+  all_goals first
+    | (simp only [List.map, AppShape.toEo] at ht; exact absurd ht ChildTyping.typed_stuck)
+    | (subst h0 h1 h1'; exact ⟨op, v.toEo, hop, by simp [AppShape.toEo], by simp [AppShape.toEo]⟩)
 
 theorem justs_sound (P : TriPlan) (k : Node)
     (hJ : ∀ j, j < P.justs.size → P.justOk j = true)
@@ -503,6 +538,23 @@ theorem justs_sound (P : TriPlan) (k : Node)
       (by rw [hKv, hr]; exact h₁.typed_right)
     rw [hKv, hr, hb] at h₂
     exact h₁.trans h₂
+  | body k' =>
+    simp only at hok
+    cases hK' : P.justs[k']? with
+    | none => rw [hK'] at hok; simp at hok
+    | some K =>
+    rw [hK'] at hok
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at hok
+    obtain ⟨⟨hk, hm⟩, hbody⟩ := hok
+    obtain ⟨q, cs, ds, rfl, rfl, hq, hsz, h0, h1, h1'⟩ := bodyOk_inv hbody
+    obtain ⟨hks, hKv⟩ := Array.getElem?_eq_some_iff.1 hK'
+    obtain ⟨op, X, hop, ea, eb⟩ := quant_toEo_pair hq hsz h0 h1 h1' ha
+    rw [ea] at ha ⊢; rw [eb]
+    have hBt : HasSmtType K.a.toEo := by
+      have := quant_body_bool hop ha; unfold HasSmtType; rw [this]; simp
+    have hB := ih k' hk hks (by rw [hKv]; exact Nat.lt_of_lt_of_le hmin hm) (by rw [hKv]; exact hBt)
+    rw [hKv] at hB
+    exact condEquiv_quant hΦ hop hB ha
   | congr ks =>
     simp only at hok
     rcases a with ⟨_⟩ | ⟨_, _⟩ | ⟨_, _⟩ | ⟨_, _⟩ | ⟨op, cs⟩ <;>

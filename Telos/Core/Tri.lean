@@ -25,9 +25,11 @@ earlier justifications given by index; and the conjuncts the entries come from
 are shown closed (`Ground`) by an array of nodes, children first, with the
 indices of their children.
 
-Congruence is used below the operators whose congruence holds model by model
-(not quantifiers), and whose children are well typed when they are
-(`Op.substOk`).
+Congruence is used below the operators whose congruence holds model by model,
+and whose children are well typed when they are (`Op.substOk`): all but binders.
+Below a quantifier, only the body is substituted (`JustKind.body`):
+its congruence holds model by model too, since the entries are closed, so they
+hold whatever the values of the bound variables.
 -/
 
 open Eo
@@ -40,28 +42,20 @@ instance : LawfulBEq Node where
 
 /-- Operators whose applications, when well typed, have well-typed children
 (`verification/TelosProofs/Core/ChildTyping.lean`), so congruence under them needs no
-run-time check of the children: the built-in Boolean, equality and arithmetic
-operators. -/
+run-time check of the children: every operator kind and indexed operator but
+the binders, and the applications of declared functions, of datatype
+constructors and selectors, and of testers and updaters. (Operators without a CPC
+counterpart are never well typed, so they are included.) -/
 def Op.childrenTypedOfParent : Op → Bool
-  | .kind k => match k with
-    | .EQUAL | .NOT | .AND | .OR | .IMPLIES | .XOR | .ITE
-    | .ADD | .MULT | .SUB | .NEG | .DIVISION | .INTS_DIVISION | .INTS_MODULUS
-    | .DIVISION_TOTAL | .INTS_DIVISION_TOTAL | .INTS_MODULUS_TOTAL | .ABS
-    | .LT | .LEQ | .GT | .GEQ | .TO_REAL | .TO_INTEGER | .IS_INTEGER
-    | .BITVECTOR_NOT | .BITVECTOR_NEG | .BITVECTOR_NAND | .BITVECTOR_NOR | .BITVECTOR_XNOR
-    | .BITVECTOR_COMP | .BITVECTOR_SUB | .BITVECTOR_UDIV | .BITVECTOR_UREM | .BITVECTOR_SDIV
-    | .BITVECTOR_SREM | .BITVECTOR_SMOD | .BITVECTOR_SHL | .BITVECTOR_LSHR | .BITVECTOR_ASHR
-    | .BITVECTOR_ULT | .BITVECTOR_ULE | .BITVECTOR_UGT | .BITVECTOR_UGE | .BITVECTOR_SLT
-    | .BITVECTOR_SLE | .BITVECTOR_SGT | .BITVECTOR_SGE | .BITVECTOR_AND | .BITVECTOR_OR
-    | .BITVECTOR_XOR | .BITVECTOR_ADD | .BITVECTOR_MULT | .BITVECTOR_CONCAT => true
-    | _ => false
-  | _ => false
-
-/-- Operators whose well-typed applications have well-typed children: those of
-`childrenTypedOfParent`, and applications of declared functions. -/
-def Op.childrenTypedForSubst : Op → Bool
+  | .kind k => match k.eoShape with
+    | .binderList | .binder _ => false
+    | _ => true
+  | .indexed _ _ => true
   | .node .APPLY_UF (.var _ _) => true
-  | op => op.childrenTypedOfParent
+  | .node .APPLY_CONSTRUCTOR (.const (.dtCons (.datatype _ _) _)) => true
+  | .node .APPLY_SELECTOR (.const (.dtSel (.datatype _ _) _ _)) => true
+  | .node .APPLY_TESTER _ | .node .APPLY_UPDATER _ => true
+  | _ => false
 
 /-- The CPC head of an application is not that of a quantifier, so neither is
 the application (nor any prefix of its spine). -/
@@ -72,16 +66,20 @@ def headQuantFree : Term → Bool
   | _ => true
 
 /-- Shapes whose congruence holds model by model: spines with a head that is not
-a quantifier, and the `:right-assoc-nil` operators of `isChildCongruent`. -/
+a quantifier, the `:right-assoc-nil` operators of `isChildCongruent`, `distinct`,
+and operators without a CPC counterpart (whose applications are never well
+typed). -/
 def AppShape.substCongruent : AppShape → Bool
   | .spine head _ => headQuantFree head
   | .rightAssocNil op (.const _) => op == UserOp.and || op == UserOp.or || op.isReNary
   | .rightAssocNil op .typed => op == UserOp.plus || op == UserOp.mult || op.isTypedNary
+  | .typedList op => op == UserOp.distinct
+  | .none => true
   | _ => false
 
 /-- Substitution may go below `op`. -/
 def Op.substOk (op : Op) : Bool :=
-  op.eoShape.substCongruent && op.childrenTypedForSubst
+  op.eoShape.substCongruent && op.childrenTypedOfParent
 
 /-! ## Closed nodes -/
 
@@ -143,6 +141,9 @@ inductive JustKind where
   /-- `a` and `b` apply the same operator, and the justifications `ks` relate
   their children. -/
   | congr (ks : Array Nat)
+  /-- `a` and `b` are the same quantifier, with the same variables and
+  instantiation patterns, and the justification `k` relates their bodies. -/
+  | body (k : Nat)
 
 /-- A justification that `a` and `b` are equal in a model where the entries
 with position at least `minPos` hold. -/
@@ -168,6 +169,15 @@ structure TriPlan where
   rws : Array (Node × Node)
   /-- The chain of each conjunct. -/
   chains : Array (Array ChainStep)
+
+/-- `a` and `b` are the same quantifier, with the same variables and
+instantiation patterns, and bodies the sides of `K` (`JustKind.body`). -/
+def Just.bodyOk (a b : Node) (K : Just) : Bool :=
+  match a, b with
+  | .app (.kind q) cs, .app (.kind q') ds =>
+    (q == .FORALL || q == .EXISTS) && q == q' && cs.size == ds.size && cs[0]? == ds[0]? &&
+      cs.extract 2 == ds.extract 2 && cs[1]? == some K.a && ds[1]? == some K.b
+  | _, _ => false
 
 namespace TriPlan
 
@@ -209,6 +219,10 @@ def justOk (P : TriPlan) (j : Nat) : Bool :=
               k < j && (P.justs[k]?.map fun K => K.a == c && K.b == d && J.minPos ≤ K.minPos).getD false
             | _, _, _ => false
       | _, _ => false
+    | .body k =>
+      match P.justs[k]? with
+      | some K => k < j && J.minPos ≤ K.minPos && Just.bodyOk J.a J.b K
+      | none => false
 
 /-- The endpoints of a chain step. -/
 def stepEnds (P : TriPlan) (i : Nat) : ChainStep → Option (Node × Node)
