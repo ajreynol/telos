@@ -871,6 +871,102 @@ engine (59) is certified, agrees with cvc5, and its CPC proof is accepted by
 Ethos. Most `unsat`s of random conjunctions are decided by preprocessing.
 `test/solve/dt-*.smt2` has a clash, a cycle and a tester conflict.
 
+## Stage 6: the SAT solver (in progress)
+
+Without a SAT solver, telos solves conjunctions of literals and replays cvc5's
+search. Theories with lemmas (datatypes' splits and forced instantiations) need
+one to be complete.
+
+### Decision
+
+- **Port cvc5's MiniSat** (`src/prop/minisat`, cvc5's modified MiniSat) and
+  the layer around it, faithfully, so that the search, and so the events, are
+  cvc5's.
+- **Performance is not a concern yet.** Eventually telos should depend on a
+  *verified* CDCL(T) solver in Lean. The port is the first implementation of a
+  boundary that such a solver replaces.
+- **Fidelity configuration.** With proofs, cvc5's default SAT solver is now
+  CaDiCaL (through its IPASIR-UP propagator, `src/prop/cadical`). The fuzzer
+  will run cvc5 with `--sat-solver=minisat`, a common option, allowed in safe
+  mode. The decision mode is MiniSat's own (`--decision=internal`) for
+  QF_UF and QF_UFDT, and cvc5's justification heuristic
+  (`--decision=justification`, `src/decision/`) for `ALL`, strings,
+  quantifiers and a few combinations: it is the other key module of this
+  stage, ported with the SAT solver.
+
+### Modules (cvc5's boundaries)
+
+1. **The CNF stream** (`cnf_stream.cpp`, and `proof_cnf_stream.cpp` for its
+   proofs): the Tseitin conversion of assertions and lemmas, which registers
+   their atoms (preregistration). Replay already emulates its atom order.
+2. **The theory proxy** (`theory_proxy.cpp`): what the SAT solver asks of the
+   theories: `theoryCheck`, `theoryPropagate`, `explainPropagation`,
+   `enqueueTheoryLiteral` (an assertion), lemmas as new clauses, decisions and
+   phases requested by the theories, backtracking. Telos's engine already does
+   most of this; replay drives it from a trace.
+3. **The CDCL(T) SAT solver interface** (`sat_solver.h`, `CDCLTSatSolver`):
+   `newVar`, `addClause` (with removable clauses), `solve`, `value`, push and
+   pop, `preferPhase`, with the theory proxy as its callbacks.
+4. **MiniSat** (`minisat/core/Solver.cc`, about 2,200 lines, and
+   `minisat.cpp`): implements the interface. cvc5's changes to MiniSat are kept:
+   theory propagation and conflicts inside `propagate`, lemmas, removable
+   clauses, assertion levels, phase preferences, and proof hooks.
+5. **The decision engine** (`decision/`, about 1,000 lines:
+   `justification_strategy.cpp`, `justify_stack.cpp`, `justify_cache.cpp`,
+   `assertion_list.cpp`): the justification heuristic, which chooses decisions
+   from the structure of the assertions (the next unjustified literal of the
+   next unjustified assertion), with cvc5's options (`stoponly`, its skolem
+   policy). The SAT solver asks it for decisions through the theory proxy
+   (`getNextDecisionRequest`), before its own.
+6. **The propositional engine** (`prop_engine.cpp`): assertions, `solve`, the
+   model.
+
+The swap point is (3) against (2). **IPASIR-UP** shapes it: CaDiCaL's
+external-propagator interface is what a modern CDCL(T) solver offers, and cvc5's
+`cdclt_propagator.cpp` adapts the theory proxy to it:
+- `notify_assignment` asserts literals;
+- `notify_new_decision_level` and `notify_backtrack` push and pop;
+- `cb_propagate` and `cb_add_reason_clause_lit` give propagations and their
+  explanations;
+- `cb_check_found_model` runs the full check;
+- `cb_has_external_clause` and `cb_add_external_clause_lit` give lemmas and
+  conflicts;
+- `cb_decide` gives the decisions of the theories and of the decision
+  engine.
+
+So the theory proxy keeps operations that this adapter can call. A verified
+CDCL(T) solver in Lean (or CaDiCaL) then plugs in through a port of that
+adapter, without touching the theories.
+
+### Certification
+
+- `sat`: the model check, as now, with the SAT assignment for the Boolean
+  variables.
+- `unsat`: a refutation of the clauses:
+  - the input clauses from the CNF conversion, justified by the CPC steps of
+    the proof CNF stream (`cnf_and_pos`, ...), run through Logos's checker;
+  - theory lemmas, valid by their CPC steps;
+  - theory conflicts, by the certificates (`EqProof`);
+  - the SAT search's resolution proof (MiniSat's chains, as cvc5's
+    `SatProofManager` gives them), checked by a small verified resolution
+    checker (or as LRAT by Lean's verified LRAT checker).
+
+  Until that is in place, an `unsat` from the search answers `unknown`.
+
+### Milestones
+
+1. The SAT solver interface and MiniSat's core, on pure propositional input.
+2. The CNF stream and the theory proxy, with the engine: QF_UF and QF_UFDT with
+   clauses, the events compared with cvc5's (`--sat-solver=minisat`),
+   decisions included. Replay stays for the other configurations.
+3. The decision engine (justification): `ALL` and the other logics that use
+   it, the events compared with cvc5's (`--sat-solver=minisat`, default
+   decision mode).
+4. The resolution proof and its verified checker: certified `unsat` with
+   lemmas.
+5. Later: the IPASIR-UP adapter, and the dependency on a verified CDCL(T)
+   solver.
+
 ## Order of work (all stages)
 
 1. **Equality engine.** Port `theory/uf/equality_engine.cpp` (about 3k lines)

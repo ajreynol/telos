@@ -76,6 +76,8 @@ structure Options where
   /-- Do not imitate cvc5's order of nodes (`Solver.Config.cvc5Order`). -/
   noCvc5Order : Bool := false
   replay : Option String := none
+  /-- Solve a DIMACS file with the SAT solver alone. -/
+  dimacs : Bool := false
   pp : Preprocess.UserOptions := {}
 
 def parseArgs : List String → Options → Except String Options
@@ -87,6 +89,7 @@ def parseArgs : List String → Options → Except String Options
   | "--theory-events" :: rest, o => parseArgs rest { o with theoryEvents := true }
   | "--theory-events-ee" :: rest, o => parseArgs rest { o with theoryEventsEE := true }
   | "--no-preprocess" :: rest, o => parseArgs rest { o with noPreprocess := true }
+  | "--dimacs" :: rest, o => parseArgs rest { o with dimacs := true }
   | "--no-cvc5-order" :: rest, o => parseArgs rest { o with noCvc5Order := true }
   | "--replay" :: t :: rest, o => parseArgs rest { o with replay := some t }
   | ["--replay"], _ => .error "--replay needs a trace file"
@@ -99,7 +102,7 @@ def parseArgs : List String → Options → Except String Options
     else parseArgs rest { o with file := some f }
 
 def usage : String :=
-  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE\n       telos --theory-events [--theory-events-ee] [--no-preprocess] [--no-cvc5-order] [--proof] [--proof-dir DIR] [PREPROCESSING OPTIONS] FILE\n       telos --replay TRACE [--theory-events-ee] FILE"
+  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE\n       telos --theory-events [--theory-events-ee] [--no-preprocess] [--no-cvc5-order] [--proof] [--proof-dir DIR] [PREPROCESSING OPTIONS] FILE\n       telos --replay TRACE [--theory-events-ee] FILE\n       telos --dimacs FILE"
 
 def main (args : List String) : IO UInt32 := do
   let opts ← match parseArgs args {} with
@@ -108,6 +111,10 @@ def main (args : List String) : IO UInt32 := do
   let some file := opts.file | IO.eprintln usage; return 2
   let input ← if file == "-" then (← IO.getStdin).readToEnd else IO.FS.readFile file
   if opts.profile then Profile.enable
+  if opts.dimacs then
+    match Sat.solveDimacs input with
+    | .ok out => IO.println out; return 0
+    | .error e => IO.eprintln s!"telos: {e}"; return 1
   let sc ← match ← Profile.measure "frontend" "parse script" fun _ => readScript input with
     | .ok sc => pure sc
     | .error e => IO.eprintln s!"telos: {e}"; return 1
