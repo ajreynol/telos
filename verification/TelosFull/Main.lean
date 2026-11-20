@@ -1,3 +1,4 @@
+import TelosProofs.Solver.Frontend
 import TelosProofs.Axioms
 import TelosFull.ChildArgs
 import Cpc.Proofs.ProvenFromEmpty

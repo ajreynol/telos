@@ -1,4 +1,4 @@
-; A disjunction: the SAT solver decides, a theory conflict makes it backtrack; unsat (not certified yet).
+; A disjunction: the SAT solver decides, a theory conflict makes it backtrack; a certified unsat (the SAT solver's refutation, with its certificate).
 (set-logic QF_UF)
 (declare-sort U 0)
 (declare-fun a () U)

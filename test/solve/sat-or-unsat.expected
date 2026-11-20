@@ -1,4 +1,3 @@
-telos: answer not certified (an unsat of the SAT solver, which is not certified yet): answering unknown
 (prereg 0 true)
 (prereg 0 false)
 (prereg 1 (= a b))
@@ -25,4 +24,4 @@ telos: answer not certified (an unsat of the SAT solver, which is not certified 
 (propagate 1 THEORY_BUILTIN (= a b))
 (propagate 1 THEORY_BUILTIN (= (f a) (f b)))
 (explain 1 (= (f a) (f b)) (= a b))
-unknown
+unsat

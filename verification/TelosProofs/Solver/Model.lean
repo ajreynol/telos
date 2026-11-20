@@ -244,20 +244,22 @@ theorem eval_eq_toVal (a b : MVal) :
     simp [h, this]
 
 /-- Each node has the value of its value in the model. -/
-abbrev Vals (M : Model) (l : List Node) (vs : List MVal) : Prop :=
-  List.Forall₂ (fun c v => __smtx_model_eval (toSmtModel M) c.toSmt = toVal v) l vs
+abbrev ValsIn (N : SmtModel) (l : List Node) (vs : List MVal) : Prop :=
+  List.Forall₂ (fun c v => __smtx_model_eval N c.toSmt = toVal v) l vs
+
+abbrev Vals (M : Model) (l : List Node) (vs : List MVal) : Prop := ValsIn (toSmtModel M) l vs
 
 omit [LogosFacts] in
-theorem vals_map {M : Model} : ∀ {l : List Node} {vs : List MVal}, Vals M l vs →
-    List.Forall₂ (fun x v => __smtx_model_eval (toSmtModel M) (__eo_to_smt x) = toVal v) (l.map Node.toEo) vs
+theorem vals_map {N : SmtModel} : ∀ {l : List Node} {vs : List MVal}, ValsIn N l vs →
+    List.Forall₂ (fun x v => __smtx_model_eval N (__eo_to_smt x) = toVal v) (l.map Node.toEo) vs
   | _, _, .nil => .nil
   | _, _, .cons h hr => .cons h (vals_map hr)
 
 omit [LogosFacts] in
-theorem eval_andChain_vals (M : Model) : ∀ (xs : List Term) (vs : List MVal) (bs : List Bool),
-    List.Forall₂ (fun x v => __smtx_model_eval (toSmtModel M) (__eo_to_smt x) = toVal v) xs vs →
+theorem eval_andChain_vals (N : SmtModel) : ∀ (xs : List Term) (vs : List MVal) (bs : List Bool),
+    List.Forall₂ (fun x v => __smtx_model_eval N (__eo_to_smt x) = toVal v) xs vs →
     Model.bools vs = some bs →
-    __smtx_model_eval (toSmtModel M) (__eo_to_smt (andChain xs)) = SmtValue.Boolean (bs.all id)
+    __smtx_model_eval N (__eo_to_smt (andChain xs)) = SmtValue.Boolean (bs.all id)
   | [], [], bs, .nil, h => by
     simp only [Model.bools, Option.some.injEq] at h; subst h
     exact eval_true _
@@ -266,15 +268,15 @@ theorem eval_andChain_vals (M : Model) : ∀ (xs : List Term) (vs : List MVal) (
     | bool b =>
       simp only [Model.bools] at h
       obtain ⟨bs', hb', rfl⟩ := Option.map_eq_some_iff.1 h
-      rw [toSmt_andChain_cons, eval_and, hx, eval_andChain_vals M xs vs bs' hr hb']
+      rw [toSmt_andChain_cons, eval_and, hx, eval_andChain_vals N xs vs bs' hr hb']
       simp [toVal, __smtx_model_eval_and, native_and]
     | _ => simp [Model.bools] at h
 
 omit [LogosFacts] in
-theorem eval_orChain_vals (M : Model) : ∀ (xs : List Term) (vs : List MVal) (bs : List Bool),
-    List.Forall₂ (fun x v => __smtx_model_eval (toSmtModel M) (__eo_to_smt x) = toVal v) xs vs →
+theorem eval_orChain_vals (N : SmtModel) : ∀ (xs : List Term) (vs : List MVal) (bs : List Bool),
+    List.Forall₂ (fun x v => __smtx_model_eval N (__eo_to_smt x) = toVal v) xs vs →
     Model.bools vs = some bs →
-    __smtx_model_eval (toSmtModel M) (__eo_to_smt (orChain xs)) = SmtValue.Boolean (bs.any id)
+    __smtx_model_eval N (__eo_to_smt (orChain xs)) = SmtValue.Boolean (bs.any id)
   | [], [], bs, .nil, h => by
     simp only [Model.bools, Option.some.injEq] at h; subst h
     exact eval_false _
@@ -283,15 +285,15 @@ theorem eval_orChain_vals (M : Model) : ∀ (xs : List Term) (vs : List MVal) (b
     | bool b =>
       simp only [Model.bools] at h
       obtain ⟨bs', hb', rfl⟩ := Option.map_eq_some_iff.1 h
-      rw [toSmt_orChain_cons, eval_or, hx, eval_orChain_vals M xs vs bs' hr hb']
+      rw [toSmt_orChain_cons, eval_or, hx, eval_orChain_vals N xs vs bs' hr hb']
       simp [toVal, __smtx_model_eval_or, native_or]
     | _ => simp [Model.bools] at h
 
 omit [LogosFacts] in
 /-- **A connective has its value.** -/
-theorem combine_sound (M : Model) {k : Kind} {cs : Array Node} {vs : List MVal} {r : MVal}
-    (hv : Vals M cs.toList vs) (h : Model.combine k vs = some r) :
-    __smtx_model_eval (toSmtModel M) (Node.app (.kind k) cs).toSmt = toVal r := by
+theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List MVal} {r : MVal}
+    (hv : ValsIn N cs.toList vs) (h : Model.combine k vs = some r) :
+    __smtx_model_eval N (Node.app (.kind k) cs).toSmt = toVal r := by
   have hlen : cs.size = vs.length := by simpa using hv.length_eq
   unfold Model.combine at h
   split at h
@@ -307,7 +309,7 @@ theorem combine_sound (M : Model) {k : Kind} {cs : Array Node} {vs : List MVal} 
       have hs : 2 ≤ cs.size := by omega
       unfold Node.toSmt
       rw [toEo_and cs hs]
-      exact eval_andChain_vals M _ _ _ (vals_map hv) hbs
+      exact eval_andChain_vals N _ _ _ (vals_map hv) hbs
     · cases h
   · split at h
     · rename_i h2
@@ -315,7 +317,7 @@ theorem combine_sound (M : Model) {k : Kind} {cs : Array Node} {vs : List MVal} 
       have hs : 2 ≤ cs.size := by omega
       unfold Node.toSmt
       rw [toEo_or cs hs]
-      exact eval_orChain_vals M _ _ _ (vals_map hv) hbs
+      exact eval_orChain_vals N _ _ _ (vals_map hv) hbs
     · cases h
   · cases h
     have hs : cs.size = 2 := by simpa using hlen
@@ -350,6 +352,12 @@ theorem combine_sound (M : Model) {k : Kind} {cs : Array Node} {vs : List MVal} 
     rw [toSmt_ite hs, eval_ite', h0, h1, h2]
     cases c <;> simp [toVal, __smtx_model_eval_ite]
   · cases h
+
+omit [LogosFacts] in
+theorem combine_sound (M : Model) {k : Kind} {cs : Array Node} {vs : List MVal} {r : MVal}
+    (hv : Vals M cs.toList vs) (h : Model.combine k vs = some r) :
+    __smtx_model_eval (toSmtModel M) (Node.app (.kind k) cs).toSmt = toVal r :=
+  combine_sound_in _ hv h
 
 /-! ### `distinct` -/
 

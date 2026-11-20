@@ -1,6 +1,7 @@
 import TelosProofs.Rewriter.Rewriter
 import TelosProofs.Preprocess.Preprocess
 import TelosProofs.Solver.Model
+import TelosProofs.Solver.Frontend
 
 /-!
 # Axiom audit

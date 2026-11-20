@@ -149,7 +149,12 @@ one, and UF. They cover logics in which UF is the only theory (QF_UF). In other
 logics the theories' checks do nothing, and the answer is `unknown` as soon as
 a theory gets a literal.
 
-An `unsat` answer is certified. Its conflict is explained by a verified
+An `unsat` answer is certified. With SAT structure, the SAT solver's
+refutation comes with a clausal certificate (`Telos/Solver/SatProof.lean`):
+its clauses justified by the CNF translation, the definitions of connectives,
+and certificates of theory conflicts, its learned clauses by unit propagation;
+the checker is proved sound. For a conjunction of literals, its conflict is
+explained by a verified
 explanation (`Telos/Solver/Explain.lean`), which computes the equality engine's
 explanation as cvc5 does, with a theorem that its reasons imply the conflict.
 Where it does not apply, it is certified by an equality proof instead

@@ -277,47 +277,6 @@ theorem engineAssertions_sound {M : SmtModel} (hM : model_wf M) (as : List Node)
       · intro a ha; simp at ha; subst ha; exact hP
     · intro a ha; simp at ha; subst ha; exact hP
 
-/-- **Correctness of `unsat`.** If the engine answers `unsat` on a script whose
-assertions are Boolean, no well-formed model satisfies the input assertions. -/
-theorem solveScript_unsat (sc : Script) (u : UserOptions) (ee pp wp co vs : Bool)
-    {out : List Node} {r : Solver.Result} (h : solveScript sc u ee pp wp co vs = .ok (out, r))
-    (hu : r.answer = .unsat) {opts : PPOptions} {as : List Node}
-    (hin : ppInput sc u = .ok (opts, as)) (hb : ∀ a ∈ as, HasBoolType a.toEo) :
-    ∀ M, model_wf M → ¬ TrueIn M (inputNode as).toEo := by
-  intro M hM hv
-  simp only [solveScript, hin, bind, Except.bind, pure, Except.pure] at h
-  split at h
-  · simp at h
-  · split at h
-    · -- the SAT solver, whose `unsat` is not certified yet: it never answers it
-      try simp only [Except.ok.injEq, Prod.mk.injEq] at h
-      obtain ⟨rfl, rfl⟩ := h
-      generalize hr : Solver.runSat _ _ = r0 at hu
-      have hu' : r0.answer = .unsat := by
-        split at hu
-        · exact hu
-        · split at hu <;> simp_all
-      rw [← hr] at hu'
-      exact absurd hu' (Solver.runSat_ne_unsat _ _)
-    · split at h
-      · simp at h
-      · rename_i lits hlits
-        try simp only [Except.ok.injEq, Prod.mk.injEq] at h
-        obtain ⟨rfl, rfl⟩ := h
-        have hgood := literalsOf_sound hM _ [] lits (engineLiterals_ok hlits) (by simp)
-          (engineAssertions_sound hM as opts pp hb hv)
-        -- the SAT solver (after a lemma) never answers `unsat`, and the check
-        -- of a `sat` answer turns it into `unknown`, never into `unsat`
-        generalize hrs : Solver.runSat _ _ = rs at hu
-        have hrs' : rs.answer ≠ .unsat := hrs ▸ Solver.runSat_ne_unsat _ _
-        generalize hrn : Solver.run _ lits = rn at hu
-        have hun : rn.answer = .unsat := by
-          repeat' split at hu
-          all_goals simp_all
-        rw [← hrn] at hun
-        exact Solver.run_unsat_sound _ lits hun (fun l hl => (hgood l hl).1) M hM
-          (fun l hl => (hgood l hl).2)
-
 end Frontend
 
 end Telos

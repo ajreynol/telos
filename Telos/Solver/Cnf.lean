@@ -26,12 +26,21 @@ namespace Telos.Solver.Cnf
 
 open Telos.Sat
 
+/-- Where a clause comes from, for the certificate of a refutation
+(`Telos/Solver/SatProof.lean`). -/
+inductive ClauseTag where
+  /-- Asserting the formula of this source (`State.src`), at the top level. -/
+  | src (i : Nat)
+  /-- The definition of the literal of the connective `n`. -/
+  | defn (n : Node)
+  deriving Inhabited
+
 /-- A request to the SAT solver. -/
 inductive SatOp where
   /-- A new variable (the next index), a theory atom or not. -/
   | newVar (isTheoryAtom : Bool)
   /-- A clause, removable or not. -/
-  | clause (lits : Array Lit) (removable : Bool)
+  | clause (lits : Array Lit) (removable : Bool) (tag : ClauseTag)
   deriving Inhabited
 
 structure State where
@@ -48,6 +57,8 @@ structure State where
   booleanVariables : Array Node := #[]
   /-- The clauses being added are removable (`d_removable`). -/
   removable : Bool := false
+  /-- The source of the formula being asserted (for `ClauseTag.src`). -/
+  src : Nat := 0
   deriving Inhabited
 
 /-- What the stream asks of its host (cvc5's `Registrar`, and `Env`). -/
@@ -88,14 +99,17 @@ def getNode? (s : State) (l : Lit) : Option Node := s.litToNode.get? l.x
 
 /-- `assertClause`: duplicate literals dropped, the clause goes to the SAT
 solver. -/
-def assertClause (c : Array Lit) : m Unit :=
+def assertClause (c : Array Lit) (defn : Option Node := none) : m Unit :=
   modifyThe State fun s => Id.run do
     let mut out : Array Lit := #[]
     for l in c do
       if !out.contains l then out := out.push l
     let ops := s.ops
     let s := { s with ops := #[] }
-    return { s with ops := ops.push (.clause out s.removable) }
+    let tag := match defn with
+      | some n => ClauseTag.defn n
+      | none => .src s.src
+    return { s with ops := ops.push (.clause out s.removable tag) }
 
 section
 variable (H : Host m)
@@ -127,8 +141,9 @@ def newLiteral (node : Node) (isTheoryAtom : Bool := false) (notifyTheory : Bool
   if notifyTheory then
     -- a lemma may be added meanwhile: the flag is restored
     let removable := (← cnf).removable
+    let src := (← cnf).src
     H.notifySatLiteral node
-    modifyThe State fun s => { s with removable }
+    modifyThe State fun s => { s with removable, src }
   return lit
 
 /-- `convertAtom`: an atom gets its literal; a theory atom (anything but a
@@ -163,45 +178,45 @@ partial def handleAnd (node : Node) (cs : Array Node) : m Lit := do
   let mut clause : Array Lit := #[]
   for c in cs do clause := clause.push (← toCNF c).neg
   let lit ← newLiteral H node
-  for c in clause do assertClause #[lit.neg, c.neg]
-  assertClause (clause.push lit)
+  for c in clause do assertClause #[lit.neg, c.neg] (some node)
+  assertClause (clause.push lit) (some node)
   return lit
 
 partial def handleOr (node : Node) (cs : Array Node) : m Lit := do
   let mut clause : Array Lit := #[]
   for c in cs do clause := clause.push (← toCNF c)
   let lit ← newLiteral H node
-  for c in clause do assertClause #[lit, c.neg]
-  assertClause (clause.push lit.neg)
+  for c in clause do assertClause #[lit, c.neg] (some node)
+  assertClause (clause.push lit.neg) (some node)
   return lit
 
 partial def handleXor (node a b : Node) : m Lit := do
   let a ← toCNF a
   let b ← toCNF b
   let lit ← newLiteral H node
-  assertClause #[a, b, lit.neg]
-  assertClause #[a.neg, b.neg, lit.neg]
-  assertClause #[a, b.neg, lit]
-  assertClause #[a.neg, b, lit]
+  assertClause #[a, b, lit.neg] (some node)
+  assertClause #[a.neg, b.neg, lit.neg] (some node)
+  assertClause #[a, b.neg, lit] (some node)
+  assertClause #[a.neg, b, lit] (some node)
   return lit
 
 partial def handleIff (node a b : Node) : m Lit := do
   let a ← toCNF a
   let b ← toCNF b
   let lit ← newLiteral H node
-  assertClause #[a.neg, b, lit.neg]
-  assertClause #[a, b.neg, lit.neg]
-  assertClause #[a.neg, b.neg, lit]
-  assertClause #[a, b, lit]
+  assertClause #[a.neg, b, lit.neg] (some node)
+  assertClause #[a, b.neg, lit.neg] (some node)
+  assertClause #[a.neg, b.neg, lit] (some node)
+  assertClause #[a, b, lit] (some node)
   return lit
 
 partial def handleImplies (node a b : Node) : m Lit := do
   let a ← toCNF a
   let b ← toCNF b
   let lit ← newLiteral H node
-  assertClause #[lit.neg, a.neg, b]
-  assertClause #[a, lit]
-  assertClause #[b.neg, lit]
+  assertClause #[lit.neg, a.neg, b] (some node)
+  assertClause #[a, lit] (some node)
+  assertClause #[b.neg, lit] (some node)
   return lit
 
 partial def handleIte (node c t e : Node) : m Lit := do
@@ -209,12 +224,12 @@ partial def handleIte (node c t e : Node) : m Lit := do
   let t ← toCNF t
   let e ← toCNF e
   let lit ← newLiteral H node
-  assertClause #[lit.neg, t, e]
-  assertClause #[lit.neg, c.neg, t]
-  assertClause #[lit.neg, c, e]
-  assertClause #[lit, t.neg, e.neg]
-  assertClause #[lit, c.neg, t.neg]
-  assertClause #[lit, c, e.neg]
+  assertClause #[lit.neg, t, e] (some node)
+  assertClause #[lit.neg, c.neg, t] (some node)
+  assertClause #[lit.neg, c, e] (some node)
+  assertClause #[lit, t.neg, e.neg] (some node)
+  assertClause #[lit, c.neg, t.neg] (some node)
+  assertClause #[lit, c, e.neg] (some node)
   return lit
 
 end
@@ -276,8 +291,8 @@ partial def convertAndAssertRec (node : Node) (negated : Bool) : m Unit := do
   | _ => assertClause #[← toCNF H node negated]
 
 /-- `convertAndAssert`, with the clauses removable or not. -/
-def convertAndAssert (node : Node) (removable : Bool) (negated : Bool := false) : m Unit := do
-  modifyThe State fun s => { s with removable }
+def convertAndAssert (node : Node) (removable : Bool) (negated : Bool := false) (src : Nat := 0) : m Unit := do
+  modifyThe State fun s => { s with removable, src }
   convertAndAssertRec H node negated
 
 end

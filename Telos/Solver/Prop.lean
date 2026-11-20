@@ -55,22 +55,44 @@ def satCheck (e : Effort) : EngineM Unit := do
   check e
   flushLemmas
 
-/-- `TheoryEngine::getExplanation`, as the SAT solver asks for it: the
-verified explanation (`EE.explainLitV`), or else the equality engine's. -/
-def satExplain (lit : Node) : EngineM (Array Node) := do
+/-- The explanation of a propagated literal: the verified explanation
+(`EE.explainLitV`), or else the equality engine's; and the certificate of the
+clause it makes (the literal, or the negation of a reason), which refutes the
+reasons with the literal's negation. -/
+def satExplainQuiet (lit : Node) : EngineM (Array Node × Option (Array Node × EqProof)) := do
   let exp ← match EE.explainLitV (← exCtx) lit with
     | some exp => pure exp
     | none =>
       modify fun s => { s with unverifiedExplains := s.unverifiedExplains + 1 }
       explain lit
+  let s ← get
+  -- (from the literals of the clause only)
+  let lits := exp.push (negate lit)
+  return (exp, (EE.conflictOfPropagation s.ee lits exp lit (negate lit)).toOption)
+
+/-- `TheoryEngine::getExplanation`, as the SAT solver asks for it. -/
+def satExplain (lit : Node) : EngineM (Array Node × Option (Array Node × EqProof)) := do
+  let (exp, cert) ← satExplainQuiet lit
   emit (.explain (← level) lit (EE.mkAnd exp))
-  return exp
+  return (exp, cert)
 
 /-! ## The SAT solver's side -/
+
+/-- Where a clause given to the SAT solver comes from. -/
+inductive BaseTag where
+  /-- The CNF stream. -/
+  | cnf (tag : Cnf.ClauseTag)
+  /-- An explanation of a theory propagation, with its certificate. -/
+  | theory (cert : Option (Array Node × EqProof))
+  deriving Inhabited
 
 structure PropState where
   sat : Sat.Solver := {}
   eng : State := {}
+  /-- The clauses given to the SAT solver, and those it learned, for the
+  certificate of a refutation. -/
+  base : Array (Array Lit × BaseTag) := #[]
+  learned : Array (Array Lit) := #[]
 
 abbrev PropM := ReaderT Config (StateM PropState)
 
@@ -122,7 +144,8 @@ def flushOps : PropM Unit := do
   for op in ops do
     match op with
     | .newVar isT => modifyThe Sat.Solver fun s => (Sat.Solver.addVar s true true isT).2
-    | .clause lits removable =>
+    | .clause lits removable tag =>
+      modifyThe PropState fun p => { p with base := p.base.push (lits, .cnf tag) }
       modifyThe Sat.Solver fun s =>
         if !s.ok then s else
         match Sat.Solver.filterClause s lits with
@@ -148,9 +171,10 @@ instance : TheoryProxy PropM where
     lits.mapM satLit
   explainPropagation l := do
     let n ← satNode l
-    let exp ← onEngineF (satExplain n)
+    let (exp, cert) ← onEngineF (satExplain n)
     let mut out := #[l]
     for e in (if exp.isEmpty then #[Node.mkTrue] else exp) do out := out.push (← satLit e).neg
+    modifyThe PropState fun p => { p with base := p.base.push (out, .theory cert) }
     return out
   enqueueTheoryLiteral l := do
     let n ← satNode l
@@ -166,7 +190,7 @@ instance : TheoryProxy PropM where
   theoryNeedCheck := onEngine do
     let s ← get
     return s.outputUsed || s.lemmasAdded
-  notifySatClause _ := pure ()
+  notifySatClause c := modifyThe PropState fun p => { p with learned := p.learned.push c }
   notifyRestart := pure ()
 
 /-! ## Solving -/
@@ -179,7 +203,9 @@ def flushOpsTop : PropM Unit := do
   for op in ops do
     match op with
     | .newVar isT => let _ ← Sat.Solver.newVar true true isT
-    | .clause lits removable => let _ ← Sat.Solver.addClause lits removable
+    | .clause lits removable tag =>
+      modifyThe PropState fun p => { p with base := p.base.push (lits, .cnf tag) }
+      let _ ← Sat.Solver.addClause lits removable
 
 /-- Run an operation of the engine outside the search. -/
 def onEngineTop (x : EngineM α) : PropM α := do
@@ -196,14 +222,58 @@ def propSolve (formulas : List Node) : PropM Sat.Solver.Result := do
       let ctx ← eeCtx
       modify fun s => { s with ee := { EE.init ctx with dt := { enabled := c.dtSolver } } }
   -- `PropEngine::finishInit`: `true` and `(not false)`, at level 0
+  -- (the inputs of the certificate: these two, then the formulas)
   onEngineTop do
-    withCnf (Cnf.convertAndAssert (cnfHost c) Node.mkTrue false)
-    withCnf (Cnf.convertAndAssert (cnfHost c) (Node.notNode Node.mkFalse) false)
+    let s0 ← newSatSource (.input 0)
+    withCnf (Cnf.convertAndAssert (cnfHost c) Node.mkTrue false (src := s0))
+    let s1 ← newSatSource (.input 1)
+    withCnf (Cnf.convertAndAssert (cnfHost c) (Node.notNode Node.mkFalse) false (src := s1))
   -- the context level of `check-sat`
   onEngine pushLevel
-  for f in formulas do
-    onEngineTop (withCnf (Cnf.convertAndAssert (cnfHost c) f false))
+  for (f, i) in formulas.zipIdx do
+    onEngineTop do
+      let src ← newSatSource (.input (i + 2))
+      withCnf (Cnf.convertAndAssert (cnfHost c) f false (src := src))
   Sat.Solver.solve
+
+/-- The inputs of the certificate of a refutation of `formulas`. -/
+def certInputs (formulas : List Node) : Array Node :=
+  #[Node.mkTrue, Node.notNode Node.mkFalse] ++ formulas.toArray
+
+/-- After a refutation: the theory propagations at level 0 that the SAT solver
+did not ask to explain are explained now (their reasons still hold), so that
+the certificate has their clauses. Post hoc: nothing is printed. -/
+def explainLevelZero : PropM Unit := do
+  let s ← getThe Sat.Solver
+  for p in s.trail do
+    let d := s.vardata[p.var]!
+    if d.level == 0 && d.reason == Sat.CRef.lazy then
+      let n ← satNode p
+      let (exp, cert) ← onEngine (satExplainQuiet n)
+      let mut out := #[p]
+      for e in (if exp.isEmpty then #[Node.mkTrue] else exp) do out := out.push (← satLit e).neg
+      modifyThe PropState fun q => { q with base := q.base.push (out, .theory cert) }
+
+/-- **The certificate of a refutation**: the clauses as literals of terms, with
+their justifications; those with none (lemmas, not certified yet) are left
+out, and the check fails if the refutation needs them. -/
+def buildCert (p : PropState) : Option SatProof.Cert := do
+  let toNodes (c : Array Lit) : Option SatProof.Clause := c.mapM (Cnf.getNode? p.eng.cnf)
+  let source (k : Nat) : Option SatProof.Just :=
+    match p.eng.satSources[k]? with
+    | some (.input i) => some (.input i)
+    | some (.theory (some (A, q))) => some (.theory A q)
+    | _ => none
+  let mut clauses : Array (SatProof.Clause × SatProof.Just) := #[]
+  for (c, tag) in p.base do
+    let j := match tag with
+      | .cnf (.defn n) => some (.defn n)
+      | .cnf (.src k) => source k
+      | .theory (some (A, q)) => some (.theory A q)
+      | .theory none => none
+    if let some j := j then clauses := clauses.push ((← toNodes c), j)
+  let learned ← p.learned.mapM toNodes
+  return { clauses, learned }
 
 /-- **Solve formulas** with the SAT solver and the theory engine. A `sat`
 answer comes with the engine's state, from which the caller builds a model
@@ -233,19 +303,33 @@ def runSat (c : Config) (formulas : List Node) : Result :=
     { answer := if solved then .sat else .unknown, events := e.events, ee := e.ee,
       asserted := e.asserted ++ bools }
   | .unsat =>
-    { answer := .unknown, events := e.events,
-      uncertified := some "an unsat of the SAT solver, which is not certified yet" }
+    -- the certificate, post hoc
+    let p := ((explainLevelZero.run c).run p).2
+    let inputs := certInputs formulas
+    match buildCert p with
+    | some cert =>
+      if cert.check inputs then { answer := .unsat, events := e.events, satCert := some (inputs, cert) }
+      else { answer := .unknown, events := e.events,
+             uncertified := some s!"the certificate of the SAT solver's refutation does not check: {cert.why inputs}" }
+    | none => { answer := .unknown, events := e.events,
+                uncertified := some "a clause of the SAT solver's refutation has no literals of terms" }
   | .unknown => { answer := .unknown, events := e.events }
 
 end Telos.Solver
 
 namespace Telos.Solver
 
-/-- The SAT solver's `unsat` is not certified yet: `runSat` never answers it. -/
-theorem runSat_ne_unsat (c : Config) (fs : List Node) : (runSat c fs).answer ≠ .unsat := by
+/-- **An `unsat` of the SAT solver is certified**: it comes with a certificate
+of a refutation of the formulas that checks. -/
+theorem runSat_unsat (c : Config) (fs : List Node) (h : (runSat c fs).answer = .unsat) :
+    ∃ cert, (runSat c fs).satCert = some (certInputs fs, cert) ∧ cert.check (certInputs fs) = true := by
+  revert h
   unfold runSat
   dsimp only
   repeat' split
-  all_goals simp
+  all_goals first
+    | (intro h; simp_all)
+    | (intro h; exact ⟨_, rfl, by assumption⟩)
+    | (intro h; cases h)
 
 end Telos.Solver

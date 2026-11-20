@@ -871,7 +871,7 @@ engine (59) is certified, agrees with cvc5, and its CPC proof is accepted by
 Ethos. Most `unsat`s of random conjunctions are decided by preprocessing.
 `test/solve/dt-*.smt2` has a clash, a cycle and a tester conflict.
 
-## Stage 6: the SAT solver (in progress: milestones 1 and 2 done)
+## Stage 6: the SAT solver (in progress: milestones 1, 2 and 4 done; 4 but for datatypes lemmas)
 
 Without a SAT solver, telos solves conjunctions of literals and replays cvc5's
 search. Theories with lemmas (datatypes' splits and forced instantiations) need
@@ -1021,6 +1021,33 @@ Results, with `scripts/fuzz-solve.py --sat` (cvc5 with
   engine alone gives up there).
 - On telos's own preprocessing, the remaining differences are preprocessing's,
   not the search's.
+
+**Milestone 4 (certified `unsat`) is done, but for datatypes lemmas.** An
+`unsat` of the SAT solver comes with a certificate
+(`Telos/Solver/SatProof.lean`), checked, and proved to refute the input
+(`verification/TelosProofs/Solver/SatProof.lean`, `Cert.check_sound`; the
+front end's `solveScript_unsat`, `TelosProofs/Solver/Frontend.lean`). The
+certificate is a clausal proof over literals of terms, not SAT variables:
+- **input clauses**: they contain a clause of the CNF translation of an input
+  formula, recomputed by `inputClauses` (cvc5's `convertAndAssert`);
+- **definitions**: they contain a Tseitin clause of a connective
+  (`defClauses`, the CNF stream's `handle*`);
+- **theory clauses** (conflicts, and explanations of propagations): they
+  contain the negation of each assumption of an equality proof of `false`
+  (`EqProof`), built from the clause's literals only, when the clause is made
+  (the engine's state is then that of the conflict);
+- **learned clauses**, and finally the empty clause: each follows from the
+  clauses before it by unit propagation (RUP).
+
+The CNF stream and MiniSat are not trusted: the checker recomputes what it
+checks. Theory propagations at level 0 that MiniSat never asked to explain are
+explained after the search (post hoc: nothing is printed), as their reasons
+still hold at level 0. On random benchmarks, every `unsat` of QF_UF is
+certified, and about 98% of QF_UFDT's: the rest need the clauses of datatypes
+lemmas (splits, instantiations, purification), which have no certificate yet
+and are left out of the certificate, so the check fails and the answer is
+`unknown`. Next: certificates of those lemmas (by the datatypes rules, through
+the lemma's rewriting), and then a CPC proof of the refutation for Ethos.
 
 Not yet:
 - theory combination's care graph (`combineTheories`, splits on shared terms),

@@ -169,4 +169,10 @@ def checkConflict (A : Array Node) (p : EqProof) : Bool :=
 
 end EqProof
 
+/-- The literal that makes `lit` false: its negation. -/
+def negate (lit : Node) : Node :=
+  match lit with
+  | .app (.kind .NOT) cs => if h : cs.size = 1 then cs[0] else Node.notNode lit
+  | _ => Node.notNode lit
+
 end Telos.Solver
