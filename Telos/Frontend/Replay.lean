@@ -113,6 +113,19 @@ def purifyDefs (trace : String) : List (String × String) := Id.run do
     | .expr [.atom "=", .atom k, t] =>
       if !(out.any (·.1 == k)) then out := out ++ [(k, t.serialize)]
     | _ => pure ()
+  -- a purification whose lemma was dropped (pending in a conflict) shows in the
+  -- instantiation of its term `t`: `(= t (C (s₁ k) …))`
+  for line in trace.splitOn "\n" do
+    let line := line.trimAscii.toString
+    if !line.startsWith "(lemma " || !(line.splitOn "_INST ").length > 1 then continue
+    let .ok ss := Sexp.Parser.manySexps!.run line | continue
+    let some (Sexp.expr items) := ss.head? | continue
+    let some f := items[4]? | continue
+    let eq := match expandLets [] f with
+      | .expr [.atom "=>", _, e] => e
+      | e => e
+    if let .expr [.atom "=", t, .expr (_ :: .expr [_, .atom k] :: _)] := eq then
+      if k.startsWith "@purify_" && !(out.any (·.1 == k)) then out := out ++ [(k, t.serialize)]
   return out
 
 /-- `n` with each free constant named in `σ` replaced. -/

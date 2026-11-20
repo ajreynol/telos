@@ -758,11 +758,28 @@ With two theories (UF is always on), cvc5 enables theory combination. Ported:
 - A replayed `assert` keeps the theory the trace gives it (a shared equality
   goes to the theory that asked for it, not to the theory of its atom).
 
+- After a call of `TheoryEngine::check`, the SAT solver takes the propagated
+  literals, each followed by its Boolean propagation. With sharing, asserting
+  a literal that a theory already has prints nothing, but notifies the shared
+  terms of its atom. The replay asserts the pending propagated literals in
+  order, interleaved with the trace's asserts (the Boolean propagations). A
+  round continues the call if facts were asserted, with no conflict and no
+  lemma.
+- A theory is given a literal once (`markPropagation`), by the SAT solver or
+  the shared solver; equalities are compared up to symmetry.
+
 ### Results
 
-Replay, random benchmarks with clauses: 54 to 57% identical; UF unchanged
-(identical). The remaining differences are mostly the order of
-`checkSplit`, then its consequences (which pending facts are processed).
+Replay, random benchmarks with clauses: about 55% identical; UF unchanged
+(identical). On longer searches (5,000 to 13,000 events) the first difference
+is typically after 60 to 90 rounds. The remaining differences come from node
+order:
+- the order of `checkSplit`, and its consequences (which pending facts are
+  processed);
+- the orientation of equalities, which decides the direction of merges in the
+  equality engine.
+
+0.27 s for a 13,000-event trace.
 
 ### Node order
 
@@ -776,6 +793,12 @@ cvc5 makes some choices by node id, which telos cannot reproduce:
 `cvc5-deterministic-order.patch` makes the first two follow the order of the
 equality engine and of discovery. It is no slower: a vector instead of a
 set. The third is the rewriter's normal form, and is left alone.
+
+`cvc5-theory-events-ids.patch` (on top of `cvc5-theory-events.patch`) adds
+`-o theory-events-ids`, which prints `(node-id t id)` for each class of the
+central equality engine and each atom registered. With it, a replay can make
+cvc5's choices exactly: orient equalities, order the splits, order the
+explanations. It changes nothing in cvc5's behaviour.
 
 ## Order of work (all stages)
 

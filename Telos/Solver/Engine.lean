@@ -228,6 +228,13 @@ structure State where
   sharedLog : Array SharedUndo := #[]
   /-- The lemmas sent, whose atoms are to be preregistered (`flushLemmas`). -/
   lemmaQueue : Array Node := #[]
+  /-- In a replay: inside a call of `TheoryEngine::check`, and whether the last
+  check was of the last theory of a round. -/
+  inCheckCall : Bool := false
+  lastWasLast : Bool := false
+  /-- In a replay: the literals propagated in the last call of the checks, that
+  the SAT solver is to assert, in order. -/
+  pendingProps : Array Node := #[]
   ee : EE.EqualityEngine := default
   /-- The atoms assigned, in order, for backtracking the assignment. -/
   assignTrail : Array Key := #[]
@@ -297,13 +304,21 @@ def propagate (T : Theory) (lit : Node) : EngineM Unit := do
   | none => pure ()
   modify fun s => { s with propagated := s.propagated.push lit }
 
+/-- An equality literal with its sides swapped. -/
+def flipEq : Node → Node
+  | .app (.kind .EQUAL) #[a, b] => Node.eqNode b a
+  | .app (.kind .NOT) #[.app (.kind .EQUAL) #[a, b]] => Node.notNode (Node.eqNode b a)
+  | n => n
+
 /-- `TheoryEngine::assertToTheory` of a shared equality, from the shared
 solver to the theory `T`: normalized, and asserted unless it already was. -/
 def assertShared (T : Theory) (lit : Node) : EngineM Unit := do
   if (← get).inConflict then return
-  let norm := Telos.rewrite lit
-  if norm.isConst then return
-  if (← get).markedBuiltin.contains ⟨norm⟩ then return
+  -- cvc5's rewriting keeps the (cvc5-oriented) equality, unless it simplifies
+  if (Telos.rewrite lit).isConst then return
+  let norm := lit
+  let marked := (← get).markedBuiltin
+  if marked.contains ⟨norm⟩ || marked.contains ⟨flipEq norm⟩ then return
   modify fun s => { s with markedBuiltin := s.markedBuiltin.insert ⟨norm⟩,
                            sharedLog := s.sharedLog.push (.markedBuiltin ⟨norm⟩),
                            factsAsserted := true,
@@ -562,10 +577,12 @@ def assertFact (lit : Node) (fromSat : Bool := true) (to : Option Theory := none
   let c ← read
   if !isTheoryAtom c atom then return
   if fromSat && c.sharing then preNotifySharedFact atom
-  -- the literal is marked as asserted to the central equality engine's theories
-  if !(← get).markedBuiltin.contains ⟨lit⟩ then
-    modify fun s => { s with markedBuiltin := s.markedBuiltin.insert ⟨lit⟩,
-                             sharedLog := s.sharedLog.push (.markedBuiltin ⟨lit⟩) }
+  -- the literal is marked as asserted to the central equality engine's
+  -- theories; a theory is not given it twice (`markPropagation`)
+  let marked := (← get).markedBuiltin
+  if marked.contains ⟨lit⟩ || marked.contains ⟨flipEq lit⟩ then return
+  modify fun s => { s with markedBuiltin := s.markedBuiltin.insert ⟨lit⟩,
+                           sharedLog := s.sharedLog.push (.markedBuiltin ⟨lit⟩) }
   let T := to.getD (c.theoryOf atom)
   emit (.assert (← level) T lit)
   modify fun s => { s with factsAsserted := true,
@@ -683,8 +700,7 @@ def flushLemmas : EngineM Unit := do
         let ids := (← get).ee.nodeIds
         let atom := match atom with
           | .app (.kind .EQUAL) #[l, r] =>
-            let age (t : Node) : Nat := ids.getD ⟨t⟩ (1 <<< 62)
-            if age r < age l then Node.eqNode r l else atom
+            if EE.ageLt ids r l then Node.eqNode r l else atom
           | _ => Telos.rewrite atom
         preRegister atom
 
@@ -880,6 +896,27 @@ inductive Input where
   /-- The SAT solver asks for the explanation of a propagated literal. -/
   | explain (level : Nat) (lit : Node)
 
+/-- In a replay, the end of a call of `TheoryEngine::check`: the SAT solver
+takes the literals propagated, and asserts those it had not assigned, unless
+it is in conflict. With sharing this has effects even for those the theories
+have already (shared equalities), whose assertion prints nothing. -/
+def endCheckCall (flush : Bool) : EngineM Unit := do
+  if !(← get).inCheckCall then return
+  modify fun s => { s with inCheckCall := false }
+  let lits ← modifyGet fun s => (s.propagated, { s with propagated := #[] })
+  if !flush || (← get).inConflict then return
+  modify fun s => { s with pendingProps := s.pendingProps ++ lits }
+
+/-- The SAT solver asserts the first `upto` pending propagated literals (or
+all): those the trace does not show (the theories have them already) are
+asserted before the next one it shows. -/
+def assertPending (upto : Option Nat := none) : EngineM Unit := do
+  let ps ← modifyGet fun s => (s.pendingProps, { s with pendingProps := #[] })
+  let n := upto.getD ps.size
+  for lit in ps.extract 0 n do
+    if !(← get).assignment.contains ⟨(atomOf lit).1⟩ then assign lit
+  modify fun s => { s with pendingProps := ps.extract n ps.size ++ s.pendingProps }
+
 /-- Replay one input. -/
 def replayInput : Input → EngineM Unit
   | .prereg k atom => do
@@ -895,14 +932,48 @@ def replayInput : Input → EngineM Unit
         addRoot atom
         preRegisterAtom atom
   | .assert k T lit => do
+    endCheckCall true
+    -- the SAT solver asserts its propagated literals in order, each followed by
+    -- its Boolean propagation (the trace's other asserts)
+    if let some i := (← get).pendingProps.findIdx? (· == lit) then assertPending (some (i + 1))
     raiseTo k
     -- a literal of the SAT solver, or a shared equality from the shared solver,
     -- to the theory that asked for it
-    if (← get).registered.contains ⟨(atomOf lit).1⟩ then assign lit
-    else if !(← get).markedBuiltin.contains ⟨Telos.rewrite lit⟩ then assertFact lit false (some T)
-  | .check k T e => do raiseTo k; theoryCheck T e
-  | .pop k => do popTo k; emit (.pop k)
+    let marked := (← get).markedBuiltin
+    if marked.contains ⟨lit⟩ || marked.contains ⟨flipEq lit⟩ then
+      -- telos gave it to the theory already (a shared equality); the SAT
+      -- solver may still assign it
+      if (← get).registered.contains ⟨(atomOf lit).1⟩ && T == (← read).theoryOf (atomOf lit).1 then
+        let (atom, pol) := atomOf lit
+        if !(← get).assignment.contains ⟨atom⟩ then
+          modify fun s => { s with assignment := s.assignment.insert ⟨atom⟩ pol,
+                                   assignTrail := s.assignTrail.push ⟨atom⟩,
+                                   asserted := s.asserted.push lit }
+    else if (← get).registered.contains ⟨(atomOf lit).1⟩ && T == (← read).theoryOf (atomOf lit).1 then
+      assign lit
+    else assertFact lit false (some T)
+  | .check k T e => do
+    raiseTo k
+    let ths := (← read).theories.filter (·.hasCheck)
+    if some T == ths.head? then
+      -- a new round of checks; it continues the call if facts were asserted in
+      -- the last round, with no conflict and no lemma (`TheoryEngine::check`)
+      let s ← get
+      let continues := s.inCheckCall && s.lastWasLast && s.factsAsserted && !s.inConflict &&
+        !s.ee.dt.lemmasAdded
+      if !continues then
+        endCheckCall true
+        assertPending
+      modify fun s => { s with inCheckCall := true, factsAsserted := false }
+    theoryCheck T e
+    modify fun s => { s with lastWasLast := some T == ths.getLast? }
+  | .pop k => do
+    endCheckCall false
+    modify fun s => { s with pendingProps := #[] }
+    popTo k
+    emit (.pop k)
   | .explain k lit => do
+    endCheckCall false
     raiseTo k
     -- the verified explanation, with the roots the asserted literals
     match EE.explainLitV (← exCtx) lit with

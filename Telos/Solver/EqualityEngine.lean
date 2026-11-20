@@ -400,12 +400,31 @@ def setTermTriggers (c : Nat) (v : Option TSet) : EEM Unit := do
   let log := log.push (c, tt[c]!)
   modify fun s => { s with termTriggers := tt.set! c v, tsetLog := log }
 
+/-- An approximation of cvc5's order of node ids (creation order), which
+orients equalities: constants (and nullary constructors) first, as they are
+created with their declarations, then declared symbols, then the other terms
+(skolems included) by the order in which the engine met them (a term it does
+not have is the newest). -/
+def ageKey (ids : Std.HashMap Key Nat) (t : Node) : Nat × Nat :=
+  let rank := if t.isConst then 0 else match t with
+    | .var name _ => if name.startsWith "@" then 2 else 1
+    | _ => 2
+  (rank, ids.getD ⟨t⟩ (1 <<< 62))
+
+def ageLt (ids : Std.HashMap Key Nat) (a b : Node) : Bool :=
+  let (r₁, i₁) := ageKey ids a
+  let (r₂, i₂) := ageKey ids b
+  r₁ < r₂ || (r₁ == r₂ && i₁ < i₂)
+
 /-- `notifyTriggerTermEquality`, answered as cvc5's central equality engine
-manager does (`eqNotifyTriggerTermEquality`): the (dis)equality, oriented by
-the order of nodes, is propagated, and given to the theory of the tag as a
+manager does (`eqNotifyTriggerTermEquality`): the (dis)equality, oriented as
+cvc5's node order would, is propagated, and given to the theory of the tag as a
 shared equality (unless it is UF). -/
 def notifyTriggerTermEquality (tag : Nat) (t₁ t₂ : Node) (value : Bool) : EEM Bool := do
-  let (a, b) := if Node.lt t₂ t₁ then (t₂, t₁) else (t₁, t₂)
+  -- cvc5 orients by node ids, the older term first: approximated by the order
+  -- in which the engine met the terms
+  let ids := (← get).nodeIds
+  let (a, b) := if ageLt ids t₂ t₁ then (t₂, t₁) else (t₁, t₂)
   let eq := Node.eqNode a b
   let lit := if value then eq else Node.notNode eq
   if (← get).teConflict then return false
