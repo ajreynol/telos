@@ -1,0 +1,10 @@
+; An ite after preprocessing is SAT structure: unsupported for now.
+(set-logic QF_UF)
+(declare-sort U 0)
+(declare-fun f (U) U)
+(declare-fun p (U) Bool)
+(declare-fun a () U) (declare-fun b () U) (declare-fun c () U) (declare-fun d () Bool)
+(assert (p (ite d a b)))
+(assert (not (p c)))
+(assert (not (= (f a) (f c))))
+(check-sat)

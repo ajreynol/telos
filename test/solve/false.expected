@@ -1,0 +1,3 @@
+(prereg 0 true)
+(prereg 0 false)
+unsat

@@ -280,12 +280,31 @@ by the EE's `explain`.
 
 ### Milestones
 
-1. **The driver:**
+1. **The driver.** *Done (2026-11-20).*
    - check that the post-asserts are all literals;
    - `prereg`, `assert` and `check` events;
    - the stand-in for the SAT solver;
    - a trivial engine with no theories, which reproduces cvc5's event skeleton
      on pure Boolean inputs.
+
+   Status: `Telos/Solver/Event.lean`, `Telos/Solver/Engine.lean`,
+   `Telos/Frontend/Solve.lean`, `telos --theory-events`,
+   `scripts/fuzz-solve.py` (with `--recorded`) and `test/solve/`.
+   - On the fuzzer's random QF_UF conjunctions (300, seed 3), the input events
+     (`prereg`, `assert`, `check`) agree with cvc5's on 299. The remaining one
+     differs only after a conflict that cvc5 finds by propagation.
+   - The events agree completely on 36: those where the UF solver propagates
+     nothing.
+   - All the other differences are the UF solver's missing propagations,
+     explanations and answers.
+
+   Details of the skeleton:
+   - The enabled theories are those of the widened logic, with strings
+     enabling UF and quantifiers, and `ALL` adding FF, FP, SEP and BAGS (as
+     observed).
+   - Boolean variables are neither preregistered nor asserted to a theory.
+   - The children of a top-level `and` are asserted as units.
+   - The answer is `sat` only when no theory got a literal.
 2. **The EE and UF on QF_UF:**
    - Target: the events agree exactly with cvc5 on the fuzzed conjunctions.
    - The fidelity points are the order of propagations, the choice of
@@ -332,16 +351,14 @@ by the EE's `explain`.
 
 - [x] cvc5 patch with `-o theory-events` and `-o theory-events-ee`
       (`cvc5-theory-events.patch`; see [Events](#events)).
-- [ ] A generator mode in `scripts/fuzz.py` / `fuzz-pp.py` for **conjunctions of
-      literals** (QF_UF first). Feed both tools the same post-preprocessing
-      assertions: telos's preprocessor already matches cvc5's, or replay cvc5's
-      own `prereg`/`assert` events.
-- [ ] `Telos/Solver/Event.lean`: the event type, a printer, and a parser for
-      cvc5's trace.
+- [x] A generator of **conjunctions of literals** that survive preprocessing
+      (QF_UF, in `scripts/fuzz-solve.py`).
+- [x] `Telos/Solver/Event.lean`: the event type and its printer. The parser of
+      cvc5's traces is in `scripts/fuzz-solve.py`.
 - [ ] `Telos/Solver/EqualityEngine.lean`: the EE port, with backtracking.
-- [ ] `scripts/fuzz-solve.py`: run both sides and compare by rounds, with
+- [x] `scripts/fuzz-solve.py`: run both sides and compare by rounds, with
       "exact" and "same literals" agreement.
-- [ ] CI: a small corpus of recorded cvc5 traces, replayed by telos and compared,
+- [x] CI: a small corpus of recorded cvc5 traces, replayed by telos and compared,
       so that CI doesn't need cvc5.
 
 ## Open questions

@@ -1,0 +1,1 @@
+telos: unsupported: the preprocessed assertion (ite d (= a @purify_1) (= b @purify_1)) is not a conjunction of literals

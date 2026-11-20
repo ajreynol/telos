@@ -50,4 +50,7 @@ import Telos.Preprocess.Theory.StringsStaticRewrite
 import Telos.Preprocess.Preprocess
 import Telos.Frontend.Script
 import Telos.Frontend.Simplify
+import Telos.Solver.Event
+import Telos.Solver.Engine
 import Telos.Frontend.PostAsserts
+import Telos.Frontend.Solve

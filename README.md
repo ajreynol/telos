@@ -77,6 +77,7 @@ lake build telos
 .lake/build/bin/telos --proof test/examples/bool.smt2              # ... each with a CPC proof
 .lake/build/bin/telos --post-asserts test/preprocess/basic.smt2    # preprocessed assertions
 .lake/build/bin/telos --post-asserts --proof test/preprocess/basic.smt2   # ... with a CPC proof
+.lake/build/bin/telos --theory-events test/solve/uf-literals.smt2  # theory-engine events (in progress)
 ```
 
 ### The rewriter
@@ -134,6 +135,20 @@ terms, `(@purify t)` for `@purify_k`); telos does not check it unless
 `python3 scripts/fuzz-pp.py --cvc5 PATH`
 compares the output with cvc5's, with the passes not yet ported switched off.
 
+### The theory engine (in progress)
+
+With `--theory-events`, the input is a benchmark whose preprocessed assertions
+are a conjunction of literals. telos asserts them one at a time to its port of
+cvc5's theory engine (`Telos/Solver/`), and prints the events at the interface
+of the theory solvers, as cvc5 prints them with `-o theory-events`, then the
+answer. That cvc5 output needs the patch `cvc5-theory-events.patch`.
+
+So far only the engine's skeleton is ported: registration, assertion and the
+checks. There are no theory solvers yet, so the answer is `unknown` as soon as
+a theory gets a literal. `scripts/fuzz-solve.py --cvc5 PATH` compares the
+events with cvc5's. See
+[`docs/theory-engine-plan.md`](docs/theory-engine-plan.md).
+
 See [`docs/design.md`](docs/design.md) for the architecture and roadmap,
 [`docs/theory-rewriters.md`](docs/theory-rewriters.md) for how to port another theory,
 [`docs/preprocessor-plan.md`](docs/preprocessor-plan.md) for the preprocessor,
@@ -158,9 +173,11 @@ Two Lake projects, so the rewriter and preprocessor build without Mathlib:
     pipeline (`Pipeline.lean`), the passes (`Passes/`), the theories'
     preprocessing (`Theory/`), and the certified steps that introduce skolems
     and reorganize conjunctions;
+  - `Telos/Solver/` (`TelosSolver`): the theory engine: its events
+    (`Event.lean`) and the engine (`Engine.lean`);
   - `Telos/Frontend/` (`TelosFrontend`): SMT-LIB scripts (`Script.lean`),
-    `simplify` queries (`Simplify.lean`) and `-o post-asserts`
-    (`PostAsserts.lean`);
+    `simplify` queries (`Simplify.lean`), `-o post-asserts`
+    (`PostAsserts.lean`) and `--theory-events` (`Solve.lean`);
   - `Main.lean`: the `telos` executable. `TelosTests/` holds tests checked at
     build time.
 - `verification/` (package `TelosVerification`): the specification `Node.Equiv`

@@ -36,18 +36,21 @@ while IFS=: read -r file line text; do
   fi
 done < <(LC_ALL=C grep -nHE '^[[:space:]]*(public[[:space:]]+)?import[[:space:]]' "${spec_files[@]}")
 
-# Layers (lakefile.toml): Telos/Core imports only Core (and Logos, Lean), and
-# Telos/Rewriter does not import the front end; likewise the proofs of Core
-# (verification/TelosProofs/Core) import only Core.
+# Layers (lakefile.toml): Telos/Core imports only Core (and Logos, Lean);
+# Telos/Rewriter does not import the preprocessor, the solver or the front end;
+# the preprocessor not the solver or the front end; the solver not the front
+# end. Likewise the proofs of Core (verification/TelosProofs/Core) import only
+# Core.
 layer_check() {  # dir, pattern of forbidden imports
   while IFS=: read -r file line text; do
     echo "error: ${file}:${line}: ${text} crosses a layer (lakefile.toml)" >&2
     status=1
   done < <(find "$1" -name '*.lean' -print0 | xargs -0 grep -nHE "^[[:space:]]*(public[[:space:]]+)?import[[:space:]]+(all[[:space:]]+)?($2)" || true)
 }
-layer_check Telos/Core 'Telos\.(Rewriter|Frontend|Preprocess)\b'
-layer_check Telos/Rewriter 'Telos\.(Frontend|Preprocess)\b'
-layer_check Telos/Preprocess 'Telos\.Frontend\b'
+layer_check Telos/Core 'Telos\.(Rewriter|Frontend|Preprocess|Solver)\b'
+layer_check Telos/Rewriter 'Telos\.(Frontend|Preprocess|Solver)\b'
+layer_check Telos/Preprocess 'Telos\.(Frontend|Solver)\b'
+layer_check Telos/Solver 'Telos\.Frontend\b'
 layer_check verification/TelosProofs/Core '(Telos\.(Rewriter|Frontend|Preprocess)|TelosProofs\.(Rewriter|Preprocess))\b|Telos$'
 
 [ "${status}" -eq 0 ] && echo "Hygiene check passed (${#files[@]} Lean files)."

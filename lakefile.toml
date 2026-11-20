@@ -16,6 +16,7 @@ rev = "f2001ba09e5236a64e3235a3488bc45fd95421ce"
 #   certified rewrites (`Rw`) and CPC proof output;
 # - `TelosRewriter` (`Telos/Rewriter/`): the rewriter;
 # - `TelosPreprocess` (`Telos/Preprocess/`): the preprocessor;
+# - `TelosSolver` (`Telos/Solver/`): the theory engine;
 # - `TelosFrontend` (`Telos/Frontend/`): SMT-LIB scripts in, results out.
 # `Telos` is the root module, importing them all.
 [[lean_lib]]
@@ -34,6 +35,12 @@ moreLeanArgs = ["-DwarningAsError=true"]
 name = "TelosPreprocess"
 roots = []
 globs = ["Telos.Preprocess.+"]
+moreLeanArgs = ["-DwarningAsError=true"]
+
+[[lean_lib]]
+name = "TelosSolver"
+roots = []
+globs = ["Telos.Solver.+"]
 moreLeanArgs = ["-DwarningAsError=true"]
 
 [[lean_lib]]

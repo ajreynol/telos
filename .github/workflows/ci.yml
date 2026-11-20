@@ -50,6 +50,14 @@ jobs:
               | diff - "${f%.smt2}.expected"
           done
 
+      - name: The theory engine gives the expected events
+        run: |
+          for f in test/solve/*.smt2; do
+            (.lake/build/bin/telos --theory-events "$f" 2>&1 || true) | diff - "${f%.smt2}.expected"
+          done
+          # against cvc5's recorded traces (not yet required to agree)
+          scripts/fuzz-solve.py --recorded test/solve/*.smt2
+
 
   # telos's proofs, against the Logos theorems they use as a hypothesis
   # (`LogosFacts`), so that none of Logos's proofs are built.

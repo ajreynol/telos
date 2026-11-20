@@ -1,0 +1,13 @@
+(prereg 0 true)
+(prereg 0 false)
+(prereg 1 (= (f a) (f b)))
+(prereg 1 (= a (f a)))
+(prereg 1 (= a b))
+(prereg 1 (= b (f a)))
+(assert 1 THEORY_UF (not (= (f a) (f b))))
+(assert 1 THEORY_UF (not (= a (f a))))
+(assert 1 THEORY_UF (not (= a b)))
+(assert 1 THEORY_UF (not (= b (f a))))
+(check 1 THEORY_UF EFFORT_STANDARD)
+(check 1 THEORY_UF EFFORT_FULL)
+unknown

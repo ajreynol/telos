@@ -6,6 +6,7 @@ import Telos
 ```
 telos [--proof] [--proof-dir DIR] [--profile] FILE
 telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE
+telos --theory-events [PREPROCESSING OPTIONS] FILE
 ```
 
 Reads an SMT-LIB script of declarations and `(simplify t)` commands (`-` for
@@ -37,6 +38,12 @@ skolems as their CPC terms; with `--proof-dir DIR`, it is written to
 telos unless `--check-proof` is given (by Logos's checker, which is slow on
 large proofs); Ethos checks it. The output is the same with or without a proof
 (`postAssertsFull_output`; for `simplify`, `simplify_output`).
+
+With `--theory-events`, `FILE` is a benchmark whose preprocessed assertions are
+a conjunction of literals. telos solves it with its theory engine and prints
+the events at the interface of the theory solvers, as cvc5 prints them with
+`-o theory-events` (`cvc5-theory-events.patch`), then the answer
+(`Telos/Frontend/Solve.lean`). Other inputs are reported as unsupported.
 -/
 
 open Telos Telos.Frontend
@@ -48,6 +55,7 @@ structure Options where
   file : Option String := none
   profile : Bool := false
   postAsserts : Bool := false
+  theoryEvents : Bool := false
   pp : Preprocess.UserOptions := {}
 
 def parseArgs : List String → Options → Except String Options
@@ -56,6 +64,7 @@ def parseArgs : List String → Options → Except String Options
   | "--profile" :: rest, o => parseArgs rest { o with profile := true }
   | "--check-proof" :: rest, o => parseArgs rest { o with checkProof := true }
   | "--post-asserts" :: rest, o => parseArgs rest { o with postAsserts := true }
+  | "--theory-events" :: rest, o => parseArgs rest { o with theoryEvents := true }
   | "--proof-dir" :: d :: rest, o => parseArgs rest { o with proofDir := some d }
   | ["--proof-dir"], _ => .error "--proof-dir needs a directory"
   | f :: rest, o =>
@@ -65,7 +74,7 @@ def parseArgs : List String → Options → Except String Options
     else parseArgs rest { o with file := some f }
 
 def usage : String :=
-  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE"
+  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE\n       telos --theory-events [PREPROCESSING OPTIONS] FILE"
 
 def main (args : List String) : IO UInt32 := do
   let opts ← match parseArgs args {} with
@@ -76,6 +85,10 @@ def main (args : List String) : IO UInt32 := do
   if opts.profile then Profile.enable
   let sc ← match ← Profile.measure "frontend" "parse script" fun _ => readScript input with
     | .ok sc => pure sc
+    | .error e => IO.eprintln s!"telos: {e}"; return 1
+  if opts.theoryEvents then
+    match theoryEvents sc opts.pp with
+    | .ok out => IO.print out; return 0
     | .error e => IO.eprintln s!"telos: {e}"; return 1
   if opts.postAsserts then
     let withProof := opts.proof || opts.proofDir.isSome
