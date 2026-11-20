@@ -2,6 +2,9 @@
 > *solver*. The project is now scoped to a verified *rewriter*; see
 > [`design.md`](design.md). This plan is kept for the longer-term direction (proof
 > production, the CDCL core) and for its notes on Logos.
+>
+> **Update (2026-11-20):** the solver work now happens inside telos; see
+> [`theory-engine-plan.md`](theory-engine-plan.md).
 
 # Setting up a statically verified, proof-producing SMT solver
 
