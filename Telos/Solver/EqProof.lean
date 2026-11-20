@@ -1,5 +1,6 @@
 import Telos.Core.Tri
 import Telos.Core.Node.DecEq
+import Telos.Core.Certified
 
 /-!
 # Equality proofs
@@ -31,7 +32,18 @@ The rules, with the conclusion each gives:
   (`AppShape.substCongruent`), and its children must be well typed when the
   application is (`Op.childrenTypedOfParent`), for the arguments without a
   proof;
-- `eqTrue p`: `((= a b), true)` from `p : (a, b)`.
+- `eqTrue p`: `((= a b), true)` from `p : (a, b)`;
+- `valid F cs`: what `F` gives as an assumption, for a formula `F` that the CPC
+  proof `cs` proves, as Logos's checker finds when it runs `cs` from the empty
+  state. `F` is then valid (Logos's `proven_from_empty_valid`), so this holds
+  in every model: it brings theory reasoning, such as a datatypes rule
+  (`dt-cons-eq`, `dt-inst`, ...), into the proof;
+- `fromTrue p`: what `F` gives as an assumption, from `p : (F, true)`;
+- `andElim i p`: `(lᵢ, true)` from `p : ((and l₁ … lₙ), true)`;
+- `orElim k p qs`: `(lₖ, true)` from `p : ((or l₁ … lₙ), true)` and, in order,
+  proofs `qs` of `(lᵢ, false)` for each `i ≠ k`;
+- `congAt t args`: `cong` for the application `t` given as such, rather than by
+  a path, when it is well typed (which is then checked).
 -/
 
 open Eo
@@ -50,6 +62,11 @@ inductive EqProof where
   | trans (p q : EqProof)
   | cong (src : SubPath) (args : Array (Option EqProof))
   | eqTrue (p : EqProof)
+  | valid (F : Node) (cs : List CCmd)
+  | fromTrue (p : EqProof)
+  | andElim (i : Nat) (p : EqProof)
+  | orElim (k : Nat) (p : EqProof) (qs : List EqProof)
+  | congAt (t : Node) (args : Array (Option EqProof))
   deriving Inhabited
 
 namespace EqProof
@@ -90,7 +107,42 @@ def check (A : Array Node) : EqProof → Option (Node × Node)
     let ds ← checkArgs A cs args.toList 0
     some (t, .app op ds.toArray)
   | .eqTrue p => (check A p).map fun (a, b) => (Node.eqNode a b, Node.mkTrue)
+  | .valid F cs =>
+    let cmds := cs.foldr CCmdList.cons CCmdList.nil
+    if decide (CmdListTranslationOk cmds) && __eo_state_is_closed (runFromEmpty cmds) &&
+        decide (__eo_state_proven_nth (runFromEmpty cmds) 0 = F.toEo) then
+      some (assumptionEq F)
+    else none
+  | .fromTrue p => do
+    let (F, t) ← check A p
+    if t == Node.mkTrue then some (assumptionEq F) else none
+  | .andElim i p => do
+    let (F, t) ← check A p
+    if t != Node.mkTrue then none
+    let .app (.kind .AND) ls := F | none
+    if ls.size < 2 then none
+    let l ← ls[i]?
+    some (l, Node.mkTrue)
+  | .orElim k p qs => do
+    let (F, t) ← check A p
+    if t != Node.mkTrue then none
+    let .app (.kind .OR) ls := F | none
+    if ls.size < 2 then none
+    let l ← ls[k]?
+    if checkFalses A (ls.toList.eraseIdx k) qs then some (l, Node.mkTrue) else none
+  | .congAt t args => do
+    if !decide t.WellTyped then none
+    let .app op cs := t | none
+    if !op.eoShape.substCongruent || !op.childrenTypedOfParent then none
+    if args.size != cs.size then none
+    let ds ← checkArgs A cs args.toList 0
+    some (t, .app op ds.toArray)
 where
+  /-- Each proof proves its literal false. -/
+  checkFalses (A : Array Node) : List Node → List EqProof → Bool
+    | [], [] => true
+    | l :: ls, q :: qs => check A q == some (l, Node.mkFalse) && checkFalses A ls qs
+    | _, _ => false
   /-- The right-hand sides of the argument proofs, from argument `i` on. -/
   checkArgs (A : Array Node) (cs : Array Node) : List (Option EqProof) → Nat → Option (List Node)
     | [], _ => some []

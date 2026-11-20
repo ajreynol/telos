@@ -745,11 +745,11 @@ uninterpreted sort counts, being "interpreted one").
   expands them further (`TheoryEngine::getExplanation`).
 - **Testers' operators** are their own nodes in the engine (cvc5's `is_C`):
   otherwise `(is_C x)` would be the partial application `(C x)`.
-- **Soundness is unchanged.** A conflict of the theory is not certified, so it
-  answers `unknown`. A conflict whose explanation uses an inferred edge fails
-  the verified explanation's checks, and also answers `unknown`. In `solve`, a
-  lemma (a split, say) needs the SAT solver, so the answer is `unknown`. Replay
-  is the main test.
+- **Soundness is unchanged.** A conflict of the theory, or one whose
+  explanation uses an inferred edge (which the verified explanation's checks
+  reject), stands only if its certificate checks (see "Certified `unsat`"
+  below). In `solve`, a lemma (a split, say) needs the SAT solver, so the
+  answer is `unknown`. Replay is the main test.
 
 ### Sharing
 
@@ -822,6 +822,54 @@ set. The third is the rewriter's normal form, and is left alone.
 central equality engine and each atom registered. With it, a replay can make
 cvc5's choices exactly: orient equalities, order the splits, order the
 explanations. It changes nothing in cvc5's behaviour.
+
+### Certified `unsat`
+
+A conflict of the theory of datatypes, and a propagation whose explanation goes
+through its internal facts, are certified by the same certificates as UF's
+(`EqProof`), with five more steps:
+- `valid F cs`: a formula `F` proven by a CPC proof `cs` that Logos's checker
+  accepts from the empty state. It is valid (`LogosFacts.checker_sound`).
+  CPC's datatypes rules take their conclusion as their argument, so telos
+  builds the conclusion it wants, and Logos checks it with one step:
+  `dt-cons-eq`, `dt-cons-eq-clash`, `dt-inst`, `dt_split`, `dt-cycle`,
+  `dt-collapse-selector`, `dt-collapse-tester`,
+  `dt-collapse-tester-singleton`;
+- `fromTrue`, `andElim`, `orElim`: Boolean reasoning on such formulas;
+- `congAt`: congruence on a term that no asserted literal has (one the theory
+  built), whose typing is checked instead.
+
+The theory records how each internal fact was inferred, with its explanation.
+The builder (`EqBuild`) proves an edge whose reason is not an input literal
+from its inference, and the premises from the engine's paths, down to input
+literals:
+- unification: `dt-cons-eq`, then `and` elimination;
+- selector collapse: congruence, then `dt-collapse-selector`;
+- instantiation from a tester: `dt-inst`;
+- the split of a datatype with one constructor:
+  `dt-collapse-tester-singleton`;
+- label exhaustion: `dt_split`, then `or` elimination with the other testers
+  false;
+- an equality of distinct constructor constants (merged with `false` by the
+  engine): `dt-cons-eq-clash`.
+
+And the conflicts:
+- clash: `dt-cons-eq-clash`;
+- a tester against a constructor: congruence, then `dt-collapse-tester`;
+- two testers of a class: the same constructor with both values, or
+  different constructors, by `dt-inst` and `dt-collapse-tester`;
+- cycle: the term equal to a constructor term in which it occurs, built along
+  the cycle by congruence, then `dt-cycle`.
+
+The checker's soundness proof covers the new steps (`check_sound`); the
+correctness theorem is unchanged. Not certified: an instantiation of a
+constructor term (it uses a purification skolem), and anything that needs a
+lemma, which needs the SAT solver anyway.
+
+Results: on 3,000 random conjunctions, every conflict found by the theory
+engine (59) is certified, agrees with cvc5, and its CPC proof is accepted by
+Ethos. Most `unsat`s of random conjunctions are decided by preprocessing.
+`test/solve/dt-*.smt2` has a clash, a cycle and a tester conflict.
 
 ## Order of work (all stages)
 

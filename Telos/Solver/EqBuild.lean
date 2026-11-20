@@ -1,6 +1,7 @@
 import Std.Data.HashMap
 import Telos.Solver.EqualityEngine
 import Telos.Solver.EqProof
+import Telos.Solver.Theory.DtType
 
 /-!
 # Equality proofs from the equality engine
@@ -18,6 +19,10 @@ by its reason.
   `eqTrue` of the proof of `(a, b)`.
 - Edges between constants evaluated from interpreted applications are not
   supported (no theory uses them yet): the builder fails.
+- An edge asserted by a theory, an internal fact, is proven by its inference
+  (`proveFact`), from the proofs of its premises in the engine and, for its
+  theory reasoning, CPC rule instances that Logos's checker accepts
+  (`EqProof.valid`).
 
 The builder is not trusted: the checker checks what it builds, and the
 engine answers `unsat` only if the check succeeds.
@@ -138,22 +143,55 @@ mutual
     let b := ee.nodes[next]!
     match edge.type with
     | .equality =>
-      let some i := C.index.get? ⟨edge.reason⟩ | throw "a reason is not an assumption"
-      let (x, y) := EqProof.assumptionEq edge.reason
-      if x == a && y == b then return .assume i
-      if x == b && y == a then return .symm (.assume i)
-      throw "a reason does not match its edge"
+      let asAssumption : Option EqProof := match C.index.get? ⟨edge.reason⟩ with
+        | some i =>
+          let (x, y) := EqProof.assumptionEq edge.reason
+          if x == a && y == b then some (.assume i)
+          else if x == b && y == a then some (.symm (.assume i))
+          else none
+        | none => none
+      match asAssumption with
+      | some p => return p
+      | none =>
+        -- an internal fact of a theory (whose explanation may be an assumption)
+        let cands := [Node.eqNode a b, Node.eqNode b a] ++
+          (if b == Node.mkTrue then [a] else []) ++ (if a == Node.mkTrue then [b] else [])
+        for conc in cands do
+          if let some (id, exp) := ee.dt.facts.get? ⟨conc⟩ then
+            let p ← proveFact C conc id exp
+            let (x, y) := EqProof.assumptionEq conc
+            if x == a && y == b then return p
+            if x == b && y == a then return .symm p
+        throw "a reason is not an assumption"
     | .congruence =>
-      let src ← pathTo C a
       let args ← appArgs C cur next
-      return .cong src args
+      -- a term no asserted literal has (a theory's): its typing is checked
+      match ← (try (some <$> pathTo C a) catch _ => pure none) with
+      | some src => return .cong src args
+      | none => return .congAt a args
     | .reflexivity =>
       let eqId := if cur == ee.trueId then next else cur
       let some (f, _) := ee.apps[eqId]! | throw "a reflexivity edge without an equality"
       let some p ← proveIds C f.a f.b | throw "a reflexivity of identical terms"
       let q := EqProof.eqTrue p
       return if cur == ee.trueId then .symm q else q
-    | .constants => throw "merges of evaluated constants are not supported"
+    | .constants =>
+      -- an equality whose sides are equal to distinct constructor constants is
+      -- false (`dt-cons-eq-clash`)
+      let (e, eFirst) := if b == Node.mkFalse then (a, true) else (b, false)
+      let .app (.kind .EQUAL) #[x, y] := e | throw "merges of evaluated constants are not supported"
+      let some ix := ee.nodeIds.get? ⟨x⟩ | throw "a term is not in the engine"
+      let some iy := ee.nodeIds.get? ⟨y⟩ | throw "a term is not in the engine"
+      let cx := ee.nodes[find ee ix]!
+      let cy := ee.nodes[find ee iy]!
+      if (DT.consApp? cx).isNone || (DT.consApp? cy).isNone then
+        throw "merges of evaluated constants are not supported"
+      let px ← proveIds C ix (find ee ix)
+      let py ← proveIds C iy (find ee iy)
+      let lem := Node.eqNode (Node.eqNode cx cy) Node.mkFalse
+      let v := EqProof.valid lem [DT.ruleStep .dt_cons_eq_clash lem]
+      let p := if px.isNone && py.isNone then v else .trans (.congAt e #[px, py]) v
+      return if eFirst then p else .symm p
 
   /-- The argument proofs of two applications merged by one congruence edge. -/
   partial def appArgs (C : BuildCtx) (cur next : Nat) : BuildM (Array (Option EqProof)) := do
@@ -186,6 +224,80 @@ mutual
       let step := pre.push last
       acc := (acc.zip step).map fun (p, q) => composeArg p q
     return acc
+
+  /-- A proof of `(t₁, t₂)` for terms of the engine. -/
+  partial def proveT (C : BuildCtx) (t₁ t₂ : Node) : BuildM (Option EqProof) := do
+    let some i₁ := C.ee.nodeIds.get? ⟨t₁⟩ | throw "a term is not in the engine"
+    let some i₂ := C.ee.nodeIds.get? ⟨t₂⟩ | throw "a term is not in the engine"
+    proveIds C i₁ i₂
+
+  /-- A proof of what the internal fact `conc` gives as an assumption, from its
+  inference `id` and explanation `exp` (the datatypes theory's). -/
+  partial def proveFact (C : BuildCtx) (conc : Node) (id : String) (exp : Node) : BuildM EqProof := do
+    match id with
+    | "DATATYPES_UNIF" =>
+      -- `(= c₁ c₂)` and `dt-cons-eq` give the equalities of the arguments
+      let .app (.kind .EQUAL) #[c₁, c₂] := exp | throw "a unification without an equality"
+      let some (_, _, as) := DT.consApp? c₁ | throw "a unification of a non-constructor"
+      let some (_, _, bs) := DT.consApp? c₂ | throw "a unification of a non-constructor"
+      let eqs := (as.zip bs).map fun (a, b) => Node.eqNode a b
+      let B := if eqs.size == 1 then eqs[0]! else .app (.kind .AND) eqs
+      let lem := Node.eqNode exp B
+      let v := EqProof.valid lem [DT.ruleStep .dt_cons_eq lem]
+      let some p ← proveT C c₁ c₂ | throw "a unification of identical terms"
+      let q := EqProof.trans (.symm v) (.eqTrue p)
+      if eqs.size == 1 then return .fromTrue q
+      let some k := eqs.findIdx? (· == conc) | throw "a unification without its equality"
+      return .fromTrue (.andElim k q)
+    | "DATATYPES_COLLAPSE_SEL" =>
+      -- the selector of a term equal to a constructor term is its argument
+      let .app (.kind .EQUAL) #[s, r] := conc | throw "a collapse without an equality"
+      let some (T, i, j, s₀) := DT.selApp? s | throw "a collapse of a non-selector"
+      let .app (.kind .EQUAL) #[_, c] := exp | throw "a collapse without its explanation"
+      let some (_, _, cs) := DT.consApp? c | throw "a collapse without a constructor"
+      if cs[j]? != some r then throw "a collapse to another term"
+      let selc := DT.mkSel T i j c
+      let lem := Node.eqNode selc r
+      let v := EqProof.valid lem [DT.ruleStep .dt_collapse_selector lem]
+      match ← proveT C s₀ c with
+      | some p => return .trans (.congAt s #[some p]) v
+      | none => return v
+    | "DATATYPES_INST" =>
+      -- a tester and `dt-inst`
+      if exp == Node.mkTrue then throw "an instantiation of a constructor term is not supported"
+      let lem := Node.eqNode exp conc
+      let v := EqProof.valid lem [DT.ruleStep .dt_inst lem]
+      let some p ← proveT C exp Node.mkTrue | throw "a tester that is true"
+      return .fromTrue (.trans (.symm v) p)
+    | "DATATYPES_SPLIT" =>
+      -- the tester of the only constructor
+      let lem := Node.eqNode conc Node.mkTrue
+      return .valid lem [DT.ruleStep .dt_collapse_tester_singleton lem]
+    | "DATATYPES_LABEL_EXH" =>
+      -- the split of the term, and the other testers false
+      let some (k, targ) := DT.isTester? conc | throw "an exhaustion without a tester"
+      let some T := DT.dtType? targ | throw "an exhaustion of a non-datatype"
+      let parts := match exp with
+        | .app (.kind .AND) ps => ps
+        | e => #[e]
+      let split := DT.mkSplit targ T
+      let .app (.kind .OR) ls := split | throw "an exhaustion of one constructor"
+      let v := EqProof.valid split [DT.argStep .dt_split targ]
+      let mut qs : Array EqProof := #[]
+      for i in [0:ls.size] do
+        if i == k then continue
+        -- the label `(not (is-Cᵢ x))`, with `x` equal to `targ`
+        let lab? := parts.find? fun l => match l with
+          | .app (.kind .NOT) #[a] => (DT.isTester? a).map (·.1) == some i
+          | _ => false
+        let some (.app (.kind .NOT) #[a]) := lab? | throw "an exhaustion without a label"
+        let some (_, x) := DT.isTester? a | throw "a label without a tester"
+        let some pa ← proveT C a Node.mkFalse | throw "a label that is false"
+        match ← proveT C x targ with
+        | some e => qs := qs.push (.trans (.symm (.congAt a #[some e])) pa)
+        | none => qs := qs.push pa
+      return .orElim k v qs.toList
+    | _ => throw s!"an internal fact of {id} is not supported"
 
   /-- The arguments of a term, as the builder counts them. -/
   partial def children : Node → Array Node
@@ -230,9 +342,13 @@ def proveDiseq (C : BuildCtx) (a b : Node) : BuildM EqProof := do
 literals added by `pathTo`) and a proof of `(true, false)` from them. -/
 def conflictOfPropagation (ee : EqualityEngine) (lits : Array Node) (E : Array Node) (lit neg : Node) :
     Except String (Array Node × EqProof) :=
+  -- the premises of internal facts reach other asserted literals; the
+  -- explanation's reasons that are internal facts are not assumptions
+  let E := if ee.dt.facts.isEmpty then E else E.filter lits.contains
   let A := E.push neg
+  let A := if ee.dt.facts.isEmpty then A else A ++ lits.filter (fun l => !A.contains l)
   let C := buildCtx ee A lits
-  let n := A.size - 1
+  let n := E.size
   build A do
     match lit with
     | .app (.kind .NOT) #[.app (.kind .EQUAL) #[a, b]] =>
@@ -260,5 +376,107 @@ def conflictOfConstants (ee : EqualityEngine) (lits : Array Node) (E : Array Nod
     if t₁ == Node.mkTrue && t₂ == Node.mkFalse then return p
     if t₁ == Node.mkFalse && t₂ == Node.mkTrue then return .symm p
     throw "a merge of constants other than true and false"
+
+/-- A proof of `(true, false)` from a proof `p` of `(x, b)` and one `q` of
+`(x, c)`, for distinct Boolean constants `b` and `c`. -/
+def contra (b : Bool) (p q : EqProof) : EqProof :=
+  if b then .trans (.symm p) q else .trans (.symm q) p
+
+/-- A certificate of a conflict of the theory of datatypes, from the asserted
+literals `lits` (its assumptions). -/
+def conflictOfDt (ee : EqualityEngine) (lits : Array Node) (cf : DT.Conflict) :
+    Except String (Array Node × EqProof) :=
+  let C := buildCtx ee lits lits
+  build lits do
+    let litProof (l : Node) : BuildM (Node × Bool × EqProof) := do
+      let (atom, pol) := match l with
+        | .app (.kind .NOT) #[a] => (a, false)
+        | a => (a, true)
+      let some p ← proveT C atom (Node.mkBool pol) | throw "a literal that is a constant"
+      return (atom, pol, p)
+    match cf.id with
+    | "DATATYPES_CLASH_CONFLICT" =>
+      let some e := cf.conf[0]? | throw "a clash without an equality"
+      let .app (.kind .EQUAL) #[c₁, c₂] := e | throw "a clash without an equality"
+      let some p ← proveT C c₁ c₂ | throw "a clash of identical terms"
+      let lem := Node.eqNode e Node.mkFalse
+      let v := EqProof.valid lem [DT.ruleStep .dt_cons_eq_clash lem]
+      return .trans (.symm (.eqTrue p)) v
+    | "DATATYPES_TESTER_CONFLICT" =>
+      -- a tester of a term equal to a constructor term
+      let some t := cf.conf[0]? | throw "a tester conflict without a tester"
+      let some eq := cf.conf[1]? | throw "a tester conflict without an equality"
+      let .app (.kind .EQUAL) #[x, c] := eq | throw "a tester conflict without an equality"
+      let (atom, pol, p) ← litProof t
+      let some (idx, _) := DT.isTester? atom | throw "a tester conflict without a tester"
+      let some (T, ci, _) := DT.consApp? c | throw "a tester conflict without a constructor"
+      let b := ci == idx
+      if b == pol then throw "a tester conflict that is not one"
+      let tc := DT.mkTester c T idx
+      let v := EqProof.valid (Node.eqNode tc (Node.mkBool b)) [DT.ruleStep .dt_collapse_tester (Node.eqNode tc (Node.mkBool b))]
+      let q := match ← proveT C x c with
+        | some e => EqProof.trans (.congAt atom #[some e]) v
+        | none => v
+      return contra pol p q
+    | "DATATYPES_TESTER_MERGE_CONFLICT" =>
+      let some l₁ := cf.conf[0]? | throw "a tester conflict without testers"
+      let some l₂ := cf.conf[1]? | throw "a tester conflict without testers"
+      let (a₁, p₁, q₁) ← litProof l₁
+      let (a₂, p₂, q₂) ← litProof l₂
+      let some (i₁, x₁) := DT.isTester? a₁ | throw "a tester conflict without testers"
+      let some (i₂, x₂) := DT.isTester? a₂ | throw "a tester conflict without testers"
+      let e ← proveT C x₂ x₁
+      if i₁ == i₂ then
+        -- the same tester, with both values
+        if p₁ == p₂ then throw "a tester conflict that is not one"
+        let c := match e with
+          | some e => EqProof.congAt a₂ #[some e]
+          | none => EqProof.assume 0
+        let q₂' := match e with
+          | some _ => EqProof.trans (.symm c) q₂
+          | none => q₂
+        return contra p₁ q₁ q₂'
+      -- two testers of different constructors, both true: instantiate the first
+      if !p₁ || !p₂ then throw "a tester conflict that is not one"
+      let some T := DT.dtType? x₁ | throw "a tester of a non-datatype"
+      let I := DT.getInstCons x₁ T i₁
+      let lemI := Node.eqNode a₁ (Node.eqNode x₁ I)
+      let xI := EqProof.fromTrue (.trans (.symm (.valid lemI [DT.ruleStep .dt_inst lemI])) q₁)
+      let e₂ := match e with
+        | some e => EqProof.trans e xI
+        | none => xI
+      let tI := DT.mkTester I T i₂
+      let lemC := Node.eqNode tI Node.mkFalse
+      let vC := EqProof.valid lemC [DT.ruleStep .dt_collapse_tester lemC]
+      return contra true q₂ (.trans (.congAt a₂ #[some e₂]) vC)
+    | "DATATYPES_CYCLE" =>
+      -- the term equal to a constructor term in which it occurs
+      if cf.cycle.isEmpty then throw "a cycle without its path"
+      let outer := cf.cycle.reverse
+      let some (on, _, _) := outer[0]? | throw "a cycle without its path"
+      let some (_, consIn, iIn) := outer.back? | throw "a cycle without its path"
+      let some cIn := DT.consArgs consIn |>.bind (·[iIn]?) | throw "a cycle without its child"
+      -- from the inside: a proof of `(child, Tⱼ)`
+      let mut T := on
+      let mut P : Option EqProof ← proveT C cIn on
+      for k in [0:outer.size] do
+        let (n, cons, i) := outer[outer.size - 1 - k]!
+        let some cs := DT.consArgs cons | throw "a cycle without a constructor term"
+        let args : Array (Option EqProof) := (Array.range cs.size).map fun j => if j == i then P else none
+        let T' := match cons with
+          | .app op _ => Node.app op (cs.set! i T)
+          | t => t
+        let Q := if P.isSome then some (EqProof.congAt cons args) else none
+        let nc ← proveT C n cons
+        P := match nc, Q with
+          | some a, some b => some (.trans a b)
+          | some a, none => some a
+          | none, q => q
+        T := T'
+      let some P0 := P | throw "a cycle of a term with itself"
+      let lem := Node.eqNode (Node.eqNode on T) Node.mkFalse
+      let v := EqProof.valid lem [DT.ruleStep .dt_cycle lem]
+      return .trans (.symm (.eqTrue P0)) v
+    | id => throw s!"a conflict of {id} is not supported"
 
 end Telos.Solver.EE

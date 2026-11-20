@@ -149,6 +149,8 @@ inductive Pending where
   | prop (lit : Node)
   /-- A merge of the constants `a` and `b` in the equality engine. -/
   | constants (a b : Node)
+  /-- A conflict of the theory of datatypes (its event is already emitted). -/
+  | dt (cf : DT.Conflict)
   deriving Inhabited
 
 /-- The context-dependent state of the engine saved at a push (cvc5's `CDO`s
@@ -363,6 +365,9 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
       emit (.conflict (← level) T id exp)
       let why := s!"a conflict of {T.name}, which is not certified yet"
       modify fun s => { s with inConflict := true, theoryConflict := true, cert := .error why }
+      if (← read).defer && T == .THEORY_DATATYPES then
+        if let some cf := (← get).ee.dt.conflict then
+          modify fun s => { s with pending := some (.dt cf) }
 
 /-- Run an operation of the equality engine and process its notes. -/
 def withEE (x : EE.EEM α) : EngineM α := do
@@ -1062,6 +1067,7 @@ def certifyV (lits : List Node) (ee : EE.EqualityEngine) : Pending → Option (A
         | none => none
       else none
     | _, _ => none
+  | .dt _ => none
 
 /-- The explanation of a pending conflict by the equality engine's own
 explanation (`EE.explainLit`, not verified), and the certificate of the
@@ -1076,11 +1082,13 @@ def explainPending (s : State) : Pending → Array Node × Except String (Array 
     let exp := ((EE.explainLit (Node.eqNode a b)).run { congruenceKinds := UF.congruenceKind, value := fun _ => none }
       |>.run s.ee).1
     (exp, EE.conflictOfConstants s.ee s.asserted exp a b)
+  | .dt cf => (#[], EE.conflictOfDt s.ee s.asserted cf)
 
 /-- The event of a pending conflict, with its explanation. -/
 def Pending.event (k : Nat) (exp : Array Node) : Pending → Event
   | .prop lit => .explain k lit (EE.mkAnd exp)
   | .constants _ _ => .conflict k .THEORY_BUILTIN "EQ_CONSTANT_MERGE" (EE.mkAnd exp)
+  | .dt cf => .conflict k .THEORY_DATATYPES cf.id (EE.mkAnd exp)
 
 /-- Run `solve` on `lits`. An `unsat` answer stands only if it is certified:
 by the verified explanation of its conflict (`certifyV`), or else by a
@@ -1103,7 +1111,10 @@ def run (c : Config) (lits : List Node) : Result :=
       { answer := .unsat, events, cert }
     | none =>
       let (exp, cert) := explainPending s p
-      let events := s.events.push (p.event s.level exp)
+      -- a conflict of a theory has its event already
+      let events := match p with
+        | .dt _ => s.events
+        | _ => s.events.push (p.event s.level exp)
       match cert with
       | .error e => { answer := .unknown, events, uncertified := some e }
       | .ok (A, q) =>

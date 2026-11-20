@@ -152,7 +152,8 @@ An `unsat` answer is certified. Its conflict is explained by a verified
 explanation (`Telos/Solver/Explain.lean`), which computes the equality engine's
 explanation as cvc5 does, with a theorem that its reasons imply the conflict.
 Where it does not apply, it is certified by an equality proof instead
-(`Telos/Solver/EqProof.lean`). The answer is then correct: the input
+(`Telos/Solver/EqProof.lean`), whose datatypes reasoning is by CPC rule
+instances that Logos's checker accepts. The answer is then correct: the input
 assertions are unsatisfiable (`Telos.solve_unsat_correct`).
 With `--proof` (or `--proof-dir DIR`), the CPC refutation follows, which Ethos
 checks. A `sat` answer is certified too: telos builds a model from the

@@ -1,5 +1,7 @@
 import Telos.Core.Node.FastType
 import Telos.Core.Node.Key
+import Telos.Core.Node.ToEo
+import Cpc.Logos
 
 /-!
 # Datatype types and terms, for the theory of datatypes
@@ -17,6 +19,8 @@ type (`DType`, `src/expr/dtype.cpp`) and the terms it builds
 Codatatypes and sygus datatypes are outside safe mode, so recursive singletons
 (a property of codatatypes) never arise.
 -/
+
+open Eo
 
 namespace Telos.Solver.DT
 
@@ -134,6 +138,16 @@ argument. -/
 def selApp? : Node → Option (TypeNode × Nat × Nat × Node)
   | .app (.node .APPLY_SELECTOR (.const (.dtSel T i j))) #[a] => some (T, i, j, a)
   | _ => none
+
+/-- The arguments of a constructor term. -/
+def consArgs (n : Node) : Option (Array Node) := (consApp? n).map (·.2.2)
+
+/-- A CPC proof of one step of rule `r` with argument `F` (the datatypes rules
+take their conclusion as their argument), from no premises. -/
+def ruleStep (r : CRule) (F : Node) : CCmd := .step r (.cons F.toEo .nil) .nil
+
+/-- A CPC proof of one step of rule `r` with the term argument `x`. -/
+def argStep (r : CRule) (x : Node) : CCmd := .step r (.cons x.toEo .nil) .nil
 
 /-- The datatype type of a term, if it has one. -/
 def dtType? (n : Node) : Option TypeNode :=

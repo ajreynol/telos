@@ -161,8 +161,10 @@ def sendLemma (conc exp : Node) (id : String) : EEM Bool := do
 
 /-- `sendDtConflict`: the conflict is the explanation of the literals `conf`
 (`ProofEqEngine::assertConflict`), unless the engine is already in conflict. -/
-def sendDtConflict (conf : Array Node) (id : String) : EEM Unit := do
+def sendDtConflict (conf : Array Node) (id : String) (cycle : Array (Node × Node × Nat) := #[]) :
+    EEM Unit := do
   if ← inConflict then return
+  modifyDt fun d => { d with conflict := some { id, conf, cycle } }
   let mut assumps : Array Node := #[]
   for e in conf do
     for a in ← explainLit e do
@@ -421,7 +423,7 @@ mutual
       | .app (.kind .NOT) #[a] => (a, false)
       | c => (c, true)
     note (.fact dtTheory i.id i.conc i.exp)
-    modifyDt fun d => { d with sentFacts := d.sentFacts + 1 }
+    modifyDt fun d => { d with sentFacts := d.sentFacts + 1, facts := d.facts.insert ⟨i.conc⟩ (i.id, i.exp) }
     if !(← holds atom pol) then
       match atom with
       | .app (.kind .EQUAL) _ => let _ ← assertEquality atom pol i.exp
@@ -474,6 +476,9 @@ structure CycleState where
   visited : Std.HashSet Key := {}
   proc : Std.HashSet Key := {}
   expl : Array Node := #[]
+  /-- The cycle, innermost first: each term, its class's constructor term, and
+  the child position that continues the cycle. -/
+  path : Array (Node × Node × Nat) := #[]
 
 /-- `searchForCycle`. -/
 partial def searchForCycle (n on : Node) (firstTime : Bool) : StateT CycleState EEM (Option Node) := do
@@ -486,10 +491,12 @@ partial def searchForCycle (n on : Node) (firstTime : Bool) : StateT CycleState 
     modify fun c => { c with visited := c.visited.insert ⟨nn⟩ }
     let nncons ← getEqcConstructor nn
     if let some (_, _, cs) := consApp? nncons then
-      for c in cs do
+      for h : i in [0:cs.size] do
+        let c := cs[i]
         let cn ← searchForCycle c on false
         if cn == some on then
           if n != nncons then modify fun c => { c with expl := c.expl.push (Node.eqNode n nncons) }
+          modify fun c => { c with path := c.path.push (n, nncons, i) }
           return some on
         else if cn.isSome then return cn
     modify fun c => { c with proc := c.proc.insert ⟨nn⟩, visited := c.visited.erase ⟨nn⟩ }
@@ -511,7 +518,7 @@ def checkCycles : EEM Unit := do
         cs := cs'
         cn := cn'
     if cn.isSome then
-      sendDtConflict cs.expl "DATATYPES_CYCLE"
+      sendDtConflict cs.expl "DATATYPES_CYCLE" cs.path
       return
 
 /-- One class of `checkSplit`: whether it sent a lemma (which ends the

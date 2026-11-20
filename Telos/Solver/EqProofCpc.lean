@@ -13,7 +13,13 @@ the certificate is the CPC fact `(= a b)`:
 - `symm`, `trans`: the CPC rules of the same names;
 - `cong`: `cong` (or `nary_cong`) on the application, with `refl` for the
   arguments without a proof (`Proof.congStep`);
-- `eqTrue`: `true_intro` on `(= a b)`.
+- `eqTrue`: `true_intro` on `(= a b)`;
+- `valid F cs`: the steps of `cs` (which prove `F`), then as `assume`;
+- `fromTrue`: `true_elim`, then as `assume`;
+- `andElim i`: `true_elim`, `and_elim i`, `true_intro`;
+- `orElim k`: `true_elim`, then `resolution` with each `(not lᵢ)` (from
+  `false_elim`), and `true_intro`;
+- `congAt t`: as `cong`.
 The last fact is `(= true false)`, and `false` follows by `symm` and
 `true_elim`. The last step states its conclusion, `false`, so that a checker
 that accepts the proof has checked a refutation.
@@ -29,8 +35,30 @@ namespace Telos.Solver
 
 open Proof
 
+/-- The fact `(= a b)` for what the literal `l` at position `p` gives as an
+assumption. -/
+def asEq (l : Node) (p : Nat) : EmitM Nat := do
+  let rule : Option CRule := match l with
+    | .app (.kind .EQUAL) cs => if cs.size = 2 then none else some .true_intro
+    | .app (.kind .NOT) cs => if cs.size = 1 then some .false_intro else some .true_intro
+    | _ => some .true_intro
+  match rule with
+  | none => return p
+  | some r => push ⟨r, [], [p], .step⟩
+
+/-- The steps of the CPC commands `cs` (steps without premises). -/
+def emitCmds : List CCmd → EmitM Nat
+  | [] => throw "an empty proof"
+  | [.step r as _] => push ⟨r, argList as, [], .step⟩
+  | .step r as _ :: rest => do let _ ← push ⟨r, argList as, [], .step⟩; emitCmds rest
+  | _ => throw "a proof that is not of steps"
+where
+  argList : CArgList → List PArg
+    | .nil => []
+    | .cons a rest => .term a :: argList rest
+
 /-- The steps of a certificate's facts, given the positions of the assumptions. -/
-def emitEq (A : Array Node) (pos : Array Nat) : EqProof → EmitM Nat
+partial def emitEq (A : Array Node) (pos : Array Nat) : EqProof → EmitM Nat
   | .assume i => do
     let some l := A[i]? | throw "an assumption out of range"
     let some p := pos[i]? | throw "an assumption out of range"
@@ -53,6 +81,33 @@ def emitEq (A : Array Node) (pos : Array Nat) : EqProof → EmitM Nat
     let eqs ← emitArgs A pos cs args.toList 0
     congStep t op eqs
   | .eqTrue p => do let q ← emitEq A pos p; push ⟨.true_intro, [], [q], .step⟩
+  | .valid F cs => do let q ← emitCmds cs; asEq F q
+  | .fromTrue p => do
+    let some (F, _) := EqProof.check A p | throw "a step that does not check"
+    let q ← emitEq A pos p
+    match F with
+    | .app (.kind .EQUAL) _ | .app (.kind .NOT) _ =>
+      asEq F (← push ⟨.true_elim, [], [q], .step⟩)
+    | _ => return q
+  | .andElim i p => do
+    let q ← emitEq A pos p
+    let f ← push ⟨.true_elim, [], [q], .step⟩
+    let l ← push ⟨.and_elim, [.term (Term.Numeral i)], [f], .step⟩
+    push ⟨.true_intro, [], [l], .step⟩
+  | .orElim k p qs => do
+    let some (.app (.kind .OR) ls, _) := EqProof.check A p | throw "a step that does not check"
+    let q ← emitEq A pos p
+    let mut c ← push ⟨.true_elim, [], [q], .step⟩
+    let others := (List.range ls.size).filter (· != k)
+    for (i, qi) in others.zip qs do
+      let e ← emitEq A pos qi
+      let n ← push ⟨.false_elim, [], [e], .step⟩
+      c ← push ⟨.resolution, [.term (Term.Boolean true), .node ls[i]!], [c, n], .step⟩
+    push ⟨.true_intro, [], [c], .step⟩
+  | .congAt t args => do
+    let .app op cs := t | throw "a congruence on a non-application"
+    let eqs ← emitArgs A pos cs args.toList 0
+    congStep t op eqs
 where
   emitArgs (A : Array Node) (pos : Array Nat) (cs : Array Node) :
       List (Option EqProof) → Nat → EmitM (List Nat)

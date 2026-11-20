@@ -48,6 +48,16 @@ structure Inference where
 
 instance : Inhabited Key := ⟨⟨default⟩⟩
 
+/-- A conflict of the theory, for its certificate: its inference, the literals
+it explained, and, for a cycle, the constructor terms along it (each term, the
+constructor term of its class, and the child position that continues the
+cycle). -/
+structure Conflict where
+  id : String
+  conf : Array Node
+  cycle : Array (Node × Node × Nat) := #[]
+  deriving Inhabited
+
 /-- An entry of the trail. -/
 inductive Undo where
   | eqcInfo (k : Key) (old : EqcInfo)
@@ -87,6 +97,11 @@ structure State where
   lemmasAdded : Bool := false
   /-- `d_lemmasSent`, by rewritten lemma (user context). -/
   lemmaCache : Std.HashSet Key := {}
+  /-- The internal facts asserted, with their inference and explanation, for the
+  certificates (`EE.proveFact`). -/
+  facts : Std.HashMap Key (String × Node) := {}
+  /-- The last conflict of the theory. -/
+  conflict : Option Conflict := none
   trail : Array Undo := #[]
   /-- The trail and function-term sizes saved at each push. -/
   saved : Array (Nat × Nat) := #[]

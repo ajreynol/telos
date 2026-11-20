@@ -71,7 +71,9 @@ answer stands only if its conflict is certified:
   (`EE.explainLitV_sound`) whatever the state of the equality engine, since it
   checks what it uses as it goes;
 - or else by a certificate (`Telos/Solver/EqProof.lean`) whose assumptions are
-  input literals and which the proven checker accepts.
+  input literals and which the proven checker accepts. The certificate's
+  theory reasoning (the theory of datatypes') is by CPC rule instances run
+  through Logos's checker, as the rewriter's steps are (`EqProof.valid`).
 
 Either way the answer is correct (`Telos.solve_unsat_correct`). A bug in the engine can make it answer `unknown`,
 or differ from cvc5, but not answer `unsat` on a satisfiable input.
