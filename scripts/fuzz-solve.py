@@ -165,6 +165,89 @@ def uf_benchmark(rng, size, clauses=False):
     return UF_PRELUDE + "".join(f"(assert {l})\n" for l in out) + "(check-sat)\n"
 
 
+DT_PRELUDE = """(set-logic QF_UFDT)
+(declare-sort U 0)
+(declare-datatypes ((Lst 0)) (((nil) (cons (head U) (tail Lst)))))
+(declare-datatypes ((Tree 0)) (((leaf (val U)) (node (left Tree) (right Tree)))))
+(declare-datatypes ((Col 0)) (((red) (green) (blue))))
+(declare-datatypes ((Pr 0)) (((pr (fst Col) (snd Lst)))))
+(declare-fun a () U)
+(declare-fun b () U)
+(declare-fun x () Lst)
+(declare-fun y () Lst)
+(declare-fun z () Lst)
+(declare-fun s () Tree)
+(declare-fun t () Tree)
+(declare-fun c () Col)
+(declare-fun d () Col)
+(declare-fun p () Pr)
+(declare-fun f (Lst) Lst)
+"""
+
+DT_SORTS = ["U", "Lst", "Tree", "Col", "Pr"]
+
+
+def dt_term(rng, sort, depth):
+    """A term of sort `sort`."""
+    leaf = depth == 0 or rng.random() < 0.35
+    if sort == "U":
+        if leaf:
+            return rng.choice(["a", "b"])
+        return rng.choice([f"(head {dt_term(rng, 'Lst', depth - 1)})", f"(val {dt_term(rng, 'Tree', depth - 1)})"])
+    if sort == "Lst":
+        if leaf:
+            return rng.choice(["x", "y", "z", "x", "y", "nil"])
+        r = rng.random()
+        if r < 0.35:
+            return f"(cons {dt_term(rng, 'U', depth - 1)} {dt_term(rng, 'Lst', depth - 1)})"
+        if r < 0.7:
+            return f"(tail {dt_term(rng, 'Lst', depth - 1)})"
+        if r < 0.85:
+            return f"(snd {dt_term(rng, 'Pr', depth - 1)})"
+        return f"(f {dt_term(rng, 'Lst', depth - 1)})"
+    if sort == "Tree":
+        if leaf:
+            return rng.choice(["s", "t"])
+        r = rng.random()
+        if r < 0.25:
+            return f"(leaf {dt_term(rng, 'U', depth - 1)})"
+        if r < 0.45:
+            return f"(node {dt_term(rng, 'Tree', depth - 1)} {dt_term(rng, 'Tree', depth - 1)})"
+        return f"({rng.choice(['left', 'right'])} {dt_term(rng, 'Tree', depth - 1)})"
+    if sort == "Col":
+        if leaf:
+            return rng.choice(["c", "d", "red", "green", "blue"])
+        return f"(fst {dt_term(rng, 'Pr', depth - 1)})"
+    # Pr
+    if leaf:
+        return "p"
+    return f"(pr {dt_term(rng, 'Col', depth - 1)} {dt_term(rng, 'Lst', depth - 1)})"
+
+
+TESTERS = {"Lst": ["nil", "cons"], "Tree": ["leaf", "node"], "Col": ["red", "green", "blue"], "Pr": ["pr"]}
+
+
+def dt_literal(rng):
+    r = rng.random()
+    sort = rng.choice(["Lst", "Lst", "Tree", "Col", "U", "Pr"])
+    if r < 0.35 and sort in TESTERS:
+        atom = f"((_ is {rng.choice(TESTERS[sort])}) {dt_term(rng, sort, 2)})"
+    else:
+        atom = f"(= {dt_term(rng, sort, 2)} {dt_term(rng, sort, 2)})"
+    return atom if rng.random() < 0.65 else f"(not {atom})"
+
+
+def dt_benchmark(rng, size, clauses=False):
+    out = []
+    for _ in range(rng.randint(2, size)):
+        if clauses and rng.random() < 0.5:
+            k = rng.randint(2, 3)
+            out.append("(or " + " ".join(dt_literal(rng) for _ in range(k)) + ")")
+        else:
+            out.append(dt_literal(rng))
+    return DT_PRELUDE + "".join(f"(assert {l})\n" for l in out) + "(check-sat)\n"
+
+
 def split_cvc5(text):
     """cvc5's output with `-o post-asserts -o theory-events`: the preprocessed
     benchmark, and the event lines (the answer dropped)."""
@@ -354,6 +437,7 @@ def main():
                     help="replay cvc5's trace on telos's theories (telos --replay), on cvc5's preprocessed benchmark")
     ap.add_argument("--clauses", action="store_true", help="random benchmarks with disjunctions")
     ap.add_argument("--size", type=int, default=6, help="the most literals of a random benchmark")
+    ap.add_argument("--theory", choices=["uf", "dt"], default="uf", help="the theory of the random benchmarks")
     ap.add_argument("files", nargs="*")
     a = ap.parse_args()
     if not TELOS.exists():
@@ -364,7 +448,8 @@ def main():
         rng = random.Random(a.seed)
         for i in range(a.count):
             p = tmp / f"s{i}.smt2"
-            p.write_text(uf_benchmark(rng, a.size, a.clauses or a.replay))
+            gen = dt_benchmark if a.theory == "dt" else uf_benchmark
+            p.write_text(gen(rng, a.size, a.clauses or a.replay))
             files.append(p)
     counts = collections.Counter()
     diffs, failures, proof_failures = [], [], []

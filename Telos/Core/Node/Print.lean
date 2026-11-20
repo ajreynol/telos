@@ -260,6 +260,8 @@ def DtNames.selName (N : DtNames) : TypeNode → Nat → Nat → String
 selectors, and `pc` printing its subterms (`toSmtLibWith`, or the let printer's
 names for shared subterms). -/
 def Node.toSmtLibTop (N : DtNames) (pc : Node → String) : Node → String
+  -- the operator of a tester in the equality engine (cvc5's `is_C`)
+  | .app (.kind .APPLY_TESTER) #[.const (.dtCons T i)] => s!"is_{N.consName T i}"
   | .const (.dtCons T i) =>
     if N.isParametric T then s!"(as {N.consName T i} {T.toSmtLibWith N})" else N.consName T i
   -- `(tuple a₁ … aₙ)`, from `(TUPLE a₁ (… (TUPLE aₙ TUPLE_UNIT)))`

@@ -694,6 +694,66 @@ second theory arrives (arrays, datatypes, arithmetic):
 - keep the check unchanged: the builder stays untrusted, and the evaluator
   grows with the theories' operators.
 
+## Stage 5: datatypes (in progress)
+
+Safe mode excludes codatatypes and sygus; with proofs, shared selectors are
+off. The other options keep their defaults: no binary splits, one split lemma
+per check, cycle checks, and an instantiation is a lemma only when the
+constructor has a finite argument of another type (`dtPoliteOptimize`; an
+uninterpreted sort counts, being "interpreted one").
+
+### Design
+
+- `Telos/Solver/Theory/DtType.lean`: cardinality classes, and the terms the
+  theory builds (`getInstCons`, testers, splits, `checkClash`).
+- `Telos/Solver/Theory/DtState.lean`: the theory's state as data, with a trail
+  for its context-dependent parts.
+- `Telos/Solver/Theory/Datatypes.lean`: the port of `theory_datatypes.cpp` and
+  its inference manager.
+- **Synchronous notifications.** The theory reacts to the central engine's
+  new classes and merges while the engine propagates, reading representatives
+  as they are then, and may raise a conflict in the middle. Its state is a
+  field of the engine (`EqualityEngine.dt`), and the engine calls a hook
+  (`Ctx.onNote`) at each notification. The theory's facts, lemmas and conflicts
+  are notes, turned into events in order.
+- **Explanations.** An internal fact is asserted with its explanation as its
+  reason (`ProofEqEngine::assertFact`), so the theory's conflicts stop at
+  those explanations. The explanation of a propagation for the SAT solver
+  expands them further (`TheoryEngine::getExplanation`).
+- **Testers' operators** are their own nodes in the engine (cvc5's `is_C`):
+  otherwise `(is_C x)` would be the partial application `(C x)`.
+- **Soundness is unchanged.** A conflict of the theory is not certified, so it
+  answers `unknown`. A conflict whose explanation uses an inferred edge fails
+  the verified explanation's checks, and also answers `unknown`. In `solve`, a
+  lemma (a split, say) needs the SAT solver, so the answer is `unknown`. Replay
+  is the main test.
+
+### First results (replay, 100 random benchmarks)
+
+39 identical. The differences come from:
+- **Sharing.** With two theories (UF is always on), cvc5 enables theory
+  combination:
+  - preregistration goes through `SharedTermsVisitor` (per atom, with a
+    context-dependent cache of preregistrations, and shared terms);
+  - each equality atom gets a second trigger predicate (the shared terms
+    database's, on the central engine), hence duplicated propagations;
+  - when an atom is asserted, its shared terms become trigger terms of the
+    theories that see them (`Theory::addSharedTerm`);
+  - the central engine has constants as trigger terms for every theory
+    (`constantsAreTriggers`), so the merges and disequalities of trigger terms
+    are propagated (`eqNotifyTriggerTermEquality`), and asserted to datatypes
+    as shared equalities.
+
+  Next: port trigger terms in the equality engine, then the sharing visitor
+  and the shared terms database.
+- **Replay skolems.** The purification skolems that datatypes introduces are
+  printed by cvc5 as symbols (`@purify_k`) in later inputs. They are to be
+  mapped to telos's skolems, from the trace's `DATATYPES_PURIFY` lemmas.
+- **Node order.** `checkSplit` takes the classes in cvc5's node-id order (a
+  `std::set<Node>`), and the orientation of propagated shared equalities
+  follows node ids. Telos uses the engine's order. If this causes
+  differences, the trace could carry node ids.
+
 ## Order of work (all stages)
 
 1. **Equality engine.** Port `theory/uf/equality_engine.cpp` (about 3k lines)

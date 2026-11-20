@@ -1,6 +1,8 @@
 import Std.Data.HashMap
 import Std.Data.HashSet
 import Telos.Core.Node.Key
+import Telos.Solver.Event
+import Telos.Solver.Theory.DtState
 
 /-!
 # The equality engine
@@ -125,6 +127,11 @@ inductive Note where
   | propagate (lit : Node)
   /-- Two constants were merged: the engine is inconsistent. -/
   | constantMerge (t₁ t₂ : Node)
+  /-- A theory's output, from a notification or a check: an internal fact (with
+  its explanation), a lemma, a conflict (as its explanation). -/
+  | fact (T : Theory) (id : String) (lit exp : Node)
+  | lemma (T : Theory) (id : String) (lem : Node)
+  | conflict (T : Theory) (id : String) (exp : Node)
   deriving Inhabited
 
 /-- The context-dependent counters of the engine, saved at each push. -/
@@ -190,6 +197,9 @@ structure EqualityEngine where
   propLog : Array ((Nat × Nat) × Option Nat) := #[]
   /-- The counters saved at each push: the `i`-th, when leaving level `i`. -/
   saved : Array Counters := #[]
+  /-- The state of the theory of datatypes, which reacts to the engine's
+  notifications (`Telos/Solver/Theory/Datatypes.lean`). -/
+  dt : DT.State := {}
   deriving Inhabited
 
 /-- What the engine reads from its owner. -/
@@ -198,15 +208,28 @@ structure Ctx where
   congruenceKinds : Kind → Bool
   /-- The SAT value of an atom. -/
   value : Node → Option Bool
+  /-- The theories' handling of a notification (`.newClass`, `.merge`), called
+  when it happens, as cvc5's `EqualityEngineNotify` is: it reads the engine as it
+  is then, and records its outputs as notes. -/
+  onNote : Note → EqualityEngine → EqualityEngine := fun _ ee => ee
 
 abbrev EEM := ReaderT Ctx (StateM EqualityEngine)
 
 /-- A constant, in cvc5's sense (`Node::isConst`). -/
-def isConstNode : Node → Bool
-  | .const _ => true
-  | _ => false
+def isConstNode (n : Node) : Bool := n.isConst
 
 def note (n : Note) : EEM Unit := modify fun s => { s with notes := s.notes.push n }
+
+/-- Record a notification and let the theories handle it now. -/
+def notify (n : Note) : EEM Unit := do
+  note n
+  let f := (← read).onNote
+  modify (f n)
+
+/-- Update the state of the theory of datatypes in place. -/
+def modifyDt (f : DT.State → DT.State) : EEM Unit := do
+  let dt ← modifyGet fun s => (s.dt, { s with dt := {} })
+  modify fun s => { s with dt := f dt }
 
 def find (ee : EqualityEngine) (id : Nat) : Nat := ee.enodes[id]!.find
 
@@ -374,7 +397,7 @@ def merge (c₁ c₂ : Nat) : EEM (Array Nat) := do
     let e₁' : ENode := { e₁ with next := e₂.next, size := e₁.size + e₂.size }
     let e₂' : ENode := { e₂ with next := e₁.next }
     { s with enodes := (s.enodes.set! c₁ e₁').set! c₂ e₂' }
-  if doNotify then note (.merge n₁ n₂)
+  if doNotify then notify (.merge n₁ n₂)
   return fired
 
 /-- `propagate`: process the merge queue. -/
@@ -429,12 +452,19 @@ def propagate : EEM Unit := do
       if !ok then modify fun s => { s with done := true }
   modify fun s => { s with inPropagate := false, queue := #[], qhead := 0 }
 
+/-- The node of the operator `f` of an application of kind `k`. A tester's is
+not its constructor's: in cvc5 they are different nodes (`is_C` and `C`), and
+the tester of `x` must not be the partial application of `C` to `x`. -/
+def operatorNode (k : Kind) (f : Node) : Node :=
+  if k == .APPLY_TESTER then .app (.kind .APPLY_TESTER) #[f] else f
+
 /-- The operator node and the arguments of a congruence application, if `t` is
 one. -/
 def congruenceApp (t : Node) : EEM (Option (Node × Array Node)) := do
   match t with
   | .app (.node k f) cs =>
-    if (← read).congruenceKinds k && cs.size > 0 then return some (f, cs) else return none
+    if (← read).congruenceKinds k && cs.size > 0 then return some (operatorNode k f, cs)
+    else return none
   | _ => return none
 
 /-- `addTermInternal`. -/
@@ -468,7 +498,7 @@ partial def addTermInternal (t : Node) (isOperator : Bool := false) : EEM Unit :
         pure res
   match t with
   | .app (.kind .EQUAL) _ => modify fun s => { s with isEquality := s.isEquality.set! result true }
-  | _ => note (.newClass t)
+  | _ => notify (.newClass t)
   propagate
 
 /-- `addTerm`. -/
@@ -711,7 +741,10 @@ def counters (s : EqualityEngine) : Counters :=
     deducedReasons := s.deducedReasonsSize, propLog := s.propLog.size, done := s.done }
 
 /-- Enter a new context level. -/
-def push (s : EqualityEngine) : EqualityEngine := { s with saved := s.saved.push (counters s) }
+def push (s : EqualityEngine) : EqualityEngine :=
+  let dt := s.dt
+  let s := { s with dt := {} }
+  { s with saved := s.saved.push (counters s), dt := dt.push }
 
 /-- `undoMerge`: separate the class `c₂` from the class `c₁` it was merged
 into. -/
@@ -807,7 +840,9 @@ def popTo (s : EqualityEngine) (k : Nat) : EqualityEngine :=
   if h : k < s.saved.size then
     let c := s.saved[k]
     -- `s` is consumed by the update, so that `backtrack` updates in place
-    backtrack { s with saved := s.saved.take k } c
+    let dt := s.dt
+    let s := backtrack { s with saved := s.saved.take k, dt := {} } c
+    { s with dt := dt.popTo k }
   else s
 
 end Telos.Solver.EE

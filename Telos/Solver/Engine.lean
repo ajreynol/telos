@@ -6,6 +6,7 @@ import Telos.Preprocess.Options
 import Telos.Solver.Event
 import Telos.Solver.EqualityEngine
 import Telos.Solver.Theory.UF
+import Telos.Solver.Theory.Datatypes
 import Telos.Solver.EqBuild
 import Telos.Solver.Explain
 import Telos.Solver.Model
@@ -105,10 +106,13 @@ def Config.theoryOf (c : Config) (t : Node) : Theory :=
   let T := Theory.ofTheoryId (Preprocess.ppTheoryOf c.termBased t)
   if T == .THEORY_BOOL && isBooleanTermSkolem t then .THEORY_UF else T
 
-/-- UF is solved: it is the only theory, so there is no sharing, and the logic
-is quantifier-free. -/
+/-- The theories are solved: they are among UF and datatypes, and the logic is
+quantifier-free. -/
 def Config.ufSolver (c : Config) : Bool :=
-  c.theories == [.THEORY_BUILTIN, .THEORY_BOOL, .THEORY_UF]
+  c.theories.all ([.THEORY_BUILTIN, .THEORY_BOOL, .THEORY_UF, .THEORY_DATATYPES].contains ·)
+
+/-- The theory of datatypes is enabled, and solved. -/
+def Config.dtSolver (c : Config) : Bool := c.ufSolver && c.theories.contains .THEORY_DATATYPES
 
 /-- The answer to `check-sat`. -/
 inductive Answer where
@@ -141,6 +145,8 @@ structure Saved where
   preregLog : Nat
   ufFacts : Nat
   ufHead : Nat
+  dtFacts : Nat
+  dtHead : Nat
   factsAsserted : Bool
   inConflict : Bool
   theoryConflict : Bool
@@ -183,6 +189,11 @@ structure State where
   /-- UF's facts, and how many it has processed. -/
   ufFacts : Array Node := #[]
   ufHead : Nat := 0
+  /-- The facts of the theory of datatypes, and how many it has processed. -/
+  dtFacts : Array Node := #[]
+  dtHead : Nat := 0
+  /-- A theory sent a lemma, which `solve` cannot use (it has no SAT solver). -/
+  lemmaSent : Bool := false
   ee : EE.EqualityEngine := default
   /-- The atoms assigned, in order, for backtracking the assignment. -/
   assignTrail : Array Key := #[]
@@ -217,7 +228,10 @@ def isTheoryAtom (c : Config) (atom : Node) : Bool :=
 /-- The equality engine's view of the engine. -/
 def eeCtx : EngineM EE.Ctx := do
   let asg := (← get).assignment
-  return { congruenceKinds := UF.congruenceKind, value := fun a => asg.get? ⟨a⟩ }
+  let dt := (← read).dtSolver
+  let base : EE.Ctx := { congruenceKinds := fun k => UF.congruenceKind k || (dt && DT.congruenceKind k),
+                         value := fun a => asg.get? ⟨a⟩ }
+  return if dt then { base with onNote := DT.onNote base } else base
 
 /-- Run an operation of the equality engine, and take its notes. -/
 def runEE (x : EE.EEM α) : EngineM (α × Array EE.Note) := do
@@ -261,6 +275,14 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
         let (exp, _) ← runEE (EE.explainLit (Node.eqNode a b))
         emit (.conflict (← level) .THEORY_BUILTIN "EQ_CONSTANT_MERGE" (EE.mkAnd exp))
       modify fun s => { s with inConflict := true, theoryConflict := true }
+    | .fact T id lit exp => emit (.fact (← level) T id lit exp)
+    | .lemma T id lem =>
+      emit (.lemma (← level) T id lem)
+      modify fun s => { s with lemmaSent := true }
+    | .conflict T id exp =>
+      emit (.conflict (← level) T id exp)
+      let why := s!"a conflict of {T.name}, which is not certified yet"
+      modify fun s => { s with inConflict := true, theoryConflict := true, cert := .error why }
 
 /-- Run an operation of the equality engine and process its notes. -/
 def withEE (x : EE.EEM α) : EngineM α := do
@@ -271,15 +293,14 @@ def withEE (x : EE.EEM α) : EngineM α := do
 /-- `Theory::preRegisterTerm` of theory `T`. -/
 def theoryPreRegister (T : Theory) (t : Node) : EngineM Unit := do
   if T == .THEORY_UF && (← read).ufSolver then withEE (UF.preRegisterTerm t)
+  if T == .THEORY_DATATYPES && (← read).dtSolver then withEE (DT.preRegisterTerm t)
 
 /-- The theory that owns a type (`Theory::theoryOf(TypeNode)`). -/
 def typeTheory (T : TypeNode) : Theory := Theory.ofTheoryId T.theoryId
 
 /-- Whether a type is finite (`Env::isFiniteType`), for the types telos's
 solvers handle. -/
-def isFiniteType : TypeNode → Bool
-  | .boolean | .bitVector _ => true
-  | _ => false
+def isFiniteType (T : TypeNode) : Bool := DT.isFiniteType T
 
 def theoryBit (T : Theory) : Nat := 1 <<< (Theory.all.idxOf T)
 
@@ -392,6 +413,7 @@ def assertFact (lit : Node) : EngineM Unit := do
   modify fun s => { s with factsAsserted := true,
                            used := if s.used.contains T then s.used else s.used.push T }
   if T == .THEORY_UF then modify fun s => { s with ufFacts := s.ufFacts.push lit }
+  if T == .THEORY_DATATYPES then modify fun s => { s with dtFacts := s.dtFacts.push lit }
 
 /-- The SAT solver assigns `lit` and asserts it. -/
 def assign (lit : Node) : EngineM Unit := do
@@ -409,7 +431,7 @@ instance : Inhabited Key := ⟨⟨default⟩⟩
 def pushLevel : EngineM Unit :=
   modify fun s =>
     let sv : Saved := ⟨s.assignTrail.size, s.preregLog.size, s.ufFacts.size, s.ufHead,
-      s.factsAsserted, s.inConflict, s.theoryConflict, s.propagated.size, s.asserted.size⟩
+      s.dtFacts.size, s.dtHead, s.factsAsserted, s.inConflict, s.theoryConflict, s.propagated.size, s.asserted.size⟩
     { s with saved := s.saved.push sv, level := s.level + 1, ee := EE.push s.ee }
 
 /-- Return to the SAT context level `k` (`Context::pop`), restoring what was
@@ -435,6 +457,7 @@ def popTo (k : Nat) : EngineM Unit := do
     assignment := asg, assignTrail := s.assignTrail.take sv.assignTrail,
     preregVisited := pv, preregLog := s.preregLog.take sv.preregLog,
     ufFacts := s.ufFacts.take sv.ufFacts, ufHead := sv.ufHead,
+    dtFacts := s.dtFacts.take sv.dtFacts, dtHead := sv.dtHead,
     factsAsserted := sv.factsAsserted, inConflict := sv.inConflict,
     theoryConflict := sv.theoryConflict, propagated := s.propagated.take sv.propagated,
     asserted := s.asserted.take sv.asserted,
@@ -448,6 +471,17 @@ def raiseTo (k : Nat) : EngineM Unit := do
 equality engine, until the engine is in conflict. -/
 def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
   emit (.check (← level) T e)
+  -- UF's check is the first of a round of checks: no lemma was sent in it yet
+  if T == .THEORY_UF then withEE (EE.modifyDt fun d => { d with lemmasAdded := false })
+  if T == .THEORY_DATATYPES && (← read).dtSolver then
+    withEE DT.preCheck
+    repeat
+      let s ← get
+      if s.inConflict || s.dtHead ≥ s.dtFacts.size then break
+      let fact := s.dtFacts[s.dtHead]!
+      modify fun s => { s with dtHead := s.dtHead + 1 }
+      withEE (DT.assertFact fact)
+    withEE (DT.postCheck (e == .full))
   if T == .THEORY_UF && (← read).ufSolver then
     repeat
       let s ← get
@@ -463,20 +497,45 @@ def check (e : Effort) : EngineM Unit := do
   if e == .full then modify fun s => { s with factsAsserted := true }
   repeat
     let s ← get
-    if !s.factsAsserted || s.inConflict then break
+    if !s.factsAsserted || s.inConflict || s.ee.dt.lemmasAdded then break
     modify fun s => { s with factsAsserted := false }
     for T in (← read).theories do
       if T.hasCheck then
         theoryCheck T e
         if (← get).inConflict then break
 
-/-- The explanation of a propagated literal (`TheoryEngine::getExplanation`
-without sharing: the theory of its atom explains it), as its assumptions. -/
+/-- The explanation of a propagated literal (`TheoryEngine::getExplanation`,
+with the central equality engine), as its assumptions: the equality engine
+explains it, and then, in turn, each assumption that the SAT solver did not
+assert (the explanation of an internal fact), until all are; conjunctions are
+split, and `true` dropped. -/
 def explain (lit : Node) : EngineM (Array Node) := do
-  if (← read).ufSolver then
-    let (exp, _) ← runEE (EE.explainLit lit)
-    return exp
-  return #[]
+  if !(← read).ufSolver then return #[]
+  let asg := (← get).assignment
+  let fromSat (l : Node) : Bool :=
+    let (a, p) := atomOf l
+    asg.get? ⟨a⟩ == some p
+  let mut out : Array Node := #[]
+  let mut todo : Array Node := #[lit]
+  let mut seen : Std.HashSet Key := {}
+  let mut i := 0
+  let mut first := true
+  while i < todo.size do
+    let l := todo[i]!
+    i := i + 1
+    if seen.contains ⟨l⟩ then continue
+    seen := seen.insert ⟨l⟩
+    if l == Node.mkTrue || l == Node.notNode Node.mkFalse then continue
+    if !first && fromSat l then
+      if !out.contains l then out := out.push l
+      continue
+    match l with
+    | .app (.kind .AND) cs => todo := todo ++ cs
+    | _ =>
+      let (exp, _) ← runEE (EE.explainLit l)
+      todo := todo ++ exp
+    first := false
+  return out
 
 /-- The literal that makes `lit` false: its negation. -/
 def negate (lit : Node) : Node :=
@@ -517,7 +576,8 @@ def solve (lits : List Node) : EngineM Answer := do
   modify fun s => { s with registered := (s.registered.insert ⟨Node.mkTrue⟩).insert ⟨Node.mkFalse⟩ }
   if (← read).ufSolver then
     let ctx ← eeCtx
-    modify fun s => { s with ee := EE.init ctx }
+    let dtOn := (← read).dtSolver
+    modify fun s => { s with ee := { EE.init ctx with dt := { enabled := dtOn } } }
   if lits.contains Node.mkFalse then
     modify fun s => { s with cert := .ok (#[Node.mkFalse], .symm (.assume 0)) }
     return .unsat
@@ -552,7 +612,10 @@ def solve (lits : List Node) : EngineM Answer := do
     | .newFacts => effort := .standard
     | .quiet => if effort == .full then break else effort := .full
   let s ← get
-  if s.used.isEmpty || ((← read).ufSolver && s.used.all (· == .THEORY_UF)) then
+  -- a lemma needs the SAT solver, which `solve` does not have
+  if s.lemmaSent then return .unknown
+  if s.used.isEmpty || ((← read).ufSolver &&
+      s.used.all ([.THEORY_UF, .THEORY_DATATYPES].contains ·)) then
     return .sat
   return .unknown
 
@@ -600,7 +663,7 @@ def replay (c : Config) (inputs : List Input) : Array Event × Nat :=
   let act : EngineM Unit := do
     if c.ufSolver then
       let ctx ← eeCtx
-      modify fun s => { s with ee := EE.init ctx }
+      modify fun s => { s with ee := { EE.init ctx with dt := { enabled := c.dtSolver } } }
     for i in inputs do replayInput i
   let st := ((act.run c).run {}).2
   (st.events, st.unverifiedExplains)
