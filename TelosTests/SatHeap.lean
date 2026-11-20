@@ -29,4 +29,4 @@ def check (seed : Nat) : Bool := Id.run do
         if inh[y]! && y != x && act[y]! > act[x]! then return false
       inh := inh.set! x false
   return true
-#eval (List.range 50).all check
+#guard (List.range 50).all check

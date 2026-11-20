@@ -51,6 +51,10 @@ layer_check Telos/Core 'Telos\.(Rewriter|Frontend|Preprocess|Solver)\b'
 layer_check Telos/Rewriter 'Telos\.(Frontend|Preprocess|Solver)\b'
 layer_check Telos/Preprocess 'Telos\.(Frontend|Solver)\b'
 layer_check Telos/Solver 'Telos\.Frontend\b'
+# The SAT layer (Telos/Solver/Sat) knows no terms: it imports only itself, so
+# that another CDCL(T) solver can replace it (docs/theory-engine-plan.md,
+# Stage 6).
+layer_check Telos/Solver/Sat 'Telos\.(Core|Rewriter|Frontend|Preprocess)\b|Telos\.Solver\.([^S]|S[^a]|Sa[^t]|Sat[^.])'
 layer_check verification/TelosProofs/Core '(Telos\.(Rewriter|Frontend|Preprocess)|TelosProofs\.(Rewriter|Preprocess))\b|Telos$'
 
 [ "${status}" -eq 0 ] && echo "Hygiene check passed (${#files[@]} Lean files)."

@@ -78,6 +78,7 @@ lake build telos
 .lake/build/bin/telos --post-asserts test/preprocess/basic.smt2    # preprocessed assertions
 .lake/build/bin/telos --post-asserts --proof test/preprocess/basic.smt2   # ... with a CPC proof
 .lake/build/bin/telos --theory-events test/solve/uf-literals.smt2  # theory-engine events (in progress)
+.lake/build/bin/telos --theory-events test/solve/sat-bool.smt2     # ... with the SAT solver
 ```
 
 ### The rewriter
@@ -198,7 +199,9 @@ Two Lake projects, so the rewriter and preprocessor build without Mathlib:
     and reorganize conjunctions;
   - `Telos/Solver/` (`TelosSolver`): the theory engine: its events
     (`Event.lean`), the equality engine (`EqualityEngine.lean`), the theories
-    (`Theory/`) and the engine (`Engine.lean`);
+    (`Theory/`), the engine (`Engine.lean`), and the SAT side: the CNF stream
+    (`Cnf.lean`), the prop engine and theory proxy (`Prop.lean`), and the SAT
+    solver, a port of cvc5's MiniSat, which knows no terms (`Sat/`);
   - `Telos/Frontend/` (`TelosFrontend`): SMT-LIB scripts (`Script.lean`),
     `simplify` queries (`Simplify.lean`), `-o post-asserts`
     (`PostAsserts.lean`) and `--theory-events` (`Solve.lean`);

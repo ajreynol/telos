@@ -1,0 +1,11 @@
+; A disjunction: the SAT solver decides, a theory conflict makes it backtrack; unsat (not certified yet).
+(set-logic QF_UF)
+(declare-sort U 0)
+(declare-fun a () U)
+(declare-fun b () U)
+(declare-fun c () U)
+(declare-fun f (U) U)
+(assert (or (= a b) (= a c)))
+(assert (not (= (f a) (f b))))
+(assert (not (= (f a) (f c))))
+(check-sat)

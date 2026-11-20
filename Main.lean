@@ -6,7 +6,7 @@ import Telos
 ```
 telos [--proof] [--proof-dir DIR] [--profile] FILE
 telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE
-telos --theory-events [--theory-events-ee] [--no-preprocess] [--no-cvc5-order] [--proof] [--proof-dir DIR] [PREPROCESSING OPTIONS] FILE
+telos --theory-events [--theory-events-ee] [--no-preprocess] [--no-cvc5-order] [--via-sat] [--proof] [--proof-dir DIR] [PREPROCESSING OPTIONS] FILE
 telos --replay TRACE [--theory-events-ee] FILE
 ```
 
@@ -78,6 +78,8 @@ structure Options where
   replay : Option String := none
   /-- Solve a DIMACS file with the SAT solver alone. -/
   dimacs : Bool := false
+  /-- Solve with the SAT solver even a conjunction of literals. -/
+  viaSat : Bool := false
   pp : Preprocess.UserOptions := {}
 
 def parseArgs : List String → Options → Except String Options
@@ -89,6 +91,7 @@ def parseArgs : List String → Options → Except String Options
   | "--theory-events" :: rest, o => parseArgs rest { o with theoryEvents := true }
   | "--theory-events-ee" :: rest, o => parseArgs rest { o with theoryEventsEE := true }
   | "--no-preprocess" :: rest, o => parseArgs rest { o with noPreprocess := true }
+  | "--via-sat" :: rest, o => parseArgs rest { o with viaSat := true }
   | "--dimacs" :: rest, o => parseArgs rest { o with dimacs := true }
   | "--no-cvc5-order" :: rest, o => parseArgs rest { o with noCvc5Order := true }
   | "--replay" :: t :: rest, o => parseArgs rest { o with replay := some t }
@@ -129,7 +132,7 @@ def main (args : List String) : IO UInt32 := do
     | .error e => IO.eprintln s!"telos: {e}"; return 1
   if opts.theoryEvents then
     let withProof := opts.proof || opts.proofDir.isSome
-    match theoryEvents sc opts.pp opts.theoryEventsEE (!opts.noPreprocess) withProof (!opts.noCvc5Order) with
+    match theoryEvents sc opts.pp opts.theoryEventsEE (!opts.noPreprocess) withProof (!opts.noCvc5Order) opts.viaSat with
     | .ok (out, unc, proof) =>
       IO.print out
       if let some e := unc then IO.eprintln s!"telos: {e}"

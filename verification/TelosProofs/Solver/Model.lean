@@ -689,19 +689,24 @@ variable [LogosFacts]
 
 /-- **`solveScript`'s `sat` answers are correct**: the assertions are
 satisfiable, in the Logos model of the model found. -/
-theorem solveScript_sat (sc : Script) (u : UserOptions) (ee pp wp co : Bool)
-    {out : List Node} {r : Solver.Result} (h : solveScript sc u ee pp wp co = .ok (out, r))
+theorem solveScript_sat (sc : Script) (u : UserOptions) (ee pp wp co vs : Bool)
+    {out : List Node} {r : Solver.Result} (h : solveScript sc u ee pp wp co vs = .ok (out, r))
     (hs : r.answer = .sat) {opts : PPOptions} {as : List Node}
     (hin : ppInput sc u = .ok (opts, as)) :
     ∃ M, model_wf M ∧ TrueIn M (inputNode as).toEo := by
   simp only [solveScript, hin, bind, Except.bind, pure, Except.pure] at h
   split at h
   · simp at h
-  · split at h
-    · simp at h
-    · simp only [Except.ok.injEq, Prod.mk.injEq] at h
-      obtain ⟨rfl, rfl⟩ := h
-      generalize Solver.run _ _ = r0 at hs
+  · -- whichever solved it, the answer is `sat` only if the model satisfies the
+    -- input
+    have key : ∀ r0 : Solver.Result, (if r0.answer != .sat then r0 else
+        if (Solver.buildModel r0.ee (Solver.relevantTerms r0.asserted) (Solver.freeConsts as)
+            (engineDefs as opts pp)).satisfies as then
+          { r0 with model := some (Solver.buildModel r0.ee (Solver.relevantTerms r0.asserted)
+            (Solver.freeConsts as) (engineDefs as opts pp)) }
+        else { r0 with answer := .unknown, uncertified := some "the model does not satisfy the input" }).answer = .sat →
+        ∃ M, model_wf M ∧ TrueIn M (inputNode as).toEo := by
+      intro r0 hs
       split at hs
       · rename_i hne
         simp [hs] at hne
@@ -709,5 +714,14 @@ theorem solveScript_sat (sc : Script) (u : UserOptions) (ee pp wp co : Bool)
         · rename_i hsat
           exact ⟨_, Solver.satisfies_sound hsat⟩
         · simp at hs
+    split at h
+    · try simp only [Except.ok.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      exact key _ hs
+    · split at h
+      · simp at h
+      · try simp only [Except.ok.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        exact key _ hs
 
 end Telos.Frontend

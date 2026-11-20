@@ -15,8 +15,8 @@
 (assert 2 THEORY_UF (= b @purify_1))
 (check 2 THEORY_UF EFFORT_STANDARD)
 (propagate 2 THEORY_BUILTIN (= b @purify_1))
-(assert 3 THEORY_UF (= a @purify_1))
+(assert 3 THEORY_UF (not (= a @purify_1)))
 (check 3 THEORY_UF EFFORT_STANDARD)
-(propagate 3 THEORY_BUILTIN (= a @purify_1))
-(check 4 THEORY_UF EFFORT_FULL)
+(propagate 3 THEORY_BUILTIN (not (= a @purify_1)))
+(check 3 THEORY_UF EFFORT_FULL)
 sat

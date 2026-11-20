@@ -237,6 +237,32 @@ def dt_literal(rng):
     return atom if rng.random() < 0.65 else f"(not {atom})"
 
 
+def bool_formula(rng, lit, depth):
+    """A formula over literals made by `lit`, with Boolean connectives."""
+    if depth == 0 or rng.random() < 0.3:
+        return lit(rng)
+    r = rng.random()
+    sub = lambda: bool_formula(rng, lit, depth - 1)
+    if r < 0.3:
+        return f"(or {sub()} {sub()}" + (f" {sub()})" if rng.random() < 0.3 else ")")
+    if r < 0.5:
+        return f"(and {sub()} {sub()})"
+    if r < 0.6:
+        return f"(not {sub()})"
+    if r < 0.7:
+        return f"(=> {sub()} {sub()})"
+    if r < 0.8:
+        return f"(xor {sub()} {sub()})"
+    if r < 0.9:
+        return f"(= {sub()} {sub()})"
+    return f"(ite {sub()} {sub()} {sub()})"
+
+
+def bool_benchmark(prelude, lit, rng, size):
+    out = [bool_formula(rng, lit, rng.randint(1, 3)) for _ in range(rng.randint(2, size))]
+    return prelude + "".join(f"(assert {l})\n" for l in out) + "(check-sat)\n"
+
+
 def dt_benchmark(rng, size, clauses=False):
     out = []
     for _ in range(rng.randint(2, size)):
@@ -441,6 +467,9 @@ def main():
     ap.add_argument("--replay", action="store_true",
                     help="replay cvc5's trace on telos's theories (telos --replay), on cvc5's preprocessed benchmark")
     ap.add_argument("--clauses", action="store_true", help="random benchmarks with disjunctions")
+    ap.add_argument("--bool", action="store_true", help="random benchmarks with nested Boolean connectives")
+    ap.add_argument("--sat", action="store_true",
+                    help="solve with telos's SAT solver (--via-sat), cvc5 with --sat-solver=minisat")
     ap.add_argument("--size", type=int, default=6, help="the most literals of a random benchmark")
     ap.add_argument("--theory", choices=["uf", "dt"], default="uf", help="the theory of the random benchmarks")
     ap.add_argument("files", nargs="*")
@@ -453,8 +482,12 @@ def main():
         rng = random.Random(a.seed)
         for i in range(a.count):
             p = tmp / f"s{i}.smt2"
-            gen = dt_benchmark if a.theory == "dt" else uf_benchmark
-            p.write_text(gen(rng, a.size, a.clauses or a.replay))
+            if a.bool:
+                p.write_text(bool_benchmark(DT_PRELUDE if a.theory == "dt" else UF_PRELUDE,
+                                            dt_literal if a.theory == "dt" else uf_literal, rng, a.size))
+            else:
+                gen = dt_benchmark if a.theory == "dt" else uf_benchmark
+                p.write_text(gen(rng, a.size, a.clauses or a.replay))
             files.append(p)
     counts = collections.Counter()
     diffs, failures, proof_failures = [], [], []
@@ -499,7 +532,7 @@ def main():
             tpath = path.with_suffix(".pp.smt2")
             tpath.write_text(body)
         ours, err = run([str(TELOS), "--theory-events"] + (["--theory-events-ee"] if a.ee else []) +
-                        (["--no-preprocess"] if a.cvc5_pp else []), tpath)
+                        (["--no-preprocess"] if a.cvc5_pp else []) + (["--via-sat"] if a.sat else []), tpath)
         if err and "by certificate" in err:
             counts["by-certificate"] += 1
         if ours is None:
@@ -512,7 +545,8 @@ def main():
             rec = path.with_suffix(".cvc5")
             theirs, cerr = (rec.read_text(), "") if rec.exists() else (None, f"no recorded trace {rec}")
         else:
-            theirs, cerr = run([a.cvc5, *CVC5_OPTS] + (["-o", "theory-events-ee"] if a.ee else []), path)
+            theirs, cerr = run([a.cvc5, *CVC5_OPTS] + (["-o", "theory-events-ee"] if a.ee else []) +
+                               (["--sat-solver=minisat"] if a.sat else []), path)
         if theirs is None or "(error" in theirs:
             failures.append((path, cerr or theirs))
             continue
@@ -520,6 +554,10 @@ def main():
             counts["identical"] += 1
         po, pt = parse_events(ours), parse_events(theirs)
         counts[pt[1] or "none"] += 1
+        if po[1] == "unknown" and pt[1] == "unsat" and err and "not certified yet" in err:
+            # the SAT solver's unsat, not certified yet
+            counts["unsat-uncertified"] += 1
+            po = (po[0], "unsat")
         if a.proofs and po[1] == "unsat":
             verdict = check_proof(a.ethos, [str(TELOS), "--theory-events"] +
                                   (["--no-preprocess"] if a.cvc5_pp else []), tpath)
@@ -541,6 +579,7 @@ def main():
           f"{len(failures)} failed; the input events (prereg, assert, check, pop) agree on {counts['inputs']}; "
           f"{counts['identical']} identical as text" +
           (f"; {counts['by-certificate']} unsat by certificate" if counts['by-certificate'] else "") +
+          (f"; {counts['unsat-uncertified']} unsat not certified yet" if counts['unsat-uncertified'] else "") +
           (f"; {counts['pops']} with backtracking" if a.replay else
            f"; cvc5 answered sat {counts['sat']}, unsat {counts['unsat']}"))
     for path, v in diffs[:a.show]:

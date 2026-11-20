@@ -9,4 +9,4 @@ def check (n seed : Nat) : Bool := Id.run do
     a := a.push (s % 50)
   let b := sort (· < ·) a
   return b.toList == a.toList.mergeSort (· ≤ ·)
-#eval (List.range 200).all fun i => check (i % 60) (i * 7 + 3)
+#guard (List.range 200).all fun i => check (i % 60) (i * 7 + 3)

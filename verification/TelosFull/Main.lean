@@ -127,22 +127,22 @@ theorem preprocess_correct (as : List Node) (h : (Preprocess.inputNode as).WellT
 /-- **Correctness of `unsat`** (`telos --theory-events`). If the theory engine
 answers `unsat` on a script whose assertions are Boolean, no well-formed model
 satisfies them. -/
-theorem solve_unsat_correct (sc : Frontend.Script) (u : Preprocess.UserOptions) (ee pp wp co : Bool)
-    {out : List Node} {r : Solver.Result} (h : Frontend.solveScript sc u ee pp wp co = .ok (out, r))
+theorem solve_unsat_correct (sc : Frontend.Script) (u : Preprocess.UserOptions) (ee pp wp co vs : Bool)
+    {out : List Node} {r : Solver.Result} (h : Frontend.solveScript sc u ee pp wp co vs = .ok (out, r))
     (hu : r.answer = .unsat) {opts : Preprocess.PPOptions} {as : List Node}
     (hin : Frontend.ppInput sc u = .ok (opts, as)) (hb : ∀ a ∈ as, HasBoolType a.toEo) :
     ∀ M, model_wf M → ¬ TrueIn M (Preprocess.inputNode as).toEo :=
-  Frontend.solveScript_unsat sc u ee pp wp co h hu hin hb
+  Frontend.solveScript_unsat sc u ee pp wp co vs h hu hin hb
 
 /-- **Correctness of `sat`** (`telos --theory-events`). If the theory engine
 answers `sat`, its model satisfies the assertions: they are true in a
 well-formed model. -/
-theorem solve_sat_correct (sc : Frontend.Script) (u : Preprocess.UserOptions) (ee pp wp co : Bool)
-    {out : List Node} {r : Solver.Result} (h : Frontend.solveScript sc u ee pp wp co = .ok (out, r))
+theorem solve_sat_correct (sc : Frontend.Script) (u : Preprocess.UserOptions) (ee pp wp co vs : Bool)
+    {out : List Node} {r : Solver.Result} (h : Frontend.solveScript sc u ee pp wp co vs = .ok (out, r))
     (hs : r.answer = .sat) {opts : Preprocess.PPOptions} {as : List Node}
     (hin : Frontend.ppInput sc u = .ok (opts, as)) :
     ∃ M, model_wf M ∧ TrueIn M (Preprocess.inputNode as).toEo :=
-  Frontend.solveScript_sat sc u ee pp wp co h hs hin
+  Frontend.solveScript_sat sc u ee pp wp co vs h hs hin
 
 end Telos
 

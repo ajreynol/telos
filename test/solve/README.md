@@ -10,5 +10,8 @@ Each `NAME.smt2` is a benchmark for `telos --theory-events`:
 
 `scripts/fuzz-solve.py --recorded --strict test/solve/*.smt2` compares the two
 without cvc5, as CI does: every supported case has the same events as cvc5.
-`unsupported-ite` is skipped, because it has SAT structure. With `--proofs`,
+The `sat-*` cases have SAT structure, which telos's SAT solver (a port of
+cvc5's MiniSat) solves: their traces are recorded with `--sat-solver=minisat`
+added (cvc5's default SAT solver is CaDiCaL). An `unsat` of the SAT solver is
+not certified yet, so telos answers `unknown` (`sat-or-unsat`). With `--proofs`,
 the refutation of each `unsat` is also checked by Ethos.

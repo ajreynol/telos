@@ -871,7 +871,7 @@ engine (59) is certified, agrees with cvc5, and its CPC proof is accepted by
 Ethos. Most `unsat`s of random conjunctions are decided by preprocessing.
 `test/solve/dt-*.smt2` has a clash, a cycle and a tester conflict.
 
-## Stage 6: the SAT solver (in progress)
+## Stage 6: the SAT solver (in progress: milestones 1 and 2 done)
 
 Without a SAT solver, telos solves conjunctions of literals and replays cvc5's
 search. Theories with lemmas (datatypes' splits and forced instantiations) need
@@ -966,6 +966,67 @@ adapter, without touching the theories.
    lemmas.
 5. Later: the IPASIR-UP adapter, and the dependency on a verified CDCL(T)
    solver.
+
+### Status
+
+**Milestones 1 and 2 are done.**
+
+- `Telos/Solver/Sat/` is the SAT layer, term-free (the hygiene check enforces
+  that it imports only itself): MiniSat's types, sort and heap (`Basic.lean`),
+  and the solver (`Minisat.lean`), generic in its host's monad, which it reaches
+  through `TheoryProxy`, the swap point. `--dimacs FILE` runs it alone with no
+  theories (`Dimacs.lean`), for `scripts/fuzz-sat.py`, until the SAT path is
+  fuzzed through SMT-LIB only.
+- `Telos/Solver/Cnf.lean` is the CNF stream (the proof CNF stream's clause
+  order). It knows terms and SAT literals, not the SAT solver: it queues its
+  requests (`SatOp`, new variables and clauses) for the host to apply in order,
+  predicting the variables' indices. That is exact, because it never reads the
+  assignment, and during the search MiniSat only queues clauses as lemmas.
+- `Telos/Solver/Prop.lean` is the prop engine and the theory proxy:
+  - eager preregistration, repeated after a backtrack (`TheoryPreregistrar`);
+  - the assigned literals queued until the next check;
+  - lemmas and explained conflicts as clauses;
+  - context level 1 for `check-sat`, decision levels above it.
+- In the engine (`Config.satMode`), lemmas and conflicts go to the CNF stream
+  (`flushLemmas`, `satLemma`). `TheoryEngine::check`'s `d_lemmasAdded` and
+  `d_outputChannelUsed` are reset per check, and are what `theoryNeedCheck`
+  reads. A shared literal that rewrites to `true` is asserted, one that
+  rewrites to `false` is a conflict (`CONFLICT_REWRITE_LIT`), as in cvc5's
+  `assertToTheory`.
+- The front end sends anything that is not a conjunction of literals to the SAT
+  solver (`--via-sat` forces it, for fuzzing conjunctions too). A `sat` is
+  certified by the model check, as before, with the SAT model's values of the
+  Boolean variables. An `unsat` answers `unknown` until milestone 4
+  (`runSat_ne_unsat`, used by `solveScript_unsat`).
+
+Results, with `scripts/fuzz-solve.py --sat` (cvc5 with
+`--sat-solver=minisat`), on cvc5's preprocessed assertions (`--cvc5-pp`):
+- **QF_UF:** the same events as cvc5 on all of 300 benchmarks with nested
+  connectives (`--bool`), 287 of them identical as text, and on all of 100
+  with clauses. That covers decisions, BCP, conflicts, learned clauses,
+  backtracking, restarts and lazy explanations.
+- **QF_UFDT:** the same events on about a third. The first differences are
+  the datatypes solver's order:
+  - which term `checkSplit` splits on first (the node-id order that
+    `cvc5-deterministic-order.patch` addresses);
+  - a few preregistrations of lemma atoms.
+
+  Datatypes `sat` answers are `unknown`: the model check fails, because the
+  model builder does not build datatype values yet (cvc5's
+  `TheoryDatatypes::collectModelInfo`).
+- On telos's own preprocessing, the remaining differences are preprocessing's,
+  not the search's.
+
+Not yet:
+- theory combination's care graph (`combineTheories`, splits on shared terms),
+  at full effort with sharing;
+- decision requests of the theories;
+- the decision engine (milestone 3).
+
+Two Lean pitfalls caused bugs here, worth knowing:
+- `if a && !(← x)` runs `x` whatever `a` is: a nested action is lifted before
+  the statement;
+- `return` inside a `match` arm's `do` returns from the enclosing function.
 
 ## Order of work (all stages)
 

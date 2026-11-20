@@ -1,4 +1,4 @@
-; An ite after preprocessing is SAT structure: unsupported for now.
+; An ite after preprocessing: SAT structure, solved by the SAT solver (MiniSat) and the theory engine.
 (set-logic QF_UF)
 (declare-sort U 0)
 (declare-fun f (U) U)

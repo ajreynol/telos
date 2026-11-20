@@ -110,6 +110,14 @@ inductive Event where
   | eeDiseq (level : Nat) (t₁ t₂ reason : Node)
   deriving Inhabited
 
+/-- The nodes of an event. -/
+def Event.nodes : Event → List Node
+  | .prereg _ t | .assert _ _ t | .lemma _ _ _ t | .conflict _ _ _ t | .propagate _ _ t
+  | .phase _ t _ | .eeNewClass _ t => [t]
+  | .fact _ _ _ l e | .explain _ l e | .eeMerge _ l e => [l, e]
+  | .eeDiseq _ a b r => [a, b, r]
+  | .check .. | .pop _ | .modelUnsound .. | .refutationUnsound .. => []
+
 /-- The event with its nodes mapped by `f` (for naming skolems). -/
 def Event.map (f : Node → Node) : Event → Event
   | .prereg k t => .prereg k (f t)

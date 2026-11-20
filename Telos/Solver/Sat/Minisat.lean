@@ -190,10 +190,9 @@ def setDecisionVar (s : Solver) (v : Var) (b : Bool) : Solver :=
   let s := { s with decision := #[] }
   insertVarOrder { s with decision := d.set! v b, decVars := dv } v
 
-/-- `newVar`: a variable with its preferred polarity `sign`, whether it is a
-decision variable, and whether it is a theory atom. -/
-def newVar (sign : Bool := true) (dvar : Bool := true) (isTheoryAtom : Bool := false) : m Var := do
-  modifyGetThe Solver fun s =>
+/-- `newVar`, on the solver. -/
+def addVar (s : Solver) (sign : Bool := true) (dvar : Bool := true) (isTheoryAtom : Bool := false) :
+    Var × Solver :=
     let v := s.nVars
     let s := { s with
       watches := (s.watches.push #[]).push #[]
@@ -206,6 +205,11 @@ def newVar (sign : Bool := true) (dvar : Bool := true) (isTheoryAtom : Bool := f
       decision := s.decision.push false
       theory := s.theory.push isTheoryAtom }
     (v, setDecisionVar s v dvar)
+
+/-- `newVar`: a variable with its preferred polarity `sign`, whether it is a
+decision variable, and whether it is a theory atom. -/
+def newVar (sign : Bool := true) (dvar : Bool := true) (isTheoryAtom : Bool := false) : m Var := do
+  modifyGetThe Solver (addVar · sign dvar isTheoryAtom)
 
 /-- `uncheckedEnqueue`: assign `p`, with the reason `from`. -/
 def uncheckedEnqueue (p : Lit) (from_ : CRef := CRef.undef) : m Unit := do

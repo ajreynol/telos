@@ -10,6 +10,7 @@ import Telos.Solver.Theory.Datatypes
 import Telos.Solver.EqBuild
 import Telos.Solver.Explain
 import Telos.Solver.Model
+import Telos.Solver.Cnf
 
 /-!
 # The theory engine, on conjunctions of literals
@@ -97,6 +98,10 @@ structure Config where
   preprocessing does. On for fuzzing and replay, where the events must be
   cvc5's; a fast mode may turn it off (the answers are certified either way). -/
   cvc5Order : Bool := true
+  /-- A SAT solver drives the engine (`Telos/Solver/Prop.lean`): the atoms get
+  their SAT literals from the CNF stream, which preregisters them; lemmas and
+  conflicts become clauses. -/
+  satMode : Bool := false
 
 /-- A Boolean term skolem (`Env::isBooleanTermSkolem`): the purification
 skolem of a Boolean term in a term position, which term formula removal
@@ -255,6 +260,24 @@ structure State where
   `(true, false)` from them (`Telos/Solver/EqProof.lean`), or why there is
   none. -/
   cert : Except String (Array Node × EqProof) := .error "no conflict"
+  -- with a SAT solver (`Config.satMode`):
+  /-- The CNF stream. -/
+  cnf : Cnf.State := {}
+  /-- The literals the SAT solver assigned, to be asserted at the next check
+  (`TheoryProxy::d_queue`). -/
+  satQueue : Array Node := #[]
+  /-- The theory atoms that got SAT literals, with the context level at which
+  they were preregistered (`TheoryPreregistrar::d_sat_literals`). -/
+  satLiterals : Array (Node × Nat) := #[]
+  /-- The lemmas and conflicts (`true`) to give to the CNF stream. -/
+  satLemmaQueue : Array (Node × Bool) := #[]
+  /-- `TheoryEngine::d_outputChannelUsed` and `d_lemmasAdded`, since the last
+  check. -/
+  outputUsed : Bool := false
+  lemmasAdded : Bool := false
+  /-- Something the SAT solver cannot be given (a literal with no SAT
+  literal): the answer is then `unknown`. -/
+  satError : Option String := none
 
 abbrev EngineM := ReaderT Config (StateM State)
 
@@ -297,6 +320,7 @@ solver, unless it is already true there; a false one puts the engine in
 conflict. -/
 def propagate (T : Theory) (lit : Node) : EngineM Unit := do
   emit (.propagate (← level) T lit)
+  modify fun s => { s with outputUsed := true }
   if (← get).inConflict then return
   let (atom, pol) := atomOf lit
   if (← read).sharing then
@@ -322,8 +346,16 @@ def flipEq : Node → Node
 solver to the theory `T`: normalized, and asserted unless it already was. -/
 def assertShared (T : Theory) (lit : Node) : EngineM Unit := do
   if (← get).inConflict then return
-  -- cvc5's rewriting keeps the (cvc5-oriented) equality, unless it simplifies
-  if (Telos.rewrite lit).isConst then return
+  -- cvc5 asserts the (cvc5-oriented) literal, even if it rewrites to `true`;
+  -- one that rewrites to `false` is a conflict (`CONFLICT_REWRITE_LIT`)
+  if Telos.rewrite lit == Node.mkFalse then
+    emit (.conflict (← level) T "CONFLICT_REWRITE_LIT" Node.mkFalse)
+    let why := "a conflict of a shared literal that rewrites to false, which is not certified yet"
+    modify fun s => { s with inConflict := true, theoryConflict := true, cert := .error why }
+    if (← read).satMode then
+      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lit, true),
+                               outputUsed := true, lemmasAdded := true }
+    return
   let norm := lit
   let marked := (← get).markedBuiltin
   if marked.contains ⟨norm⟩ || marked.contains ⟨flipEq norm⟩ then return
@@ -351,11 +383,19 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
       else
         let (exp, _) ← runEE (EE.explainLit (Node.eqNode a b))
         emit (.conflict (← level) .THEORY_BUILTIN "EQ_CONSTANT_MERGE" (EE.mkAnd exp))
+        if (← read).satMode then
+          modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (EE.mkAnd exp, true),
+                                   outputUsed := true, lemmasAdded := true }
       modify fun s => { s with inConflict := true, theoryConflict := true }
     | .fact T id lit exp => emit (.fact (← level) T id lit exp)
     | .lemma T id lem =>
       emit (.lemma (← level) T id lem)
-      modify fun s => { s with lemmaSent := true, lemmaQueue := s.lemmaQueue.push lem }
+      if (← read).satMode then
+        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lem, false),
+                                 outputUsed := true, lemmasAdded := true }
+      else
+        modify fun s => { s with lemmaSent := true, lemmaQueue := s.lemmaQueue.push lem,
+                                 lemmasAdded := true }
     | .sharedEq tag lit =>
       -- `propagateSharedEquality`: asserted to the theory of the tag, then and
       -- there (a replay skips the trace's copy)
@@ -363,6 +403,9 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
         assertShared .THEORY_DATATYPES lit
     | .conflict T id exp =>
       emit (.conflict (← level) T id exp)
+      if (← read).satMode then
+        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (exp, true),
+                                 outputUsed := true, lemmasAdded := true }
       let why := s!"a conflict of {T.name}, which is not certified yet"
       modify fun s => { s with inConflict := true, theoryConflict := true, cert := .error why }
       if (← read).defer && T == .THEORY_DATATYPES then
@@ -678,7 +721,7 @@ def popTo (k : Nat) : EngineM Unit := do
     factsAsserted := sv.factsAsserted, inConflict := sv.inConflict,
     theoryConflict := sv.theoryConflict, propagated := s.propagated.take sv.propagated,
     asserted := s.asserted.take sv.asserted,
-    saved := s.saved.take k, level := k, ee }
+    saved := s.saved.take k, level := k, ee, satQueue := #[] }
 
 /-- Raise the context level to `k` (pushes are implicit in cvc5's traces). -/
 def raiseTo (k : Nat) : EngineM Unit := do
@@ -697,9 +740,126 @@ partial def formulaAtoms (n : Node) (acc : Array Node) : Array Node :=
   | .const (.boolean _) => acc
   | _ => if acc.contains n then acc else acc.push n
 
+/-- The explanation of literals as literals the SAT solver asserted: each
+literal that it did not assert (all of them, with `all`; else all but the
+first) is explained by the equality engine, in turn, until all are;
+conjunctions are split, and `true` dropped (`TheoryEngine::getExplanation`). -/
+def explainAll (lits : Array Node) (all : Bool) : EngineM (Array Node) := do
+  let asg := (← get).assignment
+  let fromSat (l : Node) : Bool :=
+    let (a, p) := atomOf l
+    asg.get? ⟨a⟩ == some p
+  let mut out : Array Node := #[]
+  let mut todo : Array Node := lits
+  let mut seen : Std.HashSet Key := {}
+  let mut i := 0
+  while i < todo.size do
+    let l := todo[i]!
+    let forced := !all && i == 0
+    i := i + 1
+    if seen.contains ⟨l⟩ then continue
+    seen := seen.insert ⟨l⟩
+    if l == Node.mkTrue || l == Node.notNode Node.mkFalse then continue
+    if !forced && fromSat l then
+      if !out.contains l then out := out.push l
+      continue
+    match l with
+    | .app (.kind .AND) cs => todo := todo ++ cs
+    | _ =>
+      let (exp, _) ← runEE (EE.explainLit l)
+      todo := todo ++ exp
+  return out
+
+/-! ### The CNF stream (`Config.satMode`) -/
+
+/-- `TheoryEngine::preRegister` of an atom that got a SAT literal, or again
+after a backtrack (`TheoryPreregistrar`). -/
+def tePreRegister (atom : Node) : EngineM Unit := do
+  emit (.prereg (← level) atom)
+  if atom.isConst then return
+  if !(← get).registered.contains ⟨atom⟩ then
+    modify fun s => { s with registered := s.registered.insert ⟨atom⟩ }
+    addRoot atom
+  preRegisterAtom atom
+
+/-- `TheoryPreregistrar::notifySatLiteral` (eager): the atom is preregistered,
+and remembered with the level. -/
+def notifySatLiteral (atom : Node) : EngineM Unit := do
+  modify fun s => { s with satLiterals := s.satLiterals.push (atom, s.level) }
+  tePreRegister atom
+
+/-- `TheoryPreregistrar::notifyBacktrack`: the atoms preregistered above the
+current level are preregistered again, at it, the latest first. -/
+def satBacktrack : EngineM Unit := do
+  let lvl ← level
+  let n := (← get).satLiterals.size
+  for i in [0:n] do
+    let (atom, l) := (← get).satLiterals[n - 1 - i]!
+    if l ≤ lvl then break
+    modify fun s => { s with satLiterals := s.satLiterals.set! (n - 1 - i) (atom, lvl) }
+    tePreRegister atom
+
+/-- Run an operation of the CNF stream, on the stream of the state. -/
+def withCnf (x : StateT Cnf.State EngineM α) : EngineM α := do
+  let c ← modifyGet fun s => (s.cnf, { s with cnf := {} })
+  let (a, c) ← x.run c
+  modify fun s => { s with cnf := c }
+  return a
+
+/-- Run an operation of the engine from the CNF stream: the stream goes back
+in the state meanwhile, as the operation may use it (a lemma's atoms). -/
+def atEngine (x : EngineM α) : StateT Cnf.State EngineM α := do
+  let c ← modifyGetThe Cnf.State fun c => (c, {})
+  (modify fun s => { s with cnf := c } : EngineM Unit)
+  let a ← (x : EngineM α)
+  let c ← (modifyGet fun s => (s.cnf, { s with cnf := {} }) : EngineM Cnf.State)
+  set c
+  return a
+
+/-- The engine as the CNF stream's host. -/
+def cnfHost (c : Config) : Cnf.Host (StateT Cnf.State EngineM) where
+  notifySatLiteral atom := atEngine (notifySatLiteral atom)
+  isInternalBoolVar n :=
+    c.theoryOf n == .THEORY_BOOL && match n with
+      | .var .. | .skolem .. => true
+      | _ => false
+
+/-- The equalities of a formula oriented as cvc5's node ids would (see
+`flushLemmas`). -/
+partial def orientEqs (ids : Std.HashMap Key Nat) (n : Node) : Node :=
+  match n with
+  | .app (.kind .EQUAL) #[l, r] =>
+    if l.typeHint == some .boolean then .app (.kind .EQUAL) #[orientEqs ids l, orientEqs ids r]
+    else if EE.ageLt ids r l then Node.eqNode r l else n
+  | .app (.kind k) cs =>
+    if Cnf.isConnective n || k == .NOT then .app (.kind k) (cs.map (orientEqs ids)) else n
+  | _ => n
+
+/-- Give a lemma (rewritten, as cvc5's `TheoryPreprocessor` does), or the
+negation of a conflict's explanation, to the CNF stream. -/
+def satLemma (lem : Node) (isConflict : Bool) : EngineM Unit := do
+  let c ← read
+  if isConflict then
+    let conf := match lem with
+      | .app (.kind .AND) cs => cs
+      | l => #[l]
+    let exp ← explainAll conf true
+    withCnf (Cnf.convertAndAssert (cnfHost c) (EE.mkAnd exp) false (negated := true))
+  else
+    let lem := Telos.rewrite lem
+    let ids := (← get).ee.nodeIds
+    let lem := if c.cvc5Order then orientEqs ids lem else lem
+    withCnf (Cnf.convertAndAssert (cnfHost c) lem false)
+
 /-- `TheoryEngine::lemma`, after the event: the lemma, preprocessed (rewritten),
 goes to the CNF stream, which preregisters its new atoms. -/
 def flushLemmas : EngineM Unit := do
+  if (← read).satMode then
+    repeat
+      let q ← modifyGet fun s => (s.satLemmaQueue, { s with satLemmaQueue := #[] })
+      if q.isEmpty then break
+      for (lem, isConflict) in q do satLemma lem isConflict
+    return
   repeat
     let q ← modifyGet fun s => (s.lemmaQueue, { s with lemmaQueue := #[] })
     if q.isEmpty then break
@@ -773,10 +933,11 @@ def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
 facts are asserted and there is no conflict. At full effort the first round
 always runs. -/
 def check (e : Effort) : EngineM Unit := do
+  modify fun s => { s with outputUsed := false, lemmasAdded := false }
   if e == .full then modify fun s => { s with factsAsserted := true }
   repeat
     let s ← get
-    if !s.factsAsserted || s.inConflict || s.ee.dt.lemmasAdded then break
+    if !s.factsAsserted || s.inConflict || s.lemmasAdded then break
     modify fun s => { s with factsAsserted := false }
     for T in (← read).theories do
       if T.hasCheck then
@@ -790,31 +951,7 @@ assert (the explanation of an internal fact), until all are; conjunctions are
 split, and `true` dropped. -/
 def explain (lit : Node) : EngineM (Array Node) := do
   if !(← read).ufSolver then return #[]
-  let asg := (← get).assignment
-  let fromSat (l : Node) : Bool :=
-    let (a, p) := atomOf l
-    asg.get? ⟨a⟩ == some p
-  let mut out : Array Node := #[]
-  let mut todo : Array Node := #[lit]
-  let mut seen : Std.HashSet Key := {}
-  let mut i := 0
-  let mut first := true
-  while i < todo.size do
-    let l := todo[i]!
-    i := i + 1
-    if seen.contains ⟨l⟩ then continue
-    seen := seen.insert ⟨l⟩
-    if l == Node.mkTrue || l == Node.notNode Node.mkFalse then continue
-    if !first && fromSat l then
-      if !out.contains l then out := out.push l
-      continue
-    match l with
-    | .app (.kind .AND) cs => todo := todo ++ cs
-    | _ =>
-      let (exp, _) ← runEE (EE.explainLit l)
-      todo := todo ++ exp
-    first := false
-  return out
+  explainAll #[lit] false
 
 /-- The literal that makes `lit` false: its negation. -/
 def negate (lit : Node) : Node :=

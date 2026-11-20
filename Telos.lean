@@ -61,6 +61,8 @@ import Telos.Solver.EqProofCpc
 import Telos.Solver.Sat.Basic
 import Telos.Solver.Sat.Minisat
 import Telos.Solver.Sat.Dimacs
+import Telos.Solver.Cnf
+import Telos.Solver.Prop
 import Telos.Frontend.PostAsserts
 import Telos.Frontend.Solve
 import Telos.Frontend.Replay

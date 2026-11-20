@@ -1,5 +1,6 @@
 import Telos.Frontend.PostAsserts
 import Telos.Solver.Engine
+import Telos.Solver.Prop
 import Telos.Solver.EqProofCpc
 
 /-!
@@ -113,18 +114,33 @@ theorem engineLiterals_ok {named : Node → String} {out lits : List Node}
     · simp only [Except.ok.injEq] at h; subst h; exact hl
   · simp at h
 
+/-- Some atom of the formulas is a `distinct`, which the UF solver does not
+handle. -/
+def hasDistinctAtom (out : List Node) : Bool :=
+  out.any fun f => (formulaAtoms f #[]).any isDistinct
+
+/-- The assertions go to the SAT solver (`Solver.runSat`): they are not a
+conjunction of literals, or `viaSat` asks for it, and the theories are solved. -/
+def useSat (cfg : Solver.Config) (out : List Node) (viaSat : Bool) : Bool :=
+  cfg.ufSolver && !hasDistinctAtom out && (viaSat || (literalsOf out matches .error _))
+
 /-- Solve the assertions of `sc`: the assertions given to the engine, and the
-engine's result. -/
+engine's result. A conjunction of literals goes to the engine alone
+(`Solver.run`), anything else to the SAT solver and the engine
+(`Solver.runSat`), as do conjunctions with `viaSat`. -/
 def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Bool := false)
-    (preprocess : Bool := true) (wantProof : Bool := false) (cvc5Order : Bool := true) :
+    (preprocess : Bool := true) (wantProof : Bool := false) (cvc5Order : Bool := true)
+    (viaSat : Bool := false) :
     Except String (List Node × Solver.Result) := do
   let theories ← enabledTheories (sc.logic.getD "ALL")
   let (opts, as) ← ppInput sc u
   let out := engineAssertions as opts preprocess
   let named (n : Node) : String :=
     (substSkolems ((namedSkolems sc.dtNames out).map fun (k, v, _) => (k, v)) n).toSmtLibLet sc.dtNames
-  let lits ← engineLiterals named out
-  let r := Solver.run { theories, termBased := opts.termBased, eeEvents, wantProof, cvc5Order } lits
+  let cfg : Solver.Config := { theories, termBased := opts.termBased, eeEvents, wantProof, cvc5Order }
+  let r ← if useSat cfg out viaSat then pure (Solver.runSat cfg out) else do
+    let lits ← engineLiterals named out
+    pure (Solver.run cfg lits)
   -- a `sat` stands only if its model satisfies the input assertions
   let r := if r.answer != .sat then r else
     let M := buildModel r.ee (relevantTerms r.asserted) (freeConsts as) (engineDefs as opts preprocess)
@@ -139,10 +155,12 @@ the CPC refutation of the literals of a certified `unsat`
 (`Telos/Solver/EqProofCpc.lean`), whose skolems are their CPC terms. Skolems
 are printed as `--post-asserts` names them in the events. -/
 def theoryEvents (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Bool := false)
-    (preprocess : Bool := true) (withProof : Bool := false) (cvc5Order : Bool := true) :
+    (preprocess : Bool := true) (withProof : Bool := false) (cvc5Order : Bool := true)
+    (viaSat : Bool := false) :
     Except String (String × Option String × Option (Except String String)) := do
-  let (out, r) ← solveScript sc u eeEvents preprocess withProof cvc5Order
-  let σ := (namedSkolems sc.dtNames out).map fun (k, v, _) => (k, v)
+  let (out, r) ← solveScript sc u eeEvents preprocess withProof cvc5Order viaSat
+  -- the skolems of the input, then those that lemmas introduced
+  let σ := (namedSkolems sc.dtNames (out ++ r.events.toList.flatMap Event.nodes)).map fun (k, v, _) => (k, v)
   let lines := r.events.toList.map fun e => (e.map (substSkolems σ)).print sc.dtNames
   let proof := if !withProof then none else
     match r.cert with
