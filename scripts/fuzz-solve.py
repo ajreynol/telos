@@ -309,7 +309,12 @@ def rounds(events):
     """The trace as a list of (input event or None, multiset of outputs that follow)."""
     out = [(None, collections.Counter())]
     for e in events:
-        if e[0] in INPUTS:
+        # a lemma's atoms are preregistered as it is sent, between the outputs of
+        # a check, which a replay cannot reproduce: a `prereg` does not end a round
+        # (the inputs, preregistrations included, are compared in order apart)
+        if e[0] == "prereg" and len(out) > 1:
+            out[-1][1][key(e)] += 1
+        elif e[0] in INPUTS:
             out.append((e, collections.Counter()))
         else:
             out[-1][1][key(e)] += 1

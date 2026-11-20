@@ -1,6 +1,7 @@
 import Std.Data.HashMap
 import Std.Data.HashSet
 import Telos.Core.Node.Key
+import Telos.Core.Node.Order
 import Telos.Solver.Event
 import Telos.Solver.Theory.DtState
 
@@ -132,6 +133,9 @@ inductive Note where
   | fact (T : Theory) (id : String) (lit exp : Node)
   | lemma (T : Theory) (id : String) (lem : Node)
   | conflict (T : Theory) (id : String) (exp : Node)
+  /-- A shared equality (or disequality) for the theory with tag `tag`
+  (`SharedSolver::propagateSharedEquality`), after its propagation. -/
+  | sharedEq (tag : Nat) (lit : Node)
   deriving Inhabited
 
 /-- The context-dependent counters of the engine, saved at each push. -/
@@ -143,8 +147,41 @@ structure Counters where
   deducedDiseqs : Nat
   deducedReasons : Nat
   propLog : Nat
+  tsetLog : Nat
   done : Bool
   deriving Inhabited
+
+/-- A set of trigger terms (`TriggerTermSet`): for each tag (a theory, by cvc5's
+`TheoryId`), the trigger term of the class, sorted by tag. -/
+abbrev TSet := Array (Nat × Nat)
+
+/-- The number of cvc5's theories (`THEORY_LAST`), all of which are tags of the
+trigger sets of constants. -/
+def numTags : Nat := 14
+
+/-- The tag of a theory: its `TheoryId` in cvc5. -/
+def _root_.Telos.Solver.Theory.tag : Theory → Nat
+  | .THEORY_BUILTIN => 0
+  | .THEORY_BOOL => 1
+  | .THEORY_UF => 2
+  | .THEORY_ARITH => 3
+  | .THEORY_BV => 4
+  | .THEORY_ARRAYS => 7
+  | .THEORY_DATATYPES => 8
+  | .THEORY_SETS => 10
+  | .THEORY_STRINGS => 12
+  | .THEORY_QUANTIFIERS => 13
+
+/-- The tags of a trigger set, as a bit set. -/
+def TSet.tags (t : Option TSet) : Nat :=
+  match t with
+  | some ts => ts.foldl (fun m (tag, _) => m ||| (1 <<< tag)) 0
+  | none => 0
+
+def TSet.get (ts : TSet) (tag : Nat) : Nat := ((ts.find? (·.1 == tag)).map (·.2)).getD 0
+
+/-- The tags of a bit set, in increasing order. -/
+def tagList (m : Nat) : List Nat := (List.range numTags).filter fun t => (m >>> t) % 2 == 1
 
 /-- The tag of `THEORY_LAST`, which cvc5 uses to mark a disequality as
 propagated with its reasons stored. -/
@@ -197,6 +234,11 @@ structure EqualityEngine where
   propLog : Array ((Nat × Nat) × Option Nat) := #[]
   /-- The counters saved at each push: the `i`-th, when leaving level `i`. -/
   saved : Array Counters := #[]
+  /-- The trigger terms of each class (`d_nodeIndividualTrigger`). -/
+  termTriggers : Array (Option TSet) := #[]
+  /-- The updates of `termTriggers`, with the previous values, in order
+  (`d_triggerTermSetUpdates`). -/
+  tsetLog : Array (Nat × Option TSet) := #[]
   /-- The state of the theory of datatypes, which reacts to the engine's
   notifications (`Telos/Solver/Theory/Datatypes.lean`). -/
   dt : DT.State := {}
@@ -252,6 +294,7 @@ def newNode (t : Node) : EEM Nat :=
       enodes := s.enodes.push { find := id, next := id }
       graph := s.graph.push none
       nodeTriggers := s.nodeTriggers.push none
+      termTriggers := s.termTriggers.push none
       isConstant := s.isConstant.push false
       isInternal := s.isInternal.push true
       isEquality := s.isEquality.push false })
@@ -338,8 +381,9 @@ conflict, or the literal is false in the SAT assignment, which puts the engine
 in conflict. -/
 def notifyTriggerPredicate (p : Node) (value : Bool) : EEM Bool := do
   let lit := if value then p else Node.notNode p
-  note (.propagate lit)
+  -- in a conflict, nothing is propagated (`TheoryInferenceManager::propagateLit`)
   if (← get).teConflict then return false
+  note (.propagate lit)
   match (← read).value p with
   | some v =>
     if v != value then
@@ -348,11 +392,119 @@ def notifyTriggerPredicate (p : Node) (value : Bool) : EEM Bool := do
     return true
   | none => return true
 
+/-! ### Trigger terms -/
+
+/-- Set the trigger set of a class, logging the previous one. -/
+def setTermTriggers (c : Nat) (v : Option TSet) : EEM Unit := do
+  let (tt, log) ← modifyGet fun s => ((s.termTriggers, s.tsetLog), { s with termTriggers := #[], tsetLog := #[] })
+  let log := log.push (c, tt[c]!)
+  modify fun s => { s with termTriggers := tt.set! c v, tsetLog := log }
+
+/-- `notifyTriggerTermEquality`, answered as cvc5's central equality engine
+manager does (`eqNotifyTriggerTermEquality`): the (dis)equality, oriented by
+the order of nodes, is propagated, and given to the theory of the tag as a
+shared equality (unless it is UF). -/
+def notifyTriggerTermEquality (tag : Nat) (t₁ t₂ : Node) (value : Bool) : EEM Bool := do
+  let (a, b) := if Node.lt t₂ t₁ then (t₂, t₁) else (t₁, t₂)
+  let eq := Node.eqNode a b
+  let lit := if value then eq else Node.notNode eq
+  if (← get).teConflict then return false
+  note (.propagate lit)
+  if let some v := (← read).value eq then
+    if v != value then
+      modify fun s => { s with teConflict := true }
+      return false
+  if tag != Theory.THEORY_UF.tag then note (.sharedEq tag lit)
+  return true
+
+/-- A disequality of a class, to be propagated for tags (`TaggedEquality`):
+the equality, the trigger set of the other side's class, and whether the class
+is its left side. -/
+structure TaggedEq where
+  eqId : Nat
+  tset : TSet
+  lhs : Bool
+
+/-- `getDisequalities`: the equalities asserted false with a side in the class
+`c`, whose other side's class has triggers for some of `tags`. -/
+def getDisequalities (allowConstants : Bool) (c : Nat) (tags : Nat) : EEM (Array TaggedEq) := do
+  if tags == 0 then return #[]
+  let mut out : Array TaggedEq := #[]
+  let mut visited : Std.HashSet Nat := {}
+  let mut cur := c
+  let mut fuel := (← get).enodes.size + 1
+  repeat
+    if fuel == 0 then break
+    fuel := fuel - 1
+    let s ← get
+    let mut u := s.enodes[cur]!.useList
+    while h : u.isSome do
+      let uid := u.get h
+      let use := s.useNodes[uid]!
+      let funId := use.app
+      let fn := (s.apps[funId]!.map (·.1)).getD default
+      if fn.type == .equality && find s funId == find s s.falseId then
+        let (toCompare, lhs) := if fn.b == cur then (fn.a, true) else (fn.b, false)
+        let rep := find s toCompare
+        if rep == c then return #[]
+        if !visited.contains rep then
+          visited := visited.insert rep
+          if allowConstants || !s.isConstant[rep]! then
+            if let some ts := s.termTriggers[rep]! then
+              if TSet.tags (some ts) &&& tags != 0 then
+                out := out.push { eqId := funId, tset := ts, lhs }
+      u := use.next
+    cur := s.enodes[cur]!.next
+    if s.done || cur == c then break
+  return out
+
+/-- `propagateTriggerTermDisequalities`: the disequalities of a class whose
+trigger set is `ts`, for the tags `tags`. -/
+def propagateTriggerTermDiseqs (tags : Nat) (ts : Option TSet) (diseqs : Array TaggedEq) :
+    EEM Bool := do
+  if tags == 0 then return !(← get).done
+  let some my := ts | return !(← get).done
+  for d in diseqs do
+    if (← get).done then break
+    let common := TSet.tags (some d.tset) &&& tags
+    let s ← get
+    let fn := (s.apps[d.eqId]!.map (·.1)).getD default
+    let (toCompare, myCompare) := if d.lhs then (fn.a, fn.b) else (fn.b, fn.a)
+    if find s toCompare == find s myCompare then return !(← get).done
+    for tag in tagList common do
+      if (← get).done then break
+      let tagRep := d.tset.get tag
+      let myRep := my.get tag
+      if !(← hasPropagatedDiseqTag tag myRep tagRep) then
+        if !(← hasPropagatedDiseq myRep tagRep) then
+          pushReason myCompare myRep
+          pushReason toCompare tagRep
+          pushReason d.eqId (← get).falseId
+        storePropagatedDiseq tag myRep tagRep
+        let s ← get
+        if !(← notifyTriggerTermEquality tag s.nodes[myRep]! s.nodes[tagRep]! false) then
+          modify fun s => { s with done := true }
+  return !(← get).done
+
 /-- `merge`: the class `c₂` into the class `c₁`. Returns the triggers fired. -/
-def merge (c₁ c₂ : Nat) : EEM (Array Nat) := do
+def merge (c₁ c₂ : Nat) : EEM (Array Nat × Bool) := do
   let s ← get
   let n₁ := s.nodes[c₁]!
   let n₂ := s.nodes[c₂]!
+  -- the trigger terms of the classes, and their disequalities to propagate
+  let ts₁ := s.termTriggers[c₁]!
+  let ts₂ := s.termTriggers[c₂]!
+  let tags₁ := TSet.tags ts₁
+  let tags₂ := TSet.tags ts₂
+  let only₁ := tags₁ ^^^ (tags₁ &&& tags₂)
+  let only₂ := tags₂ ^^^ (tags₁ &&& tags₂)
+  let const₁ := s.isConstant[c₁]!
+  let const₂ := s.isConstant[c₂]!
+  let (diseqs₂, diseqs₁) ← if !const₁ || !const₂ then do
+      let d₂ ← getDisequalities (!const₁) c₂ only₁
+      let d₁ ← getDisequalities (!const₂) c₁ only₂
+      pure (d₂, d₁)
+    else pure (#[], #[])
   let doNotify := find s (s.nodeIds.getD ⟨n₁⟩ 0) == c₁ && find s (s.nodeIds.getD ⟨n₂⟩ 0) == c₂
   -- update the representative of the nodes of class 2, and fire triggers
   let mut fired : Array Nat := #[]
@@ -398,7 +550,27 @@ def merge (c₁ c₂ : Nat) : EEM (Array Nat) := do
     let e₂' : ENode := { e₂ with next := e₁.next }
     { s with enodes := (s.enodes.set! c₁ e₁').set! c₂ e₂' }
   if doNotify then notify (.merge n₁ n₂)
-  return fired
+  -- the disequalities of the trigger terms
+  if !(← propagateTriggerTermDiseqs only₁ ts₁ diseqs₂) then return (fired, false)
+  if !(← propagateTriggerTermDiseqs only₂ ts₂ diseqs₁) then return (fired, false)
+  -- the trigger terms of both classes, with a notification for each common tag
+  if let some s₂ := ts₂ then
+    match ts₁ with
+    | none => setTermTriggers c₁ (some s₂)
+    | some s₁ =>
+      let mut merged : TSet := #[]
+      for tag in tagList (tags₁ ||| tags₂) do
+        let in₁ := (tags₁ >>> tag) % 2 == 1
+        let in₂ := (tags₂ >>> tag) % 2 == 1
+        if in₁ then
+          merged := merged.push (tag, s₁.get tag)
+          if in₂ then
+            let s ← get
+            if !(← notifyTriggerTermEquality tag s.nodes[s₁.get tag]! s.nodes[s₂.get tag]! true) then
+              return (fired, false)
+        else merged := merged.push (tag, s₂.get tag)
+      if tags₁ != tags₂ then setTermTriggers c₁ (some merged)
+  return (fired, true)
 
 /-- `propagate`: process the merge queue. -/
 def propagate : EEM Unit := do
@@ -432,7 +604,8 @@ def propagate : EEM Unit := do
       else c₁
     let other := if into == c₂ then c₁ else c₂
     modify fun s => { s with assertedEqs := s.assertedEqs.push (some (into, other)) }
-    let fired ← merge into other
+    let (fired, ok) ← merge into other
+    if !ok then modify fun s => { s with done := true }
     for tid in fired do
       if (← get).done then break
       let info := (← get).triggerInfos[tid]!
@@ -498,7 +671,11 @@ partial def addTermInternal (t : Node) (isOperator : Bool := false) : EEM Unit :
         pure res
   match t with
   | .app (.kind .EQUAL) _ => modify fun s => { s with isEquality := s.isEquality.set! result true }
-  | _ => notify (.newClass t)
+  | _ =>
+    notify (.newClass t)
+    -- constants are trigger terms for every tag (`d_constantsAreTriggers`)
+    if (← get).isConstant[result]! then
+      setTermTriggers result (some ((Array.range numTags).map (·, result)))
   propagate
 
 /-- `addTerm`. -/
@@ -626,7 +803,50 @@ def assertEquality (eq : Node) (polarity : Bool) (reason : Node) : EEM Bool := d
     note (.disequal l r reason)
     assertEqualityInternal eq Node.mkFalse reason
     propagate
+    if (← get).done then return true
+    -- the disequality of the trigger terms of the two classes, for each common tag
+    let a ← nodeId l
+    let b ← nodeId r
+    let eqId ← nodeId eq
+    let s ← get
+    let ca := find s a
+    let cb := find s b
+    if s.isConstant[ca]! && s.isConstant[cb]! then return true
+    if let (some ta, some tb) := (s.termTriggers[ca]!, s.termTriggers[cb]!) then
+      for tag in tagList (TSet.tags (some ta) &&& TSet.tags (some tb)) do
+        let aShared := ta.get tag
+        let bShared := tb.get tag
+        if !(← hasPropagatedDiseqTag tag aShared bShared) then
+          if !(← hasPropagatedDiseq aShared bShared) then
+            pushReason aShared a
+            pushReason bShared b
+            pushReason eqId (← get).falseId
+          storePropagatedDiseq tag aShared bShared
+          let s ← get
+          if !(← notifyTriggerTermEquality tag s.nodes[aShared]! s.nodes[bShared]! false) then break
   return true
+
+/-- `addTriggerTerm`: `t` is a trigger term of the theory with tag `tag`. -/
+def addTriggerTerm (t : Node) (tag : Nat) : EEM Unit := do
+  if (← get).done then return
+  addTermInternal t
+  let id ← nodeId t
+  let s ← get
+  let c := find s id
+  let ts := s.termTriggers[c]!
+  if (TSet.tags ts >>> tag) % 2 == 1 then
+    let trig := (ts.getD #[]).get tag
+    if id != trig then
+      if !(← notifyTriggerTermEquality tag t s.nodes[trig]! true) then
+        modify fun s => { s with done := true }
+  else
+    let diseqs ← getDisequalities (!s.isConstant[c]!) c (1 <<< tag)
+    let old := ts.getD #[]
+    let mut new : TSet := #[]
+    for tg in tagList (TSet.tags ts ||| (1 <<< tag)) do
+      new := new.push (tg, if tg == tag then id else old.get tg)
+    setTermTriggers c (some new)
+    let _ ← propagateTriggerTermDiseqs (1 <<< tag) (some new) diseqs
 
 /-- `getExplanation`: the reasons of the merge of `t₁` and `t₂`, appended in
 cvc5's order. The cache of pairs explained is not symmetric, as in cvc5 with
@@ -738,7 +958,8 @@ def mkAnd (as : Array Node) : Node :=
 def counters (s : EqualityEngine) : Counters :=
   { nodes := s.nodes.size, assertedEqs := s.assertedEqs.size, lookups := s.appLookups.size,
     triggers := s.triggers.size, deducedDiseqs := s.deducedDiseqs.size,
-    deducedReasons := s.deducedReasonsSize, propLog := s.propLog.size, done := s.done }
+    deducedReasons := s.deducedReasonsSize, propLog := s.propLog.size, tsetLog := s.tsetLog.size,
+    done := s.done }
 
 /-- Enter a new context level. -/
 def push (s : EqualityEngine) : EqualityEngine :=
@@ -790,6 +1011,12 @@ def backtrack (s : EqualityEngine) (c : Counters) : EqualityEngine := Id.run do
       let e₂ := s.edges[i + 1]!
       s := { s with graph := (s.graph.set! e₂.node e₁.next).set! e₁.node e₂.next }
     s := { s with edges := s.edges.take keep }
+  -- the trigger sets of the classes
+  if c.tsetLog < s.tsetLog.size then
+    for k in [0:s.tsetLog.size - c.tsetLog] do
+      let (cls, old) := s.tsetLog[s.tsetLog.size - 1 - k]!
+      s := { s with termTriggers := s.termTriggers.set! cls old }
+    s := { s with tsetLog := s.tsetLog.take c.tsetLog }
   if c.triggers < s.triggers.size then
     for k in [0:s.triggers.size - c.triggers] do
       let i := s.triggers.size - 1 - k
@@ -815,6 +1042,7 @@ def backtrack (s : EqualityEngine) (c : Counters) : EqualityEngine := Id.run do
     let n := c.nodes
     s := { s with nodes := s.nodes.take n, apps := s.apps.take n, nodeTriggers := s.nodeTriggers.take n,
                   isConstant := s.isConstant.take n, isEquality := s.isEquality.take n,
+                  termTriggers := s.termTriggers.take n,
                   isInternal := s.isInternal.take n, graph := s.graph.take n, enodes := s.enodes.take n }
   if c.deducedDiseqs < s.deducedDiseqs.size then
     for k in [0:s.deducedDiseqs.size - c.deducedDiseqs] do

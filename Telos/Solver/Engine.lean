@@ -88,6 +88,9 @@ structure Config where
   defer : Bool := false
   /-- Build the certificate of an `unsat` (`EqProof`), for the CPC proof. -/
   wantProof : Bool := false
+  /-- Replaying a trace: the inputs, including the shared equalities asserted
+  to the theories, come from it. -/
+  replaying : Bool := false
 
 /-- A Boolean term skolem (`Env::isBooleanTermSkolem`): the purification
 skolem of a Boolean term in a term position, which term formula removal
@@ -110,6 +113,11 @@ def Config.theoryOf (c : Config) (t : Node) : Theory :=
 quantifier-free. -/
 def Config.ufSolver (c : Config) : Bool :=
   c.theories.all ([.THEORY_BUILTIN, .THEORY_BOOL, .THEORY_UF, .THEORY_DATATYPES].contains ·)
+
+/-- Theory combination is on (`LogicInfo::isSharingEnabled`): more than one
+theory other than the builtin, Boolean and quantifier theories. -/
+def Config.sharing (c : Config) : Bool :=
+  (c.theories.filter fun T => ![.THEORY_BUILTIN, .THEORY_BOOL, .THEORY_QUANTIFIERS].contains T).length > 1
 
 /-- The theory of datatypes is enabled, and solved. -/
 def Config.dtSolver (c : Config) : Bool := c.ufSolver && c.theories.contains .THEORY_DATATYPES
@@ -152,6 +160,18 @@ structure Saved where
   theoryConflict : Bool
   propagated : Nat
   asserted : Nat
+  sharedLog : Nat
+  registerLog : Nat
+  deriving Inhabited
+
+/-- An undo entry of the shared terms database and the propagation marks (cvc5's
+context-dependent maps). -/
+inductive SharedUndo where
+  | atomTerms (atom : Key) (old : Option (Array Node))
+  | termTheories (k : Key × Key) (old : Option Nat)
+  | notified (t : Key) (old : Option Nat)
+  | marked (lit : Key)
+  | markedBuiltin (lit : Key)
   deriving Inhabited
 
 structure State where
@@ -159,8 +179,10 @@ structure State where
   /-- The SAT context level. -/
   level : Nat := 0
   assignment : Assignment := {}
-  /-- The atoms registered with the SAT solver so far. -/
+  /-- The atoms registered with the SAT solver (context dependent, as a lemma's
+  atoms are registered again after a backtrack), and their order. -/
   registered : Std.HashSet Key := {}
+  registerLog : Array Key := #[]
   /-- The theories each term was preregistered with, as a set of theory
   indices (`PreRegisterVisitor::d_visited`). -/
   preregVisited : Std.HashMap Key Nat := {}
@@ -194,6 +216,18 @@ structure State where
   dtHead : Nat := 0
   /-- A theory sent a lemma, which `solve` cannot use (it has no SAT solver). -/
   lemmaSent : Bool := false
+  /-- The shared terms database (`SharedTermsDatabase`): the shared terms of
+  each atom, the theories that share each, and those already notified. -/
+  atomTerms : Std.HashMap Key (Array Node) := {}
+  termTheories : Std.HashMap (Key × Key) Nat := {}
+  notified : Std.HashMap Key Nat := {}
+  /-- The literals propagated to the SAT solver, and those asserted to the
+  central equality engine's theories (`d_propagationMap`, by target). -/
+  markedSat : Std.HashSet Key := {}
+  markedBuiltin : Std.HashSet Key := {}
+  sharedLog : Array SharedUndo := #[]
+  /-- The lemmas sent, whose atoms are to be preregistered (`flushLemmas`). -/
+  lemmaQueue : Array Node := #[]
   ee : EE.EqualityEngine := default
   /-- The atoms assigned, in order, for backtracking the assignment. -/
   assignTrail : Array Key := #[]
@@ -250,12 +284,32 @@ def propagate (T : Theory) (lit : Node) : EngineM Unit := do
   emit (.propagate (← level) T lit)
   if (← get).inConflict then return
   let (atom, pol) := atomOf lit
+  if (← read).sharing then
+    -- with sharing, only a SAT literal goes to the SAT solver, once
+    if let .app (.kind .EQUAL) _ := atom then
+      if !(← get).registered.contains ⟨atom⟩ then return
+    if (← get).markedSat.contains ⟨lit⟩ then return
+    modify fun s => { s with markedSat := s.markedSat.insert ⟨lit⟩, sharedLog := s.sharedLog.push (.marked ⟨lit⟩) }
   match (← get).assignment.get? ⟨atom⟩ with
   | some v =>
     if v == pol then return
     modify fun s => { s with inConflict := true }
   | none => pure ()
   modify fun s => { s with propagated := s.propagated.push lit }
+
+/-- `TheoryEngine::assertToTheory` of a shared equality, from the shared
+solver to the theory `T`: normalized, and asserted unless it already was. -/
+def assertShared (T : Theory) (lit : Node) : EngineM Unit := do
+  if (← get).inConflict then return
+  let norm := Telos.rewrite lit
+  if norm.isConst then return
+  if (← get).markedBuiltin.contains ⟨norm⟩ then return
+  modify fun s => { s with markedBuiltin := s.markedBuiltin.insert ⟨norm⟩,
+                           sharedLog := s.sharedLog.push (.markedBuiltin ⟨norm⟩),
+                           factsAsserted := true,
+                           used := if s.used.contains T then s.used else s.used.push T }
+  emit (.assert (← level) T norm)
+  if T == .THEORY_DATATYPES then modify fun s => { s with dtFacts := s.dtFacts.push norm }
 
 /-- Process the notes of the central equality engine
 (`EqEngineManagerCentral`): its propagations and conflicts are
@@ -278,7 +332,12 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
     | .fact T id lit exp => emit (.fact (← level) T id lit exp)
     | .lemma T id lem =>
       emit (.lemma (← level) T id lem)
-      modify fun s => { s with lemmaSent := true }
+      modify fun s => { s with lemmaSent := true, lemmaQueue := s.lemmaQueue.push lem }
+    | .sharedEq tag lit =>
+      -- `propagateSharedEquality`: asserted to the theory of the tag, then and
+      -- there (a replay skips the trace's copy)
+      if tag == Theory.THEORY_DATATYPES.tag then
+        assertShared .THEORY_DATATYPES lit
     | .conflict T id exp =>
       emit (.conflict (← level) T id exp)
       let why := s!"a conflict of {T.name}, which is not certified yet"
@@ -380,6 +439,100 @@ def preRegisterVisit (atom : Node) : EngineM Unit := do
       for c in children cur do
         if !(← alreadyVisited c cur) then stack := stack.push (c, cur, false)
 
+/-! ### Sharing -/
+
+/-- `SharedTermsDatabase::addSharedTerm`: `term` of `atom` is shared by the
+theories `theories`. -/
+def addSharedTerm (atom term : Node) (theories : Nat) : EngineM Unit := do
+  let k : Key × Key := (⟨atom⟩, ⟨term⟩)
+  let s ← get
+  match s.termTheories.get? k with
+  | none =>
+    let old := s.atomTerms.get? ⟨atom⟩
+    modify fun s => { s with
+      atomTerms := s.atomTerms.insert ⟨atom⟩ ((old.getD #[]).push term),
+      termTheories := s.termTheories.insert k theories,
+      sharedLog := (s.sharedLog.push (.atomTerms ⟨atom⟩ old)).push (.termTheories k none) }
+  | some old =>
+    modify fun s => { s with termTheories := s.termTheories.insert k (theories ||| old),
+                             sharedLog := s.sharedLog.push (.termTheories k (some old)) }
+
+/-- `NodeVisitor<SharedTermsVisitor>::run`: preregistration with sharing, by a
+traversal of the atom of its own (`d_visited`), with the context-dependent
+record of the theories each term was preregistered with (`d_preregistered`);
+a term visited by a theory other than its own is a shared term of the atom. -/
+def sharedVisit (atom : Node) : EngineM Unit := do
+  let c ← read
+  let mut visited : Std.HashMap Key Nat := {}
+  let isVisited (visited : Std.HashMap Key Nat) (cur parent : Node) : Bool :=
+    let closure := match parent with
+      | .app (.kind k) _ => (k == .FORALL || k == .EXISTS) && cur != parent
+      | _ => false
+    closure || match visited.get? ⟨cur⟩ with
+      | none => false
+      | some v => isAlreadyVisited c v cur parent
+  let mut stack : Array (Node × Node × Bool) := #[(atom, atom, false)]
+  while h : stack.size > 0 do
+    let (cur, parent, added) := stack[stack.size - 1]
+    if isVisited visited cur parent then
+      stack := stack.pop
+    else if added then
+      -- `visit`
+      let mut vis := visited.getD ⟨cur⟩ 0
+      let prereg := (← get).preregVisited.getD ⟨cur⟩ 0
+      let ct := c.theoryOf cur
+      let mut ths : Array Theory := #[ct]
+      if cur != parent then
+        let pt := c.theoryOf parent
+        ths := ths.push pt
+        match cur.typeHint with
+        | some T => if ct != pt || isFiniteType T then ths := ths.push (typeTheory T)
+        | none => pure ()
+      for T in ths do
+        if !hasTheory vis T then
+          vis := vis ||| theoryBit T
+          if !hasTheory prereg T then theoryPreRegister T cur
+      visited := visited.insert ⟨cur⟩ vis
+      setVisited cur (prereg ||| vis)
+      if (vis ^^^ (vis &&& theoryBit ct)) != 0 then addSharedTerm atom cur vis
+      stack := stack.pop
+    else
+      stack := stack.set! (stack.size - 1) (cur, parent, true)
+      for ch in children cur do
+        if !isVisited visited ch cur then stack := stack.push (ch, cur, false)
+
+/-- `SharedSolver::preRegister`: with sharing, the visitor of shared terms, and
+an equality is propagated by the shared terms database too (a trigger of the
+central equality engine), unless it has a SAT value. -/
+def preRegisterAtom (atom : Node) : EngineM Unit := do
+  if !(← read).sharing then return ← preRegisterVisit atom
+  sharedVisit atom
+  if let .app (.kind .EQUAL) _ := atom then
+    if (← read).ufSolver && !(← get).assignment.contains ⟨atom⟩ then
+      withEE (EE.addTriggerPredicate atom)
+
+/-- `SharedSolver::preNotifySharedFact`: the theories sharing the terms of the
+atom, not yet notified, are notified (`Theory::addSharedTerm`, which makes them
+trigger terms of the central equality engine), and so is the shared terms
+database (`markNotified`). -/
+def preNotifySharedFact (atom : Node) : EngineM Unit := do
+  let some terms := (← get).atomTerms.get? ⟨atom⟩ | return
+  for term in terms do
+    let s ← get
+    let all := s.termTheories.getD (⟨atom⟩, ⟨term⟩) 0
+    let old := s.notified.get? ⟨term⟩
+    let newly := all ^^^ (all &&& old.getD 0)
+    for T in Theory.all do
+      if hasTheory newly T && (← read).ufSolver &&
+          (T == .THEORY_UF || T == .THEORY_DATATYPES) then
+        withEE (EE.addTriggerTerm term T.tag)
+    if newly != 0 then
+      modify fun s => { s with notified := s.notified.insert ⟨term⟩ (newly ||| old.getD 0),
+                               sharedLog := s.sharedLog.push (.notified ⟨term⟩ old) }
+      if (← read).ufSolver then
+        for T in Theory.all do
+          if hasTheory newly T then withEE (EE.addTriggerTerm term T.tag)
+
 /-- Add a registered atom to the roots of the explanations. -/
 def addRoot (atom : Node) : EngineM Unit := do
   -- take the array and the map out of the state, so that they are updated in place
@@ -396,19 +549,24 @@ def exCtx : EngineM EE.ExCtx := do
 /-- `TheoryEngine::preRegister`, for an atom met by the CNF stream. -/
 def preRegister (atom : Node) : EngineM Unit := do
   if (← get).registered.contains ⟨atom⟩ then return
-  modify fun s => { s with registered := s.registered.insert ⟨atom⟩ }
+  modify fun s => { s with registered := s.registered.insert ⟨atom⟩, registerLog := s.registerLog.push ⟨atom⟩ }
   if !isTheoryAtom (← read) atom then return
   emit (.prereg (← level) atom)
   addRoot atom
-  preRegisterVisit atom
+  preRegisterAtom atom
 
 /-- `Theory::assertFact`, via `TheoryEngine::assertFact`: the literal is given
 to the theory of its atom. -/
-def assertFact (lit : Node) : EngineM Unit := do
+def assertFact (lit : Node) (fromSat : Bool := true) (to : Option Theory := none) : EngineM Unit := do
   let (atom, _) := atomOf lit
   let c ← read
   if !isTheoryAtom c atom then return
-  let T := c.theoryOf atom
+  if fromSat && c.sharing then preNotifySharedFact atom
+  -- the literal is marked as asserted to the central equality engine's theories
+  if !(← get).markedBuiltin.contains ⟨lit⟩ then
+    modify fun s => { s with markedBuiltin := s.markedBuiltin.insert ⟨lit⟩,
+                             sharedLog := s.sharedLog.push (.markedBuiltin ⟨lit⟩) }
+  let T := to.getD (c.theoryOf atom)
   emit (.assert (← level) T lit)
   modify fun s => { s with factsAsserted := true,
                            used := if s.used.contains T then s.used else s.used.push T }
@@ -431,7 +589,8 @@ instance : Inhabited Key := ⟨⟨default⟩⟩
 def pushLevel : EngineM Unit :=
   modify fun s =>
     let sv : Saved := ⟨s.assignTrail.size, s.preregLog.size, s.ufFacts.size, s.ufHead,
-      s.dtFacts.size, s.dtHead, s.factsAsserted, s.inConflict, s.theoryConflict, s.propagated.size, s.asserted.size⟩
+      s.dtFacts.size, s.dtHead, s.factsAsserted, s.inConflict, s.theoryConflict, s.propagated.size, s.asserted.size,
+      s.sharedLog.size, s.registerLog.size⟩
     { s with saved := s.saved.push sv, level := s.level + 1, ee := EE.push s.ee }
 
 /-- Return to the SAT context level `k` (`Context::pop`), restoring what was
@@ -453,6 +612,36 @@ def popTo (k : Nat) : EngineM Unit := do
       | some v => pv.insert key v
       | none => pv.erase key
   let ee := EE.popTo ee k
+  -- the shared terms database and the propagation marks
+  let (at₀, tt₀, nt₀, ms₀, mb₀, log) ← modifyGet fun s =>
+    ((s.atomTerms, s.termTheories, s.notified, s.markedSat, s.markedBuiltin, s.sharedLog),
+     { s with atomTerms := {}, termTheories := {}, notified := {}, markedSat := {}, markedBuiltin := {},
+              sharedLog := #[] })
+  let mut at₀ := at₀
+  let mut tt₀ := tt₀
+  let mut nt₀ := nt₀
+  let mut ms₀ := ms₀
+  let mut mb₀ := mb₀
+  for k' in [0:log.size - sv.sharedLog] do
+    match log[log.size - 1 - k']! with
+    | .atomTerms a old => at₀ := match old with
+      | some v => at₀.insert a v
+      | none => at₀.erase a
+    | .termTheories key old => tt₀ := match old with
+      | some v => tt₀.insert key v
+      | none => tt₀.erase key
+    | .notified t old => nt₀ := match old with
+      | some v => nt₀.insert t v
+      | none => nt₀.erase t
+    | .marked l => ms₀ := ms₀.erase l
+    | .markedBuiltin l => mb₀ := mb₀.erase l
+  modify fun s => { s with atomTerms := at₀, termTheories := tt₀, notified := nt₀, markedSat := ms₀,
+                           markedBuiltin := mb₀, sharedLog := log.take sv.sharedLog }
+  -- the atoms registered above level `k`
+  let (reg, rlog) ← modifyGet fun s => ((s.registered, s.registerLog), { s with registered := {}, registerLog := #[] })
+  let mut reg := reg
+  for i in [sv.registerLog:rlog.size] do reg := reg.erase rlog[i]!
+  modify fun s => { s with registered := reg, registerLog := rlog.take sv.registerLog }
   modify fun s => { s with
     assignment := asg, assignTrail := s.assignTrail.take sv.assignTrail,
     preregVisited := pv, preregLog := s.preregLog.take sv.preregLog,
@@ -467,28 +656,88 @@ def popTo (k : Nat) : EngineM Unit := do
 def raiseTo (k : Nat) : EngineM Unit := do
   while (← get).level < k do pushLevel
 
+/-- The atoms of a formula, as the CNF stream meets them: left to right, through
+the Boolean connectives. -/
+partial def formulaAtoms (n : Node) (acc : Array Node) : Array Node :=
+  match n with
+  | .app (.kind k) cs =>
+    let bool := cs.all (·.typeHint == some .boolean)
+    if k == .NOT || k == .AND || k == .OR || k == .IMPLIES || k == .XOR || k == .ITE ||
+        (k == .EQUAL && bool) then
+      cs.foldl (fun a c => formulaAtoms c a) acc
+    else if acc.contains n then acc else acc.push n
+  | .const (.boolean _) => acc
+  | _ => if acc.contains n then acc else acc.push n
+
+/-- `TheoryEngine::lemma`, after the event: the lemma, preprocessed (rewritten),
+goes to the CNF stream, which preregisters its new atoms. -/
+def flushLemmas : EngineM Unit := do
+  repeat
+    let q ← modifyGet fun s => (s.lemmaQueue, { s with lemmaQueue := #[] })
+    if q.isEmpty then break
+    for lem in q do
+      -- cvc5's rewriter orients an equality by node ids, putting the newer
+      -- term on the right: approximated by the order in which the equality
+      -- engine met the terms (a term it does not have is the newest)
+      for atom in formulaAtoms lem #[] do
+        let ids := (← get).ee.nodeIds
+        let atom := match atom with
+          | .app (.kind .EQUAL) #[l, r] =>
+            let age (t : Node) : Nat := ids.getD ⟨t⟩ (1 <<< 62)
+            if age r < age l then Node.eqNode r l else atom
+          | _ => Telos.rewrite atom
+        preRegister atom
+
+/-- Run an operation of the equality engine, process its notes, and register
+the atoms of the lemmas sent. -/
+def withEEF (x : EE.EEM α) : EngineM α := do
+  let a ← withEE x
+  flushLemmas
+  return a
+
+/-- The theory of datatypes' `postCheck`, at the level of the engine: a lemma
+of `checkSplit` is sent, and its atoms preregistered (which may process the
+theory's pending facts), before the checks go on, as in cvc5. -/
+def dtPostCheck (full : Bool) : EngineM Unit := do
+  withEEF DT.process
+  let conflict : EngineM Bool := do return (← get).inConflict || (← get).ee.teConflict
+  let dt : EngineM DT.State := do return (← get).ee.dt
+  if !full || (← conflict) || (← dt).sentLemmas > 0 || (← dt).lemmasAdded then return
+  repeat
+    withEEF (do DT.reset; DT.checkCycles; DT.process)
+    if (← conflict) || (← dt).sentLemmas > 0 then return
+    if (← dt).sentFacts == 0 then
+      withEEF DT.reset
+      let classes ← withEEF DT.classes
+      for n in classes do
+        if ← withEEF (DT.splitStep n) then break
+      if (← dt).sentLemmas > 0 then withEEF (EE.modifyDt fun d => { d with pendingFacts := #[] })
+      else withEEF DT.process
+    let d ← dt
+    if (← conflict) || d.sentLemmas > 0 || d.sentFacts == 0 then break
+
 /-- `Theory::check` of one theory: for UF, its facts are asserted to the
 equality engine, until the engine is in conflict. -/
 def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
   emit (.check (← level) T e)
   -- UF's check is the first of a round of checks: no lemma was sent in it yet
-  if T == .THEORY_UF then withEE (EE.modifyDt fun d => { d with lemmasAdded := false })
+  if T == .THEORY_UF then withEEF (EE.modifyDt fun d => { d with lemmasAdded := false })
   if T == .THEORY_DATATYPES && (← read).dtSolver then
-    withEE DT.preCheck
+    withEEF DT.preCheck
     repeat
       let s ← get
       if s.inConflict || s.dtHead ≥ s.dtFacts.size then break
       let fact := s.dtFacts[s.dtHead]!
       modify fun s => { s with dtHead := s.dtHead + 1 }
-      withEE (DT.assertFact fact)
-    withEE (DT.postCheck (e == .full))
+      withEEF (DT.assertFact fact)
+    dtPostCheck (e == .full)
   if T == .THEORY_UF && (← read).ufSolver then
     repeat
       let s ← get
       if s.inConflict || s.ufHead ≥ s.ufFacts.size then break
       let fact := s.ufFacts[s.ufHead]!
       modify fun s => { s with ufHead := s.ufHead + 1 }
-      withEE (UF.assertFact fact)
+      withEEF (UF.assertFact fact)
 
 /-- `TheoryEngine::check`: rounds of checks of every enabled theory, while new
 facts are asserted and there is no conflict. At full effort the first round
@@ -625,7 +874,7 @@ def solve (lits : List Node) : EngineM Answer := do
 and the theory engine ask of the theories. -/
 inductive Input where
   | prereg (level : Nat) (atom : Node)
-  | assert (level : Nat) (lit : Node)
+  | assert (level : Nat) (T : Theory) (lit : Node)
   | check (level : Nat) (T : Theory) (e : Effort)
   | pop (level : Nat)
   /-- The SAT solver asks for the explanation of a propagated literal. -/
@@ -639,10 +888,18 @@ def replayInput : Input → EngineM Unit
       emit (.prereg 0 atom)
     else
       raiseTo k
-      emit (.prereg k atom)
-      addRoot atom
-      preRegisterVisit atom
-  | .assert k lit => do raiseTo k; assign lit
+      -- telos may have registered it already, as the atom of a lemma
+      if !(← get).registered.contains ⟨atom⟩ then
+        emit (.prereg k atom)
+        modify fun s => { s with registered := s.registered.insert ⟨atom⟩, registerLog := s.registerLog.push ⟨atom⟩ }
+        addRoot atom
+        preRegisterAtom atom
+  | .assert k T lit => do
+    raiseTo k
+    -- a literal of the SAT solver, or a shared equality from the shared solver,
+    -- to the theory that asked for it
+    if (← get).registered.contains ⟨(atomOf lit).1⟩ then assign lit
+    else if !(← get).markedBuiltin.contains ⟨Telos.rewrite lit⟩ then assertFact lit false (some T)
   | .check k T e => do raiseTo k; theoryCheck T e
   | .pop k => do popTo k; emit (.pop k)
   | .explain k lit => do
@@ -660,6 +917,7 @@ events. The SAT solver's decisions and backtracking come from the trace, so
 the theories are compared with cvc5's on inputs with SAT structure, without a
 SAT solver. -/
 def replay (c : Config) (inputs : List Input) : Array Event × Nat :=
+  let c := { c with replaying := true }
   let act : EngineM Unit := do
     if c.ufSolver then
       let ctx ← eeCtx

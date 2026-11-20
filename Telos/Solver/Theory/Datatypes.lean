@@ -514,27 +514,30 @@ def checkCycles : EEM Unit := do
       sendDtConflict cs.expl "DATATYPES_CYCLE"
       return
 
-/-- `checkSplit`. -/
+/-- One class of `checkSplit`: whether it sent a lemma (which ends the
+splits). -/
+def splitStep (n : Node) : EEM Bool := do
+  let some T := dtType? n | return false
+  let eqc ← eqcInfo? n
+  if ← hasLabel eqc n then return false
+  let pcons ← getPossibleCons eqc n T
+  for j in [0:pcons.size] do
+    if !pcons[j]! then continue
+    if !(consCardClass T j).isFinite then
+      match eqc with
+      | some { selectors := true, .. } => pure ()
+      | _ => return false
+  if numConstructors T == 1 then
+    addPendingInference (mkTester n T 0) "DATATYPES_SPLIT" Node.mkTrue
+    return false
+  sendLemma (mkSplit n T) Node.mkTrue "DATATYPES_SPLIT"
+
+/-- `checkSplit`, within the engine: see the theory engine's `dtPostCheck`,
+which sends the lemma of a class before going on, as its atoms are
+preregistered then. -/
 def checkSplit : EEM Unit := do
   for n in ← classes do
-    let some T := dtType? n | continue
-    let eqc ← eqcInfo? n
-    if ← hasLabel eqc n then continue
-    let pcons ← getPossibleCons eqc n T
-    let mut needSplit := true
-    for j in [0:pcons.size] do
-      if !pcons[j]! then continue
-      if !(consCardClass T j).isFinite then
-        match eqc with
-        | some { selectors := true, .. } => pure ()
-        | _ =>
-          needSplit := false
-          break
-    if !needSplit then continue
-    if numConstructors T == 1 then
-      addPendingInference (mkTester n T 0) "DATATYPES_SPLIT" Node.mkTrue
-    else if ← sendLemma (mkSplit n T) Node.mkTrue "DATATYPES_SPLIT" then
-      return
+    if ← splitStep n then return
 
 /-- `preCheck`. -/
 def preCheck : EEM Unit := do

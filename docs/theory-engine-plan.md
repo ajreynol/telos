@@ -728,31 +728,54 @@ uninterpreted sort counts, being "interpreted one").
   lemma (a split, say) needs the SAT solver, so the answer is `unknown`. Replay
   is the main test.
 
-### First results (replay, 100 random benchmarks)
+### Sharing
 
-39 identical. The differences come from:
-- **Sharing.** With two theories (UF is always on), cvc5 enables theory
-  combination:
-  - preregistration goes through `SharedTermsVisitor` (per atom, with a
-    context-dependent cache of preregistrations, and shared terms);
-  - each equality atom gets a second trigger predicate (the shared terms
-    database's, on the central engine), hence duplicated propagations;
-  - when an atom is asserted, its shared terms become trigger terms of the
-    theories that see them (`Theory::addSharedTerm`);
-  - the central engine has constants as trigger terms for every theory
-    (`constantsAreTriggers`), so the merges and disequalities of trigger terms
-    are propagated (`eqNotifyTriggerTermEquality`), and asserted to datatypes
-    as shared equalities.
+With two theories (UF is always on), cvc5 enables theory combination. Ported:
+- **Trigger terms** in the equality engine (`addTriggerTerm`, the trigger sets
+  of classes, their merges and disequalities, `eqNotifyTriggerTermEquality`).
+  The central engine makes constants trigger terms of every theory (cvc5's 14
+  tags, the unmodelled ones included).
+- **Preregistration** by `SharedTermsVisitor`: a traversal per atom, a
+  context-dependent cache of preregistrations, and the shared terms of each
+  atom.
+- **The shared terms database**: its trigger predicate for each equality atom,
+  and the notification of shared terms when their atom is asserted
+  (`Theory::addSharedTerm`).
+- **Propagation with sharing**: only SAT literals go to the SAT solver, once
+  per context. Shared equalities are asserted to datatypes as the engine
+  produces them.
+- **Lemmas**: their atoms are preregistered as the CNF stream meets them, which
+  can process the theory's pending facts; datatypes' full-effort loop therefore
+  runs at the engine level. An atom is registered again after a backtrack.
 
-  Next: port trigger terms in the equality engine, then the sharing visitor
-  and the shared terms database.
-- **Replay skolems.** The purification skolems that datatypes introduces are
-  printed by cvc5 as symbols (`@purify_k`) in later inputs. They are to be
-  mapped to telos's skolems, from the trace's `DATATYPES_PURIFY` lemmas.
-- **Node order.** `checkSplit` takes the classes in cvc5's node-id order (a
-  `std::set<Node>`), and the orientation of propagated shared equalities
-  follows node ids. Telos uses the engine's order. If this causes
-  differences, the trace could carry node ids.
+### Replay
+
+- The purification skolems of the theories are mapped from the trace's
+  `DATATYPES_PURIFY` lemmas to telos's skolems, and printed with cvc5's names.
+- Inputs produced in the middle of a check (the shared equalities, the
+  preregistration of a lemma's atoms) are produced by telos itself, and the
+  trace's copies skipped. The comparator does not cut rounds at `prereg`.
+- A replayed `assert` keeps the theory the trace gives it (a shared equality
+  goes to the theory that asked for it, not to the theory of its atom).
+
+### Results
+
+Replay, random benchmarks with clauses: 54 to 57% identical; UF unchanged
+(identical). The remaining differences are mostly the order of
+`checkSplit`, then its consequences (which pending facts are processed).
+
+### Node order
+
+cvc5 makes some choices by node id, which telos cannot reproduce:
+- `checkSplit` takes the classes in a `std::set<Node>`;
+- `TheoryEngine::getExplanation` collects the explanation in a
+  `std::set<TNode>`;
+- the rewriter orients equalities by id (telos approximates "newer on the
+  right" by the order in which the equality engine met the terms).
+
+`cvc5-deterministic-order.patch` makes the first two follow the order of the
+equality engine and of discovery. It is no slower: a vector instead of a
+set. The third is the rewriter's normal form, and is left alone.
 
 ## Order of work (all stages)
 
