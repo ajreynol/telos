@@ -65,9 +65,15 @@ text, and are not covered by it:
 
 The theory engine (`Telos/Solver/`: the equality engine, UF, the engine, and
 the builder of certificates `EqBuild.lean`) is not trusted either. An `unsat`
-answer stands only if its certificate (`Telos/Solver/EqProof.lean`) checks and
-its assumptions are among the input literals, and the checker is proven sound
-(`Telos.solve_unsat_correct`). A bug in the engine can make it answer `unknown`,
+answer stands only if its conflict is certified:
+- by the verified explanation (`Telos/Solver/Explain.lean`), whose reasons
+  must be closed input literals. Its soundness is proven
+  (`EE.explainLitV_sound`) whatever the state of the equality engine, since it
+  checks what it uses as it goes;
+- or else by a certificate (`Telos/Solver/EqProof.lean`) whose assumptions are
+  input literals and which the proven checker accepts.
+
+Either way the answer is correct (`Telos.solve_unsat_correct`). A bug in the engine can make it answer `unknown`,
 or differ from cvc5, but not answer `unsat` on a satisfiable input. Its `sat`
 answers are not certified yet: they rely on the completeness of the UF solver,
 and the correctness theorem does not cover them.

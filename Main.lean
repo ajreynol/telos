@@ -109,15 +109,18 @@ def main (args : List String) : IO UInt32 := do
   if let some t := opts.replay then
     let trace ← IO.FS.readFile t
     match replayScript input trace opts.theoryEventsEE with
-    | .ok out => IO.print out; if opts.profile then Profile.report
-                 return 0
+    | .ok (out, unverified) =>
+      IO.print out
+      if unverified > 0 then IO.eprintln s!"telos: {unverified} explanations not by the verified explanation"
+      if opts.profile then Profile.report
+      return 0
     | .error e => IO.eprintln s!"telos: {e}"; return 1
   if opts.theoryEvents then
     let withProof := opts.proof || opts.proofDir.isSome
     match theoryEvents sc opts.pp opts.theoryEventsEE (!opts.noPreprocess) withProof with
     | .ok (out, unc, proof) =>
       IO.print out
-      if let some e := unc then IO.eprintln s!"telos: unsat not certified ({e}): answering unknown"
+      if let some e := unc then IO.eprintln s!"telos: {e}"
       match proof with
       | some (.ok text) =>
         match opts.proofDir with
@@ -125,6 +128,7 @@ def main (args : List String) : IO UInt32 := do
         | none => IO.print text
       | some (.error e) => IO.eprintln s!"telos: no proof: {e}"; return 1
       | none => pure ()
+      if opts.profile then Profile.report
       return 0
     | .error e => IO.eprintln s!"telos: {e}"; return 1
   if opts.postAsserts then

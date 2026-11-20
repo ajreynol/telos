@@ -291,12 +291,13 @@ def hasPropagatedDiseqTag (tag l r : Nat) : EEM Bool := do
 
 /-- `storePropagatedDisequality`: with the reasons pushed since the last one,
 if any. -/
-def storePropagatedDiseq (tag l r : Nat) : EEM Unit :=
+def storePropagatedDiseq (tag l r : Nat) : EEM Unit := do
+  -- take the maps and the log out of the state, so that they are updated in place
+  let (pd, log) ← modifyGet fun s => ((s.propagatedDiseqs, s.propLog), { s with propagatedDiseqs := {}, propLog := #[] })
+  let tags := (pd.getD (l, r) 0) ||| (1 <<< tag)
+  let log := (log.push ((l, r), pd.get? (l, r))).push ((r, l), pd.get? (r, l))
+  let pd := (pd.insert (l, r) tags).insert (r, l) tags
   modify fun s =>
-    let tags := (s.propagatedDiseqs.getD (l, r) 0) ||| (1 <<< tag)
-    let log := (s.propLog.push ((l, r), s.propagatedDiseqs.get? (l, r))).push
-      ((r, l), s.propagatedDiseqs.get? (r, l))
-    let pd := (s.propagatedDiseqs.insert (l, r) tags).insert (r, l) tags
     if s.deducedReasons.size > s.deducedReasonsSize then
       let ref := (s.deducedReasonsSize, s.deducedReasons.size)
       { s with propagatedDiseqs := pd, propLog := log

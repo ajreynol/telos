@@ -410,6 +410,8 @@ def main():
             tpath.write_text(body)
         ours, err = run([str(TELOS), "--theory-events"] + (["--theory-events-ee"] if a.ee else []) +
                         (["--no-preprocess"] if a.cvc5_pp else []), tpath)
+        if err and "by certificate" in err:
+            counts["by-certificate"] += 1
         if ours is None:
             if "unsupported" in err:
                 counts["unsupported"] += 1
@@ -448,6 +450,7 @@ def main():
           f"{counts['different']} different, {counts['unsupported']} unsupported, "
           f"{len(failures)} failed; the input events (prereg, assert, check, pop) agree on {counts['inputs']}; "
           f"{counts['identical']} identical as text" +
+          (f"; {counts['by-certificate']} unsat by certificate" if counts['by-certificate'] else "") +
           (f"; {counts['pops']} with backtracking" if a.replay else
            f"; cvc5 answered sat {counts['sat']}, unsat {counts['unsat']}"))
     for path, v in diffs[:a.show]:

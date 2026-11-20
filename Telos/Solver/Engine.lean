@@ -7,6 +7,7 @@ import Telos.Solver.Event
 import Telos.Solver.EqualityEngine
 import Telos.Solver.Theory.UF
 import Telos.Solver.EqBuild
+import Telos.Solver.Explain
 
 /-!
 # The theory engine, on conjunctions of literals
@@ -80,6 +81,11 @@ structure Config where
   /-- Also record the central equality engine's notifications
   (`-o theory-events-ee`). -/
   eeEvents : Bool := false
+  /-- Leave the explanation of a conflict to `run`, which certifies it
+  (`certifyV`), rather than explaining it when it happens. -/
+  defer : Bool := false
+  /-- Build the certificate of an `unsat` (`EqProof`), for the CPC proof. -/
+  wantProof : Bool := false
 
 /-- A Boolean term skolem (`Env::isBooleanTermSkolem`): the purification
 skolem of a Boolean term in a term position, which term formula removal
@@ -117,6 +123,14 @@ def Answer.name : Answer → String
 
 /-- The stand-in for the SAT solver: the value of each assigned atom. -/
 abbrev Assignment := Std.HashMap Key Bool
+
+/-- A conflict whose explanation is left to `run` (`Config.defer`). -/
+inductive Pending where
+  /-- A propagated literal that is false. -/
+  | prop (lit : Node)
+  /-- A merge of the constants `a` and `b` in the equality engine. -/
+  | constants (a b : Node)
+  deriving Inhabited
 
 /-- The context-dependent state of the engine saved at a push (cvc5's `CDO`s
 and `CDList`s: the theory engine's flags, the facts of the theories, the
@@ -157,6 +171,14 @@ structure State where
   used : Array Theory := #[]
   /-- The literals asserted, in order. -/
   asserted : Array Node := #[]
+  /-- The explanations for which the verified one did not apply. -/
+  unverifiedExplains : Nat := 0
+  /-- The conflict left to `run`. -/
+  pending : Option Pending := none
+  /-- The atoms registered, in order: the roots of the verified explanations
+  (`EE.explainLitV`), with a path below them to each of their subterms. -/
+  atoms : Array Node := #[]
+  atomPaths : Std.HashMap Key SubPath := {}
   /-- UF's facts, and how many it has processed. -/
   ufFacts : Array Node := #[]
   ufHead : Nat := 0
@@ -231,11 +253,13 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
     | .disequal a b r => if (← read).eeEvents then emit (.eeDiseq (← level) a b r)
     | .propagate lit => propagate .THEORY_BUILTIN lit
     | .constantMerge a b =>
-      -- `eqNotifyConstantTermMerge`: the conflict, explained
-      let (exp, _) ← runEE (EE.explainLit (Node.eqNode a b))
-      emit (.conflict (← level) .THEORY_BUILTIN "EQ_CONSTANT_MERGE" (EE.mkAnd exp))
-      let cert := EE.conflictOfConstants (← get).ee (← get).asserted exp a b
-      modify fun s => { s with inConflict := true, theoryConflict := true, cert }
+      -- `eqNotifyConstantTermMerge`: the conflict, explained now or by `run`
+      if (← read).defer then
+        modify fun s => { s with pending := some (.constants a b) }
+      else
+        let (exp, _) ← runEE (EE.explainLit (Node.eqNode a b))
+        emit (.conflict (← level) .THEORY_BUILTIN "EQ_CONSTANT_MERGE" (EE.mkAnd exp))
+      modify fun s => { s with inConflict := true, theoryConflict := true }
 
 /-- Run an operation of the equality engine and process its notes. -/
 def withEE (x : EE.EEM α) : EngineM α := do
@@ -283,9 +307,14 @@ def alreadyVisited (cur parent : Node) : EngineM Bool := do
   | some v => return isAlreadyVisited (← read) v cur parent
 
 /-- Set the theories `cur` was preregistered with (a context-dependent map). -/
-def setVisited (cur : Node) (v : Nat) : EngineM Unit :=
-  modify fun s => { s with preregLog := s.preregLog.push (⟨cur⟩, s.preregVisited.get? ⟨cur⟩),
-                           preregVisited := s.preregVisited.insert ⟨cur⟩ v }
+def setVisited (cur : Node) (v : Nat) : EngineM Unit := do
+  -- take the map and the log out of the state, so that they are updated in place
+  let (pv, log) ← modifyGet fun s =>
+    ((s.preregVisited, s.preregLog), { s with preregVisited := {}, preregLog := #[] })
+  let old := pv.get? ⟨cur⟩
+  let pv := pv.insert ⟨cur⟩ v
+  let log := log.push (⟨cur⟩, old)
+  modify fun s => { s with preregVisited := pv, preregLog := log }
 
 /-- `PreRegisterVisitor::visit`: preregister `cur` with its theory, its
 parent's, and its type's when they differ or the type is finite. -/
@@ -329,12 +358,26 @@ def preRegisterVisit (atom : Node) : EngineM Unit := do
       for c in children cur do
         if !(← alreadyVisited c cur) then stack := stack.push (c, cur, false)
 
+/-- Add a registered atom to the roots of the explanations. -/
+def addRoot (atom : Node) : EngineM Unit := do
+  -- take the array and the map out of the state, so that they are updated in place
+  let (atoms, paths) ← modifyGet fun s => ((s.atoms, s.atomPaths), { s with atoms := #[], atomPaths := {} })
+  let atoms := atoms.push atom
+  let paths := EE.subtermPaths atoms paths (atoms.size - 1)
+  modify fun s => { s with atoms, atomPaths := paths }
+
+/-- The context of the verified explanations. -/
+def exCtx : EngineM EE.ExCtx := do
+  let s ← get
+  return { ee := s.ee, roots := s.atoms, paths := s.atomPaths }
+
 /-- `TheoryEngine::preRegister`, for an atom met by the CNF stream. -/
 def preRegister (atom : Node) : EngineM Unit := do
   if (← get).registered.contains ⟨atom⟩ then return
   modify fun s => { s with registered := s.registered.insert ⟨atom⟩ }
   if !isTheoryAtom (← read) atom then return
   emit (.prereg (← level) atom)
+  addRoot atom
   preRegisterVisit atom
 
 /-- `Theory::assertFact`, via `TheoryEngine::assertFact`: the literal is given
@@ -437,7 +480,7 @@ def explain (lit : Node) : EngineM (Array Node) := do
 /-- The literal that makes `lit` false: its negation. -/
 def negate (lit : Node) : Node :=
   match lit with
-  | .app (.kind .NOT) #[a] => a
+  | .app (.kind .NOT) cs => if h : cs.size = 1 then cs[0] else Node.notNode lit
   | _ => Node.notNode lit
 
 /-- What the SAT solver does with the propagated literals. -/
@@ -457,10 +500,8 @@ def satPropagate : EngineM SatResult := do
     match (← get).assignment.get? ⟨atom⟩ with
     | some v =>
       if v != pol then
-        let exp ← explain lit
-        emit (.explain (← level) lit (EE.mkAnd exp))
-        let cert := EE.conflictOfPropagation (← get).ee (← get).asserted exp lit (negate lit)
-        modify fun s => { s with cert }
+        -- the explanation, and the event, are left to `run`
+        modify fun s => { s with pending := some (.prop lit) }
         return .conflict
     | none =>
       assign lit
@@ -535,26 +576,33 @@ def replayInput : Input → EngineM Unit
     else
       raiseTo k
       emit (.prereg k atom)
+      addRoot atom
       preRegisterVisit atom
   | .assert k lit => do raiseTo k; assign lit
   | .check k T e => do raiseTo k; theoryCheck T e
   | .pop k => do popTo k; emit (.pop k)
   | .explain k lit => do
     raiseTo k
-    emit (.explain k lit (EE.mkAnd (← explain lit)))
+    -- the verified explanation, with the roots the asserted literals
+    match EE.explainLitV (← exCtx) lit with
+    | some exp => emit (.explain k lit (EE.mkAnd exp))
+    | none =>
+      modify fun s => { s with unverifiedExplains := s.unverifiedExplains + 1 }
+      emit (.explain k lit (EE.mkAnd (← explain lit)))
 
 /-- **Replay** a cvc5 trace: give the theories the inputs that cvc5's SAT
 solver and theory engine gave its theories, in order, and record telos's
 events. The SAT solver's decisions and backtracking come from the trace, so
 the theories are compared with cvc5's on inputs with SAT structure, without a
 SAT solver. -/
-def replay (c : Config) (inputs : List Input) : Array Event :=
+def replay (c : Config) (inputs : List Input) : Array Event × Nat :=
   let act : EngineM Unit := do
     if c.ufSolver then
       let ctx ← eeCtx
       modify fun s => { s with ee := EE.init ctx }
     for i in inputs do replayInput i
-  ((act.run c).run {}).2.events
+  let st := ((act.run c).run {}).2
+  (st.events, st.unverifiedExplains)
 
 /-- The result of the engine. -/
 structure Result where
@@ -565,6 +613,9 @@ structure Result where
   uncertified : Option String := none
   /-- The certificate of an `unsat` answer. -/
   cert : Option (Array Node × EqProof) := none
+  /-- The `unsat` was certified by a certificate, not by the verified
+  explanation. -/
+  byCertificate : Bool := false
 
 /-- The certificate `(A, p)` refutes the literals `lits`: `p` proves
 `(true, false)` from the closed assumptions `A`, all of which are among
@@ -572,31 +623,118 @@ structure Result where
 def certifies (lits : List Node) (A : Array Node) (p : EqProof) : Bool :=
   A.all (fun l => lits.any (fun x => decide (x = l))) && EqProof.checkConflict A p
 
-/-- Run `solve` on `lits`. An `unsat` answer stands only if its certificate
-refutes `lits` (`certifies`), and is `unknown` otherwise. -/
+/-- **Certify a conflict** with the verified explanations
+(`Telos/Solver/Explain.lean`): its explanation, if the reasons are among the
+literals `lits` (which are the roots, for the typing of applications) and
+closed, and, for a propagation, the negation of the literal is among them too.
+(`verification/TelosProofs/Solver/Solve.lean`: then no well-formed model
+satisfies `lits`.) -/
+def certifyV (lits : List Node) (ee : EE.EqualityEngine) : Pending → Option (Array Node)
+  | .prop lit =>
+    let roots := lits.toArray
+    let C : EE.ExCtx := { ee, roots, paths := EE.subtermPaths roots }
+    match EE.explainLitV C lit with
+    | some exp =>
+      if exp.all (fun l => lits.any (fun x => decide (x = l))) &&
+          lits.any (fun x => decide (x = negate lit)) && EqProof.closedAssumptions exp then some exp
+      else none
+    | none => none
+  | .constants a b =>
+    let roots := lits.toArray
+    let C : EE.ExCtx := { ee, roots, paths := EE.subtermPaths roots }
+    match ee.nodeIds.get? ⟨a⟩, ee.nodeIds.get? ⟨b⟩ with
+    | some i, some j =>
+      if C.node i == a && C.node j == b &&
+          ((a == Node.mkTrue && b == Node.mkFalse) || (a == Node.mkFalse && b == Node.mkTrue)) then
+        match EE.runFull C i j with
+        | some exp =>
+          if exp.all (fun l => lits.any (fun x => decide (x = l))) && EqProof.closedAssumptions exp then
+            some exp
+          else none
+        | none => none
+      else none
+    | _, _ => none
+
+/-- The explanation of a pending conflict by the equality engine's own
+explanation (`EE.explainLit`, not verified), and the certificate of the
+conflict (`EqProof`), for when the verified explanation does not apply, and for
+the CPC proof. -/
+def explainPending (s : State) : Pending → Array Node × Except String (Array Node × EqProof)
+  | .prop lit =>
+    let exp := ((EE.explainLit lit).run { congruenceKinds := UF.congruenceKind, value := fun _ => none }
+      |>.run s.ee).1
+    (exp, EE.conflictOfPropagation s.ee s.asserted exp lit (negate lit))
+  | .constants a b =>
+    let exp := ((EE.explainLit (Node.eqNode a b)).run { congruenceKinds := UF.congruenceKind, value := fun _ => none }
+      |>.run s.ee).1
+    (exp, EE.conflictOfConstants s.ee s.asserted exp a b)
+
+/-- The event of a pending conflict, with its explanation. -/
+def Pending.event (k : Nat) (exp : Array Node) : Pending → Event
+  | .prop lit => .explain k lit (EE.mkAnd exp)
+  | .constants _ _ => .conflict k .THEORY_BUILTIN "EQ_CONSTANT_MERGE" (EE.mkAnd exp)
+
+/-- Run `solve` on `lits`. An `unsat` answer stands only if it is certified:
+by the verified explanation of its conflict (`certifyV`), or else by a
+certificate that refutes `lits` (`certifies`); it is `unknown` otherwise. The
+explanation of the conflict, the last event, is computed here. -/
 def run (c : Config) (lits : List Node) : Result :=
+  let c := { c with defer := true }
   let (a, s) := ((solve lits).run c).run {}
   if a != .unsat then { answer := a, events := s.events } else
-  match s.cert with
-  | .error e => { answer := .unknown, events := s.events, uncertified := some e }
-  | .ok (A, p) =>
-    if certifies lits A p then { answer := .unsat, events := s.events, cert := some (A, p) }
-    else { answer := .unknown, events := s.events, uncertified := some "the certificate does not check" }
+  match s.pending with
+  | some p =>
+    match certifyV lits s.ee p with
+    | some exp =>
+      let events := s.events.push (p.event s.level exp)
+      let cert := if c.wantProof then
+        match (explainPending s p).2 with
+        | .ok (A, q) => if certifies lits A q then some (A, q) else none
+        | .error _ => none
+        else none
+      { answer := .unsat, events, cert }
+    | none =>
+      let (exp, cert) := explainPending s p
+      let events := s.events.push (p.event s.level exp)
+      match cert with
+      | .error e => { answer := .unknown, events, uncertified := some e }
+      | .ok (A, q) =>
+        if certifies lits A q then { answer := .unsat, events, cert := some (A, q), byCertificate := true }
+        else { answer := .unknown, events, uncertified := some "the certificate does not check" }
+  | none =>
+    match s.cert with
+    | .error e => { answer := .unknown, events := s.events, uncertified := some e }
+    | .ok (A, q) =>
+      if certifies lits A q then { answer := .unsat, events := s.events, cert := some (A, q) }
+      else { answer := .unknown, events := s.events, uncertified := some "the certificate does not check" }
 
-/-- **An `unsat` answer is certified**: it comes with a certificate that
-refutes the literals. (`verification/TelosProofs/Solver/Engine.lean` turns
-this into: no well-formed model satisfies the literals.) -/
+/-- **An `unsat` answer is certified**: by the verified explanation of a
+conflict, or by a certificate that refutes the literals.
+(`verification/TelosProofs/Solver/Solve.lean` turns this into: no well-formed
+model satisfies the literals.) -/
 theorem run_unsat (c : Config) (lits : List Node) (h : (run c lits).answer = .unsat) :
-    ∃ A p, certifies lits A p = true := by
+    (∃ ee p exp, certifyV lits ee p = some exp) ∨ ∃ A q, certifies lits A q = true := by
   unfold run at h
+  dsimp only at h
   split at h
   split at h
   · simp_all
   · split at h
-    · simp at h
-    · rename_i A p _
+    · rename_i p _
       split at h
-      · exact ⟨A, p, by assumption⟩
+      · rename_i exp hexp
+        exact .inl ⟨_, p, exp, hexp⟩
+      · split at h
+        · simp at h
+        · rename_i A q _
+          split at h
+          · exact .inr ⟨A, q, by assumption⟩
+          · simp at h
+    · split at h
       · simp at h
+      · rename_i A q _
+        split at h
+        · exact .inr ⟨A, q, by assumption⟩
+        · simp at h
 
 end Telos.Solver

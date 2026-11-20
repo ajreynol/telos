@@ -107,14 +107,14 @@ theorem engineLiterals_ok {named : Node → String} {out lits : List Node}
 /-- Solve the assertions of `sc`: the assertions given to the engine, and the
 engine's result. -/
 def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Bool := false)
-    (preprocess : Bool := true) : Except String (List Node × Solver.Result) := do
+    (preprocess : Bool := true) (wantProof : Bool := false) : Except String (List Node × Solver.Result) := do
   let theories ← enabledTheories (sc.logic.getD "ALL")
   let (opts, as) ← ppInput sc u
   let out := engineAssertions as opts preprocess
   let named (n : Node) : String :=
     (substSkolems ((namedSkolems sc.dtNames out).map fun (k, v, _) => (k, v)) n).toSmtLibLet sc.dtNames
   let lits ← engineLiterals named out
-  return (out, Solver.run { theories, termBased := opts.termBased, eeEvents } lits)
+  return (out, Solver.run { theories, termBased := opts.termBased, eeEvents, wantProof } lits)
 
 /-- Preprocess `sc`, solve the result if it is a conjunction of literals, and
 print the events and the answer; also why an `unsat` of the engine was not
@@ -125,13 +125,16 @@ are printed as `--post-asserts` names them in the events. -/
 def theoryEvents (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Bool := false)
     (preprocess : Bool := true) (withProof : Bool := false) :
     Except String (String × Option String × Option (Except String String)) := do
-  let (out, r) ← solveScript sc u eeEvents preprocess
+  let (out, r) ← solveScript sc u eeEvents preprocess withProof
   let σ := (namedSkolems sc.dtNames out).map fun (k, v, _) => (k, v)
   let lines := r.events.toList.map fun e => (e.map (substSkolems σ)).print sc.dtNames
   let proof := if !withProof then none else
     match r.cert with
     | some (A, p) => some (renderRefutation sc.names sc.decls A p)
     | none => none
-  return ("\n".intercalate (lines ++ [r.answer.name]) ++ "\n", r.uncertified, proof)
+  let note := match r.uncertified with
+    | some e => some s!"unsat not certified ({e}): answering unknown"
+    | none => if r.byCertificate then some "unsat by certificate (the verified explanation did not apply)" else none
+  return ("\n".intercalate (lines ++ [r.answer.name]) ++ "\n", note, proof)
 
 end Telos.Frontend

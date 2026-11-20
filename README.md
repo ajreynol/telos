@@ -148,9 +148,12 @@ one, and UF. They cover logics in which UF is the only theory (QF_UF). In other
 logics the theories' checks do nothing, and the answer is `unknown` as soon as
 a theory gets a literal.
 
-An `unsat` answer is certified: it stands only if the engine's certificate (an
-equality proof, `Telos/Solver/EqProof.lean`) checks. The answer is then
-correct: the input assertions are unsatisfiable (`Telos.solve_unsat_correct`).
+An `unsat` answer is certified. Its conflict is explained by a verified
+explanation (`Telos/Solver/Explain.lean`), which computes the equality engine's
+explanation as cvc5 does, with a theorem that its reasons imply the conflict.
+Where it does not apply, it is certified by an equality proof instead
+(`Telos/Solver/EqProof.lean`). The answer is then correct: the input
+assertions are unsatisfiable (`Telos.solve_unsat_correct`).
 With `--proof` (or `--proof-dir DIR`), the CPC refutation follows, which Ethos
 checks. `sat` answers are not certified yet.
 `scripts/fuzz-solve.py --cvc5 PATH` compares the events with cvc5's: with

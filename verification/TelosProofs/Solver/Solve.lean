@@ -1,14 +1,17 @@
 import TelosProofs.Solver.EqProof
+import TelosProofs.Solver.Explain
 import TelosProofs.Preprocess.Preprocess
 import Telos.Frontend.Solve
 
 /-!
 # `unsat` answers are correct
 
-- **The engine** (`run_unsat_sound`): an `unsat` answer comes with a
-  certificate whose assumptions are among the literals and whose proof checks
-  (`Solver.run_unsat`), so no well-formed model satisfies the literals
-  (`checkConflict_sound`).
+- **The engine** (`run_unsat_sound`): an `unsat` answer is certified
+  (`Solver.run_unsat`) by the verified explanation of its conflict
+  (`certifyV_sound`, from `EE.explainLitV_sound` and `EE.runFull_sound`), or
+  else by a certificate whose assumptions are among the literals and whose
+  proof checks (`checkConflict_sound`). Either way no well-formed model
+  satisfies the literals.
 - **The front end** (`solveScript_unsat`): the literals are those of the
   assertions given to the engine (`conjLiterals_sound`), which hold in every
   model of the input assertions. With preprocessing, they are the conjuncts of
@@ -29,13 +32,10 @@ variable [LogosFacts]
 
 namespace Solver
 
-/-- **An `unsat` of the engine is correct**: no well-formed model satisfies the
-literals. -/
-theorem run_unsat_sound (c : Config) (lits : List Node) (h : (run c lits).answer = .unsat)
-    (hT : ∀ l ∈ lits, HasBoolType l.toEo) (M : SmtModel) (hM : model_wf M) :
-    ¬ ∀ l ∈ lits, TrueIn M l.toEo := by
-  intro hall
-  obtain ⟨A, p, hc⟩ := run_unsat c lits h
+/-- A certificate whose assumptions are among the literals refutes them. -/
+theorem certifies_sound {lits : List Node} {A : Array Node} {p : EqProof}
+    (hc : certifies lits A p = true) (hT : ∀ l ∈ lits, HasBoolType l.toEo) (M : SmtModel)
+    (hM : model_wf M) (hall : ∀ l ∈ lits, TrueIn M l.toEo) : False := by
   unfold certifies at hc
   simp only [Bool.and_eq_true] at hc
   have hsub : ∀ l ∈ A.toList, l ∈ lits := by
@@ -46,6 +46,113 @@ theorem run_unsat_sound (c : Config) (lits : List Node) (h : (run c lits).answer
     exact hx
   exact checkConflict_sound A p hc.2 (fun l hl => hT l (hsub l hl)) M hM
     (fun l hl => hall l (hsub l hl))
+
+omit [LogosFacts] in
+/-- A literal and its negation are not both true. -/
+theorem not_both (M : SmtModel) (lit : Node) (h₁ : TrueIn M lit.toEo)
+    (h₂ : TrueIn M (negate lit).toEo) : False := by
+  unfold negate at h₂
+  unfold TrueIn at h₁ h₂
+  change __smtx_model_eval M lit.toSmt = _ at h₁
+  split at h₂
+  · rename_i cs
+    split at h₂
+    · rename_i h1
+      change __smtx_model_eval M (Node.app (.kind .NOT) cs).toSmt = _ at h₁
+      change __smtx_model_eval M cs[0].toSmt = _ at h₂
+      rw [toSmt_not h1, eval_not', h₂] at h₁
+      simp [__smtx_model_eval_not, native_not] at h₁
+    · change __smtx_model_eval M (Node.app (.kind .NOT) #[Node.app (.kind .NOT) cs]).toSmt = _ at h₂
+      rw [toSmt_not (cs := #[Node.app (.kind .NOT) cs]) rfl, eval_not'] at h₂
+      simp only [Array.getElem_singleton] at h₂
+      rw [h₁] at h₂
+      simp [__smtx_model_eval_not, native_not] at h₂
+  · change __smtx_model_eval M (Node.app (.kind .NOT) #[lit]).toSmt = _ at h₂
+    rw [toSmt_not (cs := #[lit]) rfl, eval_not'] at h₂
+    simp only [Array.getElem_singleton] at h₂
+    rw [h₁] at h₂
+    simp [__smtx_model_eval_not, native_not] at h₂
+
+theorem mem_of_any {lits : List Node} {l : Node} (h : lits.any (fun x => decide (x = l)) = true) :
+    l ∈ lits := by
+  simp only [List.any_eq_true, decide_eq_true_eq] at h
+  obtain ⟨x, hx, rfl⟩ := h
+  exact hx
+
+/-- The context of `certifyV` is good for reasons among the literals, closed. -/
+theorem good_of_lits {lits : List Node} {exp : Array Node} (ee : EE.EqualityEngine)
+    (hT : ∀ l ∈ lits, HasBoolType l.toEo)
+    (hsub : exp.all (fun l => lits.any (fun x => decide (x = l))) = true)
+    (hcl : EqProof.closedAssumptions exp = true) :
+    EE.Good { ee, roots := lits.toArray, paths := EE.subtermPaths lits.toArray } exp := by
+  have hs : ∀ l ∈ exp.toList, l ∈ lits := fun l hl =>
+    mem_of_any ((Array.all_eq_true_iff_forall_mem.1 hsub) l (Array.mem_toList_iff.1 hl))
+  exact ⟨fun l hl => hT l (hs l hl), stable_of_closed hcl,
+    fun r hr => wellTyped_of_bool (hT r (by simpa using hr))⟩
+
+/-- **A conflict certified by the verified explanation refutes the literals.** -/
+theorem certifyV_sound {lits : List Node} {ee : EE.EqualityEngine} {p : Pending} {exp : Array Node}
+    (h : certifyV lits ee p = some exp) (hT : ∀ l ∈ lits, HasBoolType l.toEo) (M : SmtModel)
+    (hM : model_wf M) (hall : ∀ l ∈ lits, TrueIn M l.toEo) : False := by
+  cases p with
+  | prop lit =>
+    unfold certifyV at h
+    dsimp only at h
+    split at h
+    · rename_i exp' hexp
+      split at h
+      · rename_i hg
+        simp only [Option.some.injEq] at h; subst h
+        simp only [Bool.and_eq_true] at hg
+        obtain ⟨⟨hsub, hneg⟩, hcl⟩ := hg
+        have hG := good_of_lits ee hT hsub hcl
+        have hH : Holds exp' M := fun l hl =>
+          hall l (mem_of_any ((Array.all_eq_true_iff_forall_mem.1 hsub) l (Array.mem_toList_iff.1 hl)))
+        exact not_both M lit (EE.explainLitV_sound hexp hG M hM hH) (hall _ (mem_of_any hneg))
+      · simp at h
+    · simp at h
+  | constants a b =>
+    unfold certifyV at h
+    dsimp only at h
+    split at h
+    · rename_i i j _ _
+      split at h
+      · rename_i hg
+        simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq] at hg
+        obtain ⟨⟨hi, hj⟩, hab⟩ := hg
+        split at h
+        · rename_i exp' hexp
+          split at h
+          · rename_i hg'
+            simp only [Option.some.injEq] at h; subst h
+            simp only [Bool.and_eq_true] at hg'
+            obtain ⟨hsub, hcl⟩ := hg'
+            have hG := good_of_lits ee hT hsub hcl
+            have hH : Holds exp' M := fun l hl =>
+              hall l (mem_of_any ((Array.all_eq_true_iff_forall_mem.1 hsub) l (Array.mem_toList_iff.1 hl)))
+            rcases EE.runFull_sound hexp hG with he | hc
+            · subst he
+              rw [hi] at hj
+              rcases hab with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;> simp [Node.mkTrue, Node.mkFalse] at hj
+            · rw [hi, hj] at hc
+              have hr := (trueIn_mkEq_iff M _ _).1 (hc.2 M hM hH)
+              rcases hab with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
+                rw [toEo_true, toEo_false, eval_bool_const, eval_bool_const] at hr <;>
+                exact absurd (valueRel_bool hr) (by decide)
+          · simp at h
+        · simp at h
+      · simp at h
+    · simp at h
+
+/-- **An `unsat` of the engine is correct**: no well-formed model satisfies the
+literals. -/
+theorem run_unsat_sound (c : Config) (lits : List Node) (h : (run c lits).answer = .unsat)
+    (hT : ∀ l ∈ lits, HasBoolType l.toEo) (M : SmtModel) (hM : model_wf M) :
+    ¬ ∀ l ∈ lits, TrueIn M l.toEo := by
+  intro hall
+  rcases run_unsat c lits h with ⟨_, _, _, hv⟩ | ⟨A, p, hc⟩
+  · exact certifyV_sound hv hT M hM hall
+  · exact certifies_sound hc hT M hM hall
 
 end Solver
 

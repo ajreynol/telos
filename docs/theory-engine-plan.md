@@ -535,6 +535,96 @@ With `telos --replay TRACE FILE` (`Telos/Frontend/Replay.lean`, `Solver.replay`)
 - The minimization of explanations by cvc5's proofs: it would need its proof
   equality engine and proof cache.
 
+## Stage 3: verified explanations
+
+*Done (2026-11-20).*
+
+The equality engine's explanations are proven sound, so conflicts need no
+separate certificate (`Telos/Solver/Explain.lean`, and its proofs in
+`verification/TelosProofs/Solver/Explain.lean`).
+
+### The explanation
+
+`EE.qFull`/`EE.qArgs`, with `EE.explainLitV` for literals, is the explanation,
+computed as cvc5's `getExplanation` computes it:
+- the same breadth-first path (`findPath`), from its end back;
+- the reasons in cvc5's order;
+- a cache of completed queries.
+
+cvc5 also caches queries in progress. That differs only on cyclic queries,
+which cannot happen in its forest.
+
+Each step checks what its soundness needs, at a constant cost, or a cost in
+the number of arguments:
+- **asserted edge:** its reason relates the edge's terms;
+- **congruence edge:**
+  - the application is reached from a root, an input literal, through
+    operators whose children are well typed;
+  - its arguments are those the explanations of the arguments found
+    (`argsMatch`);
+  - curried prefixes are explained position by position (`Rel`);
+- **reflexivity edge:** `(= a b)` is reached from a root and is that of the
+  edge;
+- **path:** a chain from the start to the end (`chainOk`).
+
+Recursion is bounded by fuel. If any check fails, or the fuel runs out, the
+explanation fails, and the engine falls back to the certificate.
+
+### The theorem
+
+`queries_sound`, and from it `explainLitV_sound`: if the explanation succeeds,
+then in every well-formed model of its reasons, the literal is true.
+- **Hypotheses:** the reasons are Boolean and closed, and the roots are well
+  typed.
+- **No invariant of the engine:** the theorem rests only on the checks, so it
+  holds whatever the engine's state.
+- **Proof:** by induction on fuel, in layers. The queries at fuel `n` give the
+  edges and steps at `n`, which give the queries at `n + 1`.
+
+### Use
+
+In `Solver.run`, the conflict's explanation is the last event. It is now
+computed once, at the end, by `certifyV`:
+- the roots are the input literals;
+- the reasons must be among them, and closed;
+- for a propagation conflict, the negated literal must be among them too.
+
+`run_unsat_sound` covers both routes, `certifyV_sound` and the certificate. The
+certificate builder (`EqBuild`) runs only as a fallback, and for `--proof`.
+
+In replay, the explanations are the verified ones, with the registered atoms as
+roots (`addRoot`), and the old explanation only as a fallback. All 337
+explanations of the 600-clause trace are verified ones, with the same events
+as before.
+
+### Results
+
+- **Events:** identical to cvc5's on cvc5's preprocessed inputs (seeds 81, 82
+  and 91).
+- **Answers:** every `unsat` was certified by the verified explanation, with no
+  fallback to the certificate.
+- **Proofs:** Ethos accepts all the refutations.
+- **Two in-place update bugs.** In both, an update was computed from a field
+  while the old state still held it, so Lean copied the whole map on every
+  call:
+  - the preregistration log (`setVisited`);
+  - the log of propagated disequalities (`storePropagatedDiseq`).
+
+  With these fixed:
+  - the 4,000-literal chain takes 0.22s, against 3.5s with the bugs;
+  - the large `unsat` takes 0.52s, against 0.39s with the old certificate,
+    the difference being the quadratic subset check, 53ms;
+  - the 600-clause replay takes 0.70s.
+
+### Still dynamic
+
+- **The checks themselves.** They become unnecessary once the engine's
+  invariants are proven: that its edges match its nodes, and that its terms
+  are subterms of registered atoms. That needs the engine rewritten as total
+  code.
+- **The closedness of the reasons**, checked through Logos once per answer.
+- **The subset check of the reasons**, which is quadratic.
+
 ## Order of work (all stages)
 
 1. **Equality engine.** Port `theory/uf/equality_engine.cpp` (about 3k lines)
