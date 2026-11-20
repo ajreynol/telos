@@ -34,14 +34,23 @@ noncomputable def toVal : MVal → SmtValue
   | .bool b => .Boolean b
   | .uval s i => .UValue s (i : ℝ)
   | .fn fid d r => .Fun ((fid : ℝ) + 1) d r
+  | .dtc s dd i => .DtCons s dd i
+  | .app f a => .Apply (toVal f) (toVal a)
 
 omit [LogosFacts] in
 theorem toVal_inj {a b : MVal} (h : toVal a = toVal b) : a = b := by
-  cases a <;> cases b <;> simp_all [toVal]
+  induction a generalizing b with
+  | app f a ihf iha =>
+    cases b <;> simp only [toVal, reduceCtorEq, SmtValue.Apply.injEq] at h
+    rw [ihf h.1, iha h.2]
+  | _ => cases b <;> simp_all [toVal]
 
 omit [LogosFacts] in
 theorem typeof_toVal (v : MVal) : __smtx_typeof_value (toVal v) = v.ty := by
-  cases v <;> simp [toVal, MVal.ty, __smtx_typeof_value]
+  induction v with
+  | app f a ihf iha => simp only [toVal, MVal.ty, __smtx_typeof_value, ihf, iha]
+  | dtc => rfl
+  | _ => simp [toVal, MVal.ty, __smtx_typeof_value]
 
 /-- The function of a model's identifier. -/
 noncomputable def tableFun (M : Model) (e : ModelId) (A B : SmtType) (i : SmtValue) : SmtValue :=
@@ -61,8 +70,8 @@ noncomputable def tableFun (M : Model) (e : ModelId) (A B : SmtType) (i : SmtVal
 noncomputable def toSmtModel (M : Model) : SmtModel where
   values k :=
     if k.isVar then __smtx_type_default k.ty else
-    match M.consts.get? k.name with
-    | some (T, v) => if T = k.ty then toVal v else __smtx_type_default k.ty
+    match M.lookup k.name k.ty with
+    | some v => toVal v
     | none => __smtx_type_default k.ty
   nativeFuns := tableFun M
   usortDom := fun _ => Set.univ
@@ -76,7 +85,9 @@ theorem usort_dom_wf_univ : usort_dom_wf (fun _ => (Set.univ : Set ModelId)) := 
 omit [LogosFacts] in
 theorem canonical_toVal (v : MVal) :
     __smtx_value_canonical (fun _ => (Set.univ : Set ModelId)) (toVal v) = true := by
-  cases v <;> simp [toVal, __smtx_value_canonical, native_usort_mem]
+  induction v with
+  | app f a ihf iha => simp only [toVal, __smtx_value_canonical, ihf, iha, native_and, Bool.and_self]
+  | _ => simp [toVal, __smtx_value_canonical, native_usort_mem]
 
 theorem default_ok {T : SmtType} (h : __smtx_type_wf T = true) :
     __smtx_typeof_value (__smtx_type_default T) = T ∧
@@ -93,9 +104,38 @@ omit [LogosFacts] in
 theorem constsOk_get {M : Model} (h : M.constsOk = true) {k : native_String} {T : SmtType} {v : MVal}
     (hk : M.consts.get? k = some (T, v)) : v.ty = T := by
   unfold Model.constsOk at h
+  simp only [Bool.and_eq_true] at h
+  have h := h.1
   rw [List.all_eq_true] at h
   have hm : (k, (T, v)) ∈ M.consts.toList := Std.HashMap.mem_toList_iff_getElem?_eq_some.2 (by simpa using hk)
   simpa using h _ hm
+
+omit [LogosFacts] in
+/-- A symbol looked up has a value of its type. -/
+theorem lookup_ty {M : Model} (h : M.constsOk = true) {x : native_String} {T : SmtType} {v : MVal}
+    (hk : M.lookup x T = some v) : v.ty = T := by
+  unfold Model.constsOk at h
+  simp only [Bool.and_eq_true] at h
+  unfold Model.lookup at hk
+  split at hk
+  · rename_i y U w hf
+    cases hk
+    have hm := Array.mem_of_find?_eq_some hf
+    have hp := Array.find?_some hf
+    simp only [Bool.and_eq_true, beq_iff_eq] at hp
+    rw [Array.all_eq_true_iff_forall_mem] at h
+    have := h.2 _ hm
+    simp only [beq_iff_eq] at this
+    rw [this, hp.2]
+  · split at hk
+    · rename_i T' w hc
+      split at hk
+      · rename_i hT
+        cases hk
+        rw [← beq_iff_eq.1 hT]
+        exact constsOk_get (by unfold Model.constsOk; simp only [Bool.and_eq_true]; exact h) hc
+      · cases hk
+    · cases hk
 
 omit [LogosFacts] in
 theorem tablesOk_get {M : Model} (h : M.tablesOk = true) {k : Nat} {t : FunTable}
@@ -116,19 +156,15 @@ theorem toSmtModel_wf {M : Model} (hc : M.constsOk = true) (ht : M.tablesOk = tr
     split
     · exact (default_ok hT).1
     · split
-      · rename_i T' v hk
-        split
-        · rename_i hTT; subst hTT; rw [typeof_toVal]; exact constsOk_get hc hk
-        · exact (default_ok hT).1
+      · rename_i v hk
+        rw [typeof_toVal]; exact lookup_ty hc hk
       · exact (default_ok hT).1
   · intro isVar s T hT
     simp only [toSmtModel]
     split
     · exact (default_ok hT).2
     · split
-      · split
-        · exact canonical_toVal _
-        · exact (default_ok hT).2
+      · exact canonical_toVal _
       · exact (default_ok hT).2
   · intro fid A B i hAB _
     have hB := type_wf_range hAB
@@ -185,15 +221,7 @@ theorem eval_var {M : Model} {x : String} {T : TypeNode} {v : MVal} (h : M.const
     __smtx_model_eval (toSmtModel M) (Node.var x T).toSmt = toVal v := by
   unfold Model.const at h
   rw [toSmt_var, __smtx_model_eval.eq_def]
-  simp only [native_model_lookup, model_key, toSmtModel]
-  split at h
-  · rename_i T' w hk
-    split at h
-    · rename_i hT
-      cases h
-      simp only [Bool.false_eq_true, ↓reduceIte, hk, beq_iff_eq.1 hT]
-    · cases h
-  · cases h
+  simp only [native_model_lookup, model_key, toSmtModel, Bool.false_eq_true, ↓reduceIte, h]
 
 /-! ### Connectives -/
 
@@ -525,6 +553,157 @@ theorem applyAll_sound {M : Model} : ∀ (vs : List MVal) (ts : List SmtTerm) (h
       exact apply_sound hg
     · cases ha
 
+/-! ### Datatypes -/
+
+/-- A curried application of a datatype constructor. -/
+inductive DHead : Term → Prop
+  | dtcons (s : native_String) (d : DatatypeDecl) (i : native_Nat) : DHead (Term.DtCons s d i)
+  | app {g : Term} (x : Term) : DHead g → DHead (Term.Apply g x)
+
+omit [LogosFacts] in
+theorem toSmt_apply_dhead {f : Term} (h : DHead f) (y : Term) :
+    __eo_to_smt (Term.Apply f y) = SmtTerm.Apply (__eo_to_smt f) (__eo_to_smt y) := by
+  rcases h with _ | ⟨_, h⟩
+  · rfl
+  rcases h with _ | ⟨_, h⟩
+  · rfl
+  rcases h with _ | ⟨_, h⟩
+  · rfl
+  rcases h with _ | ⟨_, h⟩
+  · rfl
+  rename_i g _
+  cases g <;> rfl
+
+omit [LogosFacts] in
+theorem toSmt_foldl_dhead : ∀ (xs : List Term) {f : Term}, DHead f →
+    __eo_to_smt (xs.foldl Term.Apply f) = (xs.map __eo_to_smt).foldl SmtTerm.Apply (__eo_to_smt f)
+  | [], _, _ => rfl
+  | x :: xs, f, hf => by
+    simp only [List.foldl, List.map]
+    rw [toSmt_foldl_dhead xs (DHead.app x hf), toSmt_apply_dhead hf]
+
+omit [LogosFacts] in
+/-- A constructor that has a Logos term is a `Term.DtCons`. -/
+theorem dtCons_toEo {T : TypeNode} {i : Nat} {c : native_String × SmtDatatypeDecl × Nat}
+    (h : Model.consOf? (Node.const (.dtCons T i)) = some c) :
+    ∃ a d, (Node.const (.dtCons T i)).toEo = Term.DtCons a d i := by
+  by_cases hd : ∃ s d, T = .datatype s d
+  · obtain ⟨s, d, rfl⟩ := hd
+    exact ⟨_, _, by simp only [Node.toEo, Const.toEo]; rfl⟩
+  · exfalso
+    have e : (Node.const (.dtCons T i)).toEo = Term.Stuck := by
+      cases T <;> simp_all [Node.toEo, Const.toEo]
+    have e2 : (Node.const (.dtCons T i)).toSmt = SmtTerm.None := by
+      unfold Node.toSmt; rw [e]; rfl
+    simp [Model.consOf?, e2] at h
+
+omit [LogosFacts] in
+/-- A selector that has a Logos term is a `Term.DtSel`. -/
+theorem dtSel_toEo {T : TypeNode} {i j : Nat} {c : native_String × SmtDatatypeDecl × Nat × Nat}
+    (h : Model.selOf? (Node.const (.dtSel T i j)) = some c) :
+    ∃ a d, (Node.const (.dtSel T i j)).toEo = Term.DtSel a d i j := by
+  by_cases hd : ∃ s d, T = .datatype s d
+  · obtain ⟨s, d, rfl⟩ := hd
+    exact ⟨_, _, by simp only [Node.toEo, Const.toEo]; rfl⟩
+  · exfalso
+    have e : (Node.const (.dtSel T i j)).toEo = Term.Stuck := by
+      cases T <;> simp_all [Node.toEo, Const.toEo]
+    have e2 : (Node.const (.dtSel T i j)).toSmt = SmtTerm.None := by
+      unfold Node.toSmt; rw [e]; rfl
+    simp [Model.selOf?, e2] at h
+
+omit [LogosFacts] in
+theorem toSmt_cons (f : Node) (cs : Array Node) (hf : DHead f.toEo) :
+    (Node.app (.node .APPLY_CONSTRUCTOR f) cs).toSmt = (cs.toList.map Node.toSmt).foldl SmtTerm.Apply f.toSmt := by
+  unfold Node.toSmt
+  rw [Node.toEo_app]
+  simp only [Op.eoShape, nodeEoShape, AppShape.toEo, Arity.accepts, List.length_map, Array.length_toList,
+    Nat.zero_le, decide_true, ↓reduceIte]
+  rw [toSmt_foldl_dhead _ hf, List.map_map]
+  rfl
+
+omit [LogosFacts] in
+theorem toSmt_tester (f x : Node) (cs : Array Node) (hcs : cs.toList = [x]) :
+    (Node.app (.node .APPLY_TESTER f) cs).toSmt = SmtTerm.Apply (__eo_to_smt_tester f.toSmt) x.toSmt := by
+  unfold Node.toSmt
+  rw [Node.toEo_app]
+  simp only [Op.eoShape, nodeEoShape, AppShape.toEo, Arity.accepts, hcs,
+    List.map_cons, List.map_nil, List.length_cons, List.length_nil, beq_self_eq_true, ↓reduceIte, List.foldl]
+  rfl
+
+omit [LogosFacts] in
+theorem toSmt_selector (f x : Node) (cs : Array Node) (hcs : cs.toList = [x]) {a : native_String} {d : DatatypeDecl}
+    {i j : Nat} (hf : f.toEo = Term.DtSel a d i j) :
+    (Node.app (.node .APPLY_SELECTOR f) cs).toSmt = SmtTerm.Apply f.toSmt x.toSmt := by
+  unfold Node.toSmt
+  rw [Node.toEo_app]
+  simp only [Op.eoShape, nodeEoShape, AppShape.toEo, Arity.accepts, hcs,
+    List.map_cons, List.map_nil, List.length_cons, List.length_nil, beq_self_eq_true, ↓reduceIte, List.foldl, hf]
+  rfl
+
+omit [LogosFacts] in
+theorem toVal_head (v : MVal) : __smtx_apply_head_value (toVal v) = toVal v.head := by
+  induction v with
+  | app f a ihf _ => simp only [toVal, __smtx_apply_head_value, MVal.head, ihf]
+  | _ => rfl
+
+omit [LogosFacts] in
+theorem veq_toVal (a b : MVal) : native_veq (toVal a) (toVal b) = (a == b) := by
+  simp only [native_veq]
+  by_cases h : a = b
+  · subst h; simp
+  · have : toVal a ≠ toVal b := fun e => h (toVal_inj e)
+    simp [h, this]
+
+omit [LogosFacts] in
+theorem toVal_argNth : ∀ (v : MVal) (n npos : Nat) {w : MVal}, v.argNth n npos = some w →
+    __smtx_apply_arg_nth_value (toVal v) n npos = toVal w
+  | .app f a, n, k + 1, w, h => by
+    simp only [MVal.argNth] at h
+    simp only [toVal, __smtx_apply_arg_nth_value, native_ite, native_nateq]
+    by_cases e : n = k
+    · subst e; simp only [beq_self_eq_true, ↓reduceIte, Option.some.injEq] at h; subst h; simp
+    · simp only [e, decide_false, Bool.false_eq_true, ↓reduceIte]
+      have : (n == k) = false := by simpa using e
+      rw [this] at h
+      exact toVal_argNth f n k h
+  | .app _ _, _, 0, _, h => by simp [MVal.argNth] at h
+  | .bool _, _, _, _, h | .uval .., _, _, _, h | .fn .., _, _, _, h | .dtc .., _, _, _, h => by
+    simp [MVal.argNth] at h
+
+omit [LogosFacts] in
+theorem eval_apply_cons_toVal (M : SmtModel) (hv a : MVal)
+    (h : (∃ s dd i, hv = .dtc s dd i) ∨ ∃ f x, hv = .app f x) :
+    __smtx_model_eval_apply M (toVal hv) (toVal a) = SmtValue.Apply (toVal hv) (toVal a) := by
+  rcases h with ⟨_, _, _, rfl⟩ | ⟨_, _, rfl⟩ <;> cases a <;> rfl
+
+omit [LogosFacts] in
+/-- **A constructor applied to arguments has its value.** -/
+theorem eval_chain (M : Model) : ∀ (vs : List MVal) (ts : List SmtTerm) (h : SmtTerm) (hv : MVal),
+    List.Forall₂ (fun t v => __smtx_model_eval (toSmtModel M) t = toVal v) ts vs →
+    ((∃ s dd i, h = SmtTerm.DtCons s dd i) ∨ ∃ a b, h = SmtTerm.Apply a b) →
+    ((∃ s dd i, hv = .dtc s dd i) ∨ ∃ f x, hv = .app f x) →
+    __smtx_model_eval (toSmtModel M) h = toVal hv →
+    __smtx_model_eval (toSmtModel M) (ts.foldl SmtTerm.Apply h) = toVal (vs.foldl .app hv)
+  | [], [], _, _, .nil, _, _, hh => hh
+  | v :: vs, t :: ts, h, hv, .cons ht hr, hs, hvs, hh => by
+    simp only [List.foldl]
+    refine eval_chain M vs ts _ _ hr (Or.inr ⟨_, _, rfl⟩) (Or.inr ⟨_, _, rfl⟩) ?_
+    have e : __smtx_model_eval (toSmtModel M) (SmtTerm.Apply h t) =
+        __smtx_model_eval_apply (toSmtModel M) (__smtx_model_eval (toSmtModel M) h)
+          (__smtx_model_eval (toSmtModel M) t) := by
+      rcases hs with ⟨_, _, _, rfl⟩ | ⟨_, _, rfl⟩ <;> rw [__smtx_model_eval.eq_def]
+    rw [e, hh, ht, eval_apply_cons_toVal _ _ _ hvs]
+    rfl
+
+omit [LogosFacts] in
+theorem lookup_sound {M : Model} {x : native_String} {T : SmtType} {v : MVal} (h : M.lookup x T = some v) :
+    native_model_lookup (toSmtModel M) x T = toVal v := by
+  simp only [native_model_lookup, model_key, toSmtModel, Bool.false_eq_true, ↓reduceIte, h]
+
+omit [LogosFacts] in
+theorem wrongSelName_eq (i j : Nat) : Model.wrongSelName i j = native_wrong_apply_sel_id i j := rfl
+
 /-! ### The evaluation -/
 
 /-- The evaluation at fuel `n` is sound. -/
@@ -615,6 +794,95 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
           rw [toSmt_apply_uf f T cs hlen]
           refine applyAll_sound vs _ _ fv v ?_ (Or.inl ⟨_, _, toSmt_var f T⟩) (eval_var hf) h
           exact (List.forall₂_map_left_iff).2 hvs
+  · -- a constructor applied
+    rename_i _ T idx cs
+    split
+    · exact ⟨hS, fun v h => by cases h⟩
+    · rename_i sc ddc ic hc
+      obtain ⟨a, d, he⟩ := dtCons_toEo hc
+      have hsmt : (Node.const (.dtCons T idx)).toSmt = SmtTerm.DtCons sc ddc ic := by
+        simp only [Model.consOf?] at hc; split at hc <;> simp_all
+      obtain ⟨hS1, hv1⟩ := evList_sound M n IH cs.toList S hS
+      rcases e1 : M.evList n cs.toList S with ⟨r1, S1⟩
+      rw [e1] at hS1 hv1
+      try dsimp only
+      cases r1 with
+      | none => exact ⟨hS1, fun v h => by cases h⟩
+      | some vs =>
+        refine ⟨hS1, fun v h => ?_⟩
+        cases h
+        rw [toSmt_cons _ cs (he ▸ DHead.dtcons a d idx), hsmt]
+        refine eval_chain M vs _ _ _ ((List.forall₂_map_left_iff).2 (hv1 vs rfl))
+          (Or.inl ⟨_, _, _, rfl⟩) (Or.inl ⟨_, _, _, rfl⟩) ?_
+        rw [__smtx_model_eval.eq_def]; rfl
+  · -- a tester applied
+    rename_i _ T idx cs
+    split
+    · rename_i sc ddc ic x hc hcs
+      have hsmt : (Node.const (.dtCons T idx)).toSmt = SmtTerm.DtCons sc ddc ic := by
+        simp only [Model.consOf?] at hc; split at hc <;> simp_all
+      obtain ⟨hS1, hv1⟩ := IH x S hS
+      rcases e1 : M.ev n x S with ⟨r1, S1⟩
+      rw [e1] at hS1 hv1
+      try dsimp only
+      cases r1 with
+      | none => exact ⟨hS1, fun v h => by cases h⟩
+      | some w =>
+        refine ⟨hS1, fun v h => ?_⟩
+        cases h
+        rw [toSmt_tester _ x cs hcs, hsmt]
+        show __smtx_model_eval _ (SmtTerm.Apply (SmtTerm.DtTester sc ddc ic) _) = _
+        rw [__smtx_model_eval.eq_def]
+        simp only [__smtx_model_eval_dt_tester, hv1 w rfl, toVal_head]
+        rw [show SmtValue.DtCons sc ddc ic = toVal (.dtc sc ddc ic) from rfl, veq_toVal]
+        rfl
+    · exact ⟨hS, fun v h => by cases h⟩
+  · -- a selector applied
+    rename_i _ T idx jdx cs
+    split
+    · rename_i sc ddc ic jc x hc hcs
+      obtain ⟨a, d, he⟩ := dtSel_toEo hc
+      have hsmt : (Node.const (.dtSel T idx jdx)).toSmt = SmtTerm.DtSel sc ddc ic jc := by
+        simp only [Model.selOf?] at hc; split at hc <;> simp_all
+      obtain ⟨hS1, hv1⟩ := IH x S hS
+      rcases e1 : M.ev n x S with ⟨r1, S1⟩
+      rw [e1] at hS1 hv1
+      try dsimp only
+      cases r1 with
+      | none => exact ⟨hS1, fun v h => by cases h⟩
+      | some w =>
+        refine ⟨hS1, fun v h => ?_⟩
+        dsimp only at h
+        rw [toSmt_selector _ x cs hcs he, hsmt]
+        rw [__smtx_model_eval.eq_def]
+        simp only [__smtx_model_eval_dt_sel, hv1 w rfl, toVal_head, native_ite]
+        rw [show SmtValue.DtCons sc ddc ic = toVal (.dtc sc ddc ic) from rfl, veq_toVal]
+        split at h
+        · rename_i hh
+          simp only [hh, ↓reduceIte]
+          exact toVal_argNth _ _ _ h
+        · rename_i hh
+          simp only [hh, Bool.false_eq_true, ↓reduceIte]
+          cases hl : M.lookup (Model.wrongSelName ic jc) (Model.wrongSelType sc ddc ic jc) with
+          | none => simp [hl] at h
+          | some fv =>
+            simp only [hl, Option.bind_some] at h
+            rw [← wrongSelName_eq, show SmtType.FunType (SmtType.Datatype sc ddc) (__smtx_ret_typeof_sel sc ddc ic jc)
+              = Model.wrongSelType sc ddc ic jc from rfl, lookup_sound hl]
+            exact apply_sound h
+    · exact ⟨hS, fun v h => by cases h⟩
+  · -- a nullary constructor
+    rename_i T idx
+    refine ⟨hS, fun v h => ?_⟩
+    cases hc : Model.consOf? (Node.const (.dtCons T idx)) with
+    | none => simp [hc] at h
+    | some c =>
+      rcases c with ⟨sc, ddc, ic⟩
+      simp only [hc, Option.map_some, Option.some.injEq] at h
+      subst h
+      have hsmt : (Node.const (.dtCons T idx)).toSmt = SmtTerm.DtCons sc ddc ic := by
+        simp only [Model.consOf?] at hc; split at hc <;> simp_all
+      rw [hsmt, __smtx_model_eval.eq_def]; rfl
   · exact ⟨hS, fun v h => by cases h⟩
 
 omit [LogosFacts] in
@@ -701,9 +969,9 @@ theorem solveScript_sat (sc : Script) (u : UserOptions) (ee pp wp co vs : Bool)
     -- input
     have key : ∀ r0 : Solver.Result, (if r0.answer != .sat then r0 else
         if (Solver.buildModel r0.ee (Solver.relevantTerms r0.asserted) (Solver.freeConsts as)
-            (engineDefs as opts pp)).satisfies as then
+            (engineDefs as opts pp) as).satisfies as then
           { r0 with model := some (Solver.buildModel r0.ee (Solver.relevantTerms r0.asserted)
-            (Solver.freeConsts as) (engineDefs as opts pp)) }
+            (Solver.freeConsts as) (engineDefs as opts pp) as) }
         else { r0 with answer := .unknown, uncertified := some "the model does not satisfy the input" }).answer = .sat →
         ∃ M, model_wf M ∧ TrueIn M (inputNode as).toEo := by
       intro r0 hs

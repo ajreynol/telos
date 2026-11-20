@@ -1011,9 +1011,14 @@ Results, with `scripts/fuzz-solve.py --sat` (cvc5 with
     `cvc5-deterministic-order.patch` addresses);
   - a few preregistrations of lemma atoms.
 
-  Datatypes `sat` answers are `unknown`: the model check fails, because the
-  model builder does not build datatype values yet (cvc5's
-  `TheoryDatatypes::collectModelInfo`).
+  Datatypes `sat` answers are certified: the model builder builds datatype
+  values (cvc5's `TheoryDatatypes::collectModelInfo`, `Telos/Solver/Model.lean`),
+  and the evaluator, whose soundness is proved, evaluates constructors, testers
+  and selectors (with Logos's functions for selectors applied to the wrong
+  constructor). On 816 random QF_UFDT benchmarks, every one of the 522 that
+  cvc5 answers `sat` is a certified `sat`, and there are no wrong answers.
+  A conjunction on which a theory sends a lemma goes to the SAT solver (the
+  engine alone gives up there).
 - On telos's own preprocessing, the remaining differences are preprocessing's,
   not the search's.
 

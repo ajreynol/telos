@@ -306,14 +306,16 @@ theorem solveScript_unsat (sc : Script) (u : UserOptions) (ee pp wp co vs : Bool
         obtain ⟨rfl, rfl⟩ := h
         have hgood := literalsOf_sound hM _ [] lits (engineLiterals_ok hlits) (by simp)
           (engineAssertions_sound hM as opts pp hb hv)
-        -- the check of a `sat` answer turns it into `unknown`, never into `unsat`
-        generalize hr : Solver.run _ lits = r0 at hu
-        have hu' : r0.answer = .unsat := by
-          split at hu
-          · exact hu
-          · split at hu <;> simp_all
-        rw [← hr] at hu'
-        exact Solver.run_unsat_sound _ lits hu' (fun l hl => (hgood l hl).1) M hM
+        -- the SAT solver (after a lemma) never answers `unsat`, and the check
+        -- of a `sat` answer turns it into `unknown`, never into `unsat`
+        generalize hrs : Solver.runSat _ _ = rs at hu
+        have hrs' : rs.answer ≠ .unsat := hrs ▸ Solver.runSat_ne_unsat _ _
+        generalize hrn : Solver.run _ lits = rn at hu
+        have hun : rn.answer = .unsat := by
+          repeat' split at hu
+          all_goals simp_all
+        rw [← hrn] at hun
+        exact Solver.run_unsat_sound _ lits hun (fun l hl => (hgood l hl).1) M hM
           (fun l hl => (hgood l hl).2)
 
 end Frontend

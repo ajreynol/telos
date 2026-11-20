@@ -23,16 +23,31 @@ direct:
 - function values carry their Logos types.
 
 The values are those of the theories telos solves: Booleans, the elements of
-uninterpreted sorts (numbered), and functions. A function is given by a finite
-table (`FunTable`) with a default, curried as in Logos: a function of two
-arguments maps the first to a function of one.
+uninterpreted sorts (numbered), functions, and datatype values. A function is
+given by a finite table (`FunTable`) with a default, curried as in Logos: a
+function of two arguments maps the first to a function of one. A datatype
+value is shaped as Logos's: a constructor (`dtc`) applied to its arguments
+one at a time (`app`). Constructors, testers and selectors evaluate as in
+Logos; a selector applied to the wrong constructor applies the model's
+function for those applications, which Logos names
+`@wrong_apply_sel_i_j` (`wrongSelName`), kept with the model's other symbols
+(`Model.others`).
 
 `buildModel` builds a model from the equality engine's classes of the relevant
-terms, the subterms of the asserted literals, as cvc5's model builder does for
-UF (`TheoryEngineModelBuilder`, from its model equality engine):
+terms, the subterms of the asserted literals, as cvc5's model builder does
+(`TheoryEngineModelBuilder`, from its model equality engine, and
+`TheoryDatatypes::collectModelInfo`):
 - each class of an uninterpreted sort is an element of its own;
-- each relevant application gives an entry of its function's table;
-- the definitions of the variables solved by preprocessing are evaluated last.
+- each class of a datatype with a constructor term is that constructor applied
+  to its arguments' values; one without (which the theory did not need to
+  split) gets a value of its own, distinct from the others', with a
+  constructor its testers do not exclude (`classValues`);
+- each relevant application gives an entry of its function's table, and each
+  relevant selector applied to the wrong constructor an entry of the function
+  of its wrong applications (every selector of the input has one);
+- the constants not otherwise given a value get a default, then the
+  definitions of the variables solved by preprocessing are evaluated (in
+  passes, as one may use another).
 
 The builder is not trusted: `satisfies` checks its result.
 -/
@@ -54,15 +69,41 @@ inductive MVal where
   | uval (s : Nat) (i : Nat)
   /-- The function of the table `fid` (`FunTable`), of Logos type `dom → rng`. -/
   | fn (fid : Nat) (dom rng : SmtType)
+  /-- Constructor `i` of the datatype `s` of the block `dd` (Logos's
+  `DtCons`). -/
+  | dtc (s : native_String) (dd : SmtDatatypeDecl) (i : Nat)
+  /-- A value applied to another: a constructor to its arguments, one at a
+  time (Logos's `Apply`). -/
+  | app (f a : MVal)
   deriving DecidableEq, Inhabited
+
+/-- The Logos type of constructor `i` of the datatype `s` of `dd`. -/
+def consType (s : native_String) (dd : SmtDatatypeDecl) (i : Nat) : SmtType :=
+  __smtx_typeof_dt_cons_value_rec (SmtType.Datatype s dd) (__smtx_dt_resolve (__smtx_dd_lookup s dd) dd) i
 
 /-- The Logos type of a value. -/
 def MVal.ty : MVal → SmtType
   | .bool _ => .Bool
   | .uval s _ => .USort s
   | .fn _ d r => .FunType d r
+  | .dtc s dd i => consType s dd i
+  | .app f a => __smtx_typeof_apply_value f.ty a.ty
 
-/-- A function, as a table of its values, with a default. -/
+/-- Constructor `i` of `s` applied to `args`. -/
+def MVal.mkDt (s : native_String) (dd : SmtDatatypeDecl) (i : Nat) (args : List MVal) : MVal :=
+  args.foldl .app (.dtc s dd i)
+
+/-- The head of an application (`__smtx_apply_head_value`). -/
+def MVal.head : MVal → MVal
+  | .app f _ => f.head
+  | v => v
+
+/-- The argument at position `n` of an application of `npos` arguments
+(`__smtx_apply_arg_nth_value`). -/
+def MVal.argNth : MVal → Nat → Nat → Option MVal
+  | .app f a, n, npos + 1 => if n == npos then some a else f.argNth n npos
+  | _, _, _ => none
+
 structure FunTable where
   dom : SmtType
   rng : SmtType
@@ -75,15 +116,51 @@ structure Model where
   their value. -/
   consts : Std.HashMap native_String (SmtType × MVal) := {}
   funs : Array FunTable := #[]
+  /-- Other symbols of the model, by name and type: the functions that give
+  the values of selectors applied to the wrong constructor
+  (`native_wrong_apply_sel_id`). -/
+  others : Array (native_String × SmtType × MVal) := #[]
   deriving Inhabited
 
 namespace Model
 
+/-- The value of the symbol named `x` of Logos type `T`: among the other
+symbols, then the constants (as `toSmtModel` looks it up). -/
+def lookup (M : Model) (x : native_String) (T : SmtType) : Option MVal :=
+  match (M.others.find? fun (y, U, _) => y == x && U == T) with
+  | some (_, _, v) => some v
+  | none =>
+    match M.consts.get? x with
+    | some (T', v) => if T' == T then some v else none
+    | none => none
+
 /-- The value of the constant `x` of type `T`. -/
-def const (M : Model) (x : String) (T : TypeNode) : Option MVal :=
-  match M.consts.get? (keyName x) with
-  | some (T', v) => if T' == tyS T then some v else none
-  | none => none
+def const (M : Model) (x : String) (T : TypeNode) : Option MVal := M.lookup (keyName x) (tyS T)
+
+/-- The datatype constructor of a node's Logos term. -/
+def consOf? (f : Node) : Option (native_String × SmtDatatypeDecl × Nat) :=
+  match f.toSmt with
+  | .DtCons s dd i => some (s, dd, i)
+  | _ => none
+
+/-- The datatype selector of a node's Logos term. -/
+def selOf? (f : Node) : Option (native_String × SmtDatatypeDecl × Nat × Nat) :=
+  match f.toSmt with
+  | .DtSel s dd i j => some (s, dd, i, j)
+  | _ => none
+
+/-- The name of the function of the wrong applications of selector `j` of
+constructor `i` (Logos's `native_wrong_apply_sel_id`, which lives with Logos's
+model semantics, outside what telos imports; the two are the same,
+`wrongSelName_eq`). -/
+def wrongSelName (n m : Nat) : native_String :=
+  (native_string_lit "@wrong_apply_sel_") ++ (native_string_lit (toString n)) ++ (native_string_lit "_") ++
+    (native_string_lit (toString m))
+
+/-- The Logos type of the function of the wrong applications of selector `j`
+of constructor `i` of `s`. -/
+def wrongSelType (s : native_String) (dd : SmtDatatypeDecl) (i j : Nat) : SmtType :=
+  .FunType (.Datatype s dd) (__smtx_ret_typeof_sel s dd i j)
 
 /-- Apply a function value to an argument. -/
 def apply (M : Model) (f a : MVal) : Option MVal :=
@@ -111,9 +188,9 @@ table's range. -/
 def tablesOk (M : Model) : Bool :=
   M.funs.all fun t => t.entries.all (fun (_, v) => v.ty == t.rng) && t.default.ty == t.rng
 
-/-- Each constant has a value of its type. -/
+/-- Each constant, and each other symbol, has a value of its type. -/
 def constsOk (M : Model) : Bool :=
-  M.consts.toList.all fun (_, T, v) => v.ty == T
+  (M.consts.toList.all fun (_, T, v) => v.ty == T) && M.others.all fun (_, T, v) => v.ty == T
 
 /-- The memo of the evaluation: the value of each node evaluated, if any. -/
 abbrev Memo := Std.HashMap Key (Option MVal)
@@ -189,6 +266,30 @@ mutual
         match evList M n cs.toList S with
         | (none, S) => (none, S)
         | (some vs, S) => (if vs.isEmpty then none else M.applyAll fv vs, S)
+    | .app (.node .APPLY_CONSTRUCTOR f@(.const (.dtCons ..))) cs =>
+      match consOf? f with
+      | none => (none, S)
+      | some (s, dd, i) =>
+        match evList M n cs.toList S with
+        | (none, S) => (none, S)
+        | (some vs, S) => (some (MVal.mkDt s dd i vs), S)
+    | .app (.node .APPLY_TESTER f@(.const (.dtCons ..))) cs =>
+      match consOf? f, cs.toList with
+      | some (s, dd, i), [x] =>
+        match ev M n x S with
+        | (none, S) => (none, S)
+        | (some v, S) => (some (.bool (v.head == .dtc s dd i)), S)
+      | _, _ => (none, S)
+    | .app (.node .APPLY_SELECTOR f@(.const (.dtSel ..))) cs =>
+      match selOf? f, cs.toList with
+      | some (s, dd, i, j), [x] =>
+        match ev M n x S with
+        | (none, S) => (none, S)
+        | (some v, S) =>
+          (if v.head == .dtc s dd i then v.argNth j (__smtx_dt_num_sels (__smtx_dd_lookup s dd) i)
+           else (M.lookup (wrongSelName i j) (wrongSelType s dd i j)).bind (M.apply · v), S)
+      | _, _ => (none, S)
+    | .const (.dtCons ..) => (consOf? t |>.map fun (s, dd, i) => .dtc s dd i, S)
     | _ => (none, S)
   termination_by (n, 2, 0)
 
@@ -223,10 +324,86 @@ end Model
 
 /-! ## Building a model -/
 
+/-! ### Values of datatypes -/
+
+/-- The constructors of a datatype, as the lists of their field types. -/
+def dtConses : SmtDatatype → List (List SmtType)
+  | .sum c d => fields c :: dtConses d
+  | .null => []
+where
+  fields : SmtDatatypeCons → List SmtType
+    | .cons T c => T :: fields c
+    | .unit => []
+
+/-- The constructors of the datatype `s` of `dd`, their field types resolved. -/
+def consesOf (s : native_String) (dd : SmtDatatypeDecl) : List (List SmtType) :=
+  dtConses (__smtx_dt_resolve (__smtx_dd_lookup s dd) dd)
+
+/-- A value of a type: `false`, the first element of a sort, the first
+constructor of a datatype whose fields have values (within `fuel`). -/
+def groundValue : Nat → SmtType → Option MVal
+  | 0, _ => none
+  | _ + 1, .Bool => some (.bool false)
+  | _ + 1, .USort s => some (.uval s 0)
+  | f + 1, .Datatype s dd =>
+    (consesOf s dd).zipIdx.findSome? fun (fs, i) =>
+      (fs.mapM (groundValue f)).map (MVal.mkDt s dd i)
+  | _ + 1, _ => none
+
+/-- The type has infinitely many values (within `fuel`): a sort, or a datatype
+with a constructor that has a field of the datatype or of an infinite type. -/
+def infiniteType : Nat → SmtType → Bool
+  | 0, _ => false
+  | _ + 1, .USort _ => true
+  | f + 1, T@(.Datatype s dd) =>
+    (consesOf s dd).any fun fs => fs.any fun F => F == T || infiniteType f F
+  | _ + 1, _ => false
+
+/-- The `k`-th value of a type, distinct for distinct `k` (for an infinite
+type; for Booleans, `k` below 2): nesting a recursive constructor `k` times,
+or varying an infinite field. -/
+def valueAt : Nat → SmtType → Nat → Option MVal
+  | 0, _, _ => none
+  | _ + 1, .Bool, k => if k < 2 then some (.bool (k == 1)) else none
+  | _ + 1, .USort s, k => some (.uval s k)
+  | f + 1, T@(.Datatype s dd), k =>
+    let cs := (consesOf s dd).zipIdx
+    match cs.find? (fun (fs, _) => fs.contains T) with
+    | some (fs, i) =>
+      if k == 0 then groundValue (f + 1) T else
+      -- the first field of the datatype is the value before
+      (fieldValues f T fs (valueAt f T (k - 1))).map (MVal.mkDt s dd i)
+    | none =>
+      match cs.find? (fun (fs, _) => fs.any (infiniteType f)) with
+      | some (fs, i) =>
+        let F := (fs.find? (infiniteType f)).getD .None
+        (fieldValues f F fs (valueAt f F k)).map (MVal.mkDt s dd i)
+      | none => if k == 0 then groundValue (f + 1) T else none
+  | _ + 1, _, _ => none
+where
+  /-- The values of the fields `fs`: the first of type `F` is `v`, the others
+  ground. -/
+  fieldValues (f : Nat) (F : SmtType) (fs : List SmtType) (v : Option MVal) : Option (List MVal) :=
+    let i := fs.idxOf F
+    (fs.zipIdx.mapM fun (G, j) => if j == i then v else groundValue f G)
+
+/-- The `k`-th value of a datatype whose top constructor is `i`. -/
+def consValueAt (f : Nat) (s : native_String) (dd : SmtDatatypeDecl) (i k : Nat) : Option MVal :=
+  let T := SmtType.Datatype s dd
+  match (consesOf s dd)[i]? with
+  | none => none
+  | some fs =>
+    let vary := if fs.contains T then some T else fs.find? (infiniteType f)
+    match vary with
+    | some F => (valueAt.fieldValues f F fs (valueAt f F k)).map (MVal.mkDt s dd i)
+    | none => if k == 0 then (fs.mapM (groundValue f)).map (MVal.mkDt s dd i) else none
+
 /-- The default value of a type, if it has one in the model. -/
-def defaultValue : SmtType → Option MVal
+def defaultValue (T : SmtType) : Option MVal :=
+  match T with
   | .Bool => some (.bool false)
   | .USort s => some (.uval s 0)
+  | .Datatype .. => groundValue 16 T
   | _ => none
 
 /-- The function and arguments of an application of a declared function. -/
@@ -301,7 +478,8 @@ where
       addToTable fid a (.fn sub t.dom t.rng)
       go (pre ++ [a]) rest
 
-/-- The value of a class of the equality engine, given by its representative. -/
+/-- The value of a class of the equality engine that is not a datatype's,
+given by its representative. -/
 def classValue (ee : EE.EqualityEngine) (rep : Nat) : Option MVal :=
   let t := ee.nodes[rep]!
   match t with
@@ -310,6 +488,94 @@ def classValue (ee : EE.EqualityEngine) (rep : Nat) : Option MVal :=
     | some .boolean => some (.bool false)
     | some (.sort s) => some (.uval s (rep + 1))
     | _ => none
+
+/-- The constructor of a constructor term: of an application, or a nullary
+constructor. -/
+def consTerm? : Node → Option (native_String × SmtDatatypeDecl × Nat × Array Node)
+  | .app (.node .APPLY_CONSTRUCTOR f) cs => (Model.consOf? f).map fun (s, dd, i) => (s, dd, i, cs)
+  | t@(.const (.dtCons ..)) => (Model.consOf? t).map fun (s, dd, i) => (s, dd, i, #[])
+  | _ => none
+
+/-- **The values of the classes** of the equality engine, by representative,
+as cvc5's model builder gives them (`TheoryDatatypes::collectModelInfo`): a
+class of a datatype with a constructor term has the constructor applied to the
+values of its arguments' classes; one with none (the theory did not need to
+split it) a value of its own, distinct from the others', whose constructor is
+not one its testers exclude; the others as `classValue`. -/
+def classValues (ee : EE.EqualityEngine) : Std.HashMap Nat MVal := Id.run do
+  let n := ee.nodes.size
+  let find (i : Nat) := EE.find ee i
+  let id? (t : Node) : Option Nat := (ee.nodeIds.get? ⟨t⟩).map find
+  -- a constructor term of each class, and the constructors its testers exclude
+  let mut cons : Std.HashMap Nat Nat := {}
+  let mut excluded : Std.HashMap Nat (List Nat) := {}
+  let falseRep := id? Node.mkFalse
+  for h : i in [0:n] do
+    if ee.isInternal[i]! then continue
+    let t := ee.nodes[i]
+    if (consTerm? t).isSome && !cons.contains (find i) then cons := cons.insert (find i) i
+    if let .app (.node .APPLY_TESTER f) #[x] := t then
+      if some (find i) == falseRep then
+        if let (some (_, _, c), some r) := (Model.consOf? f, id? x) then
+          excluded := excluded.insert r (c :: excluded.getD r [])
+  -- the values, from those of the classes without constructor terms (`fresh`)
+  let rec value (fuel : Nat) (fresh : Std.HashMap Nat MVal) (r : Nat) : Option MVal :=
+    match fuel with
+    | 0 => none
+    | fuel + 1 =>
+      match cons.get? r with
+      | some i =>
+        match consTerm? ee.nodes[i]! with
+        | some (s, dd, c, cs) =>
+          (cs.toList.mapM fun x => (id? x).bind (value fuel fresh)).map (MVal.mkDt s dd c)
+        | none => none
+      | none =>
+        match ee.nodes[r]!.typeHint.map fun T => __eo_to_smt_type T.toEo with
+        | some (.Datatype ..) => fresh.get? r
+        | _ => classValue ee r
+  let reps := (List.range n).filter fun i => !ee.isInternal[i]! && find i == i
+  let dtRep (r : Nat) : Option (native_String × SmtDatatypeDecl) :=
+    match ee.nodes[r]!.typeHint.map fun T => __eo_to_smt_type T.toEo with
+    | some (.Datatype s dd) => some (s, dd)
+    | _ => none
+  -- the values that do not depend on fresh ones are taken
+  let mut used : Array MVal := #[]
+  for r in reps do
+    if let some v := value 64 {} r then
+      if (dtRep r).isSome then used := used.push v
+  -- a fresh value for each class without a constructor term
+  let mut fresh : Std.HashMap Nat MVal := {}
+  for r in reps do
+    if cons.contains r then continue
+    let some (s, dd) := dtRep r | continue
+    let ex := excluded.getD r []
+    let allowed := (List.range (consesOf s dd).length).filter (!ex.contains ·)
+    let mut found : Option MVal := none
+    for k in [0:64] do
+      if found.isSome then break
+      for c in allowed do
+        if let some v := consValueAt 16 s dd c k then
+          if !used.contains v then
+            found := some v
+            break
+    if let some v := found then
+      fresh := fresh.insert r v
+      used := used.push v
+  let mut out : Std.HashMap Nat MVal := {}
+  for r in reps do
+    if let some v := value 64 fresh r then out := out.insert r v
+  return out
+
+/-- The selectors applied in nodes. -/
+partial def selectorsOf (ns : List Node) : List (native_String × SmtDatatypeDecl × Nat × Nat) :=
+  let rec go (n : Node) : StateM (Std.HashSet Key × Array (native_String × SmtDatatypeDecl × Nat × Nat)) Unit := do
+    if (← get).1.contains ⟨n⟩ then return
+    modify fun (s, a) => (s.insert ⟨n⟩, a)
+    if let .app (.node .APPLY_SELECTOR f) _ := n then
+      if let some sel := Model.selOf? f then
+        modify fun (s, a) => (s, if a.contains sel then a else a.push sel)
+    if let .app _ cs := n then for c in cs do go c
+  ((ns.forM go).run ({}, #[])).2.2.toList
 
 /-- Set the value of a constant. -/
 def setConst (x : String) (T : TypeNode) (v : MVal) (b : Builder) : Builder :=
@@ -328,26 +594,51 @@ partial def relevantTerms (asserted : Array Node) : Std.HashSet Key :=
   ((asserted.forM go).run {}).2
 
 /-- **Build a model** from the equality engine's classes of the relevant terms
-`relevant`, for the free constants `syms` of the input, and the definitions
-`defs` (`x := t`) of the variables solved by preprocessing, in order. -/
+`relevant`, for the free constants `syms` of the input assertions `inputs`,
+and the definitions `defs` (`x := t`) of the variables solved by
+preprocessing, in order. -/
 def buildModel (ee : EE.EqualityEngine) (relevant : Std.HashSet Key) (syms : List Node)
-    (defs : List (Node × Node)) : Model := Id.run do
+    (defs : List (Node × Node)) (inputs : List Node) : Model := Id.run do
   let mut b : Builder := {}
+  let vals := classValues ee
+  let valOf (t : Node) : Option MVal := (ee.nodeIds.get? ⟨t⟩).bind fun j => vals.get? (EE.find ee j)
+  -- the functions of the wrong applications of selectors: their keys
+  let mut wrong : Array (String × native_String × SmtType) := #[]
   -- the constants and applications of the engine that are relevant
   for h : i in [0:ee.nodes.size] do
     if ee.isInternal[i]! then continue
     let t := ee.nodes[i]
     if !relevant.contains ⟨t⟩ then continue
-    let some v := classValue ee (EE.find ee i) | continue
+    let some v := vals.get? (EE.find ee i) | continue
     match t with
     | .var x T => b := setConst x T v b
+    | .app (.node .APPLY_SELECTOR f) #[x] =>
+      -- a selector applied to another constructor: an entry of the function
+      -- of its wrong applications
+      if let (some (s, dd, c, j), some vx) := (Model.selOf? f, valOf x) then
+        if vx.head != .dtc s dd c then
+          let key := s!"\u0000wrong {c} {j} " ++ String.ofList (s.map Char.ofNat)
+          let T := Model.wrongSelType s dd c j
+          if !wrong.any (·.1 == key) then wrong := wrong.push (key, Model.wrongSelName c j, T)
+          b := ((addEntry key T [vx] v).run b).2
     | _ => match ufApp? t with
       | some (f, T, cs) =>
-        let args := cs.toList.filterMap fun c =>
-          (ee.nodeIds.get? ⟨c⟩).bind fun j => classValue ee (EE.find ee j)
+        let args := cs.toList.filterMap valOf
         if args.length == cs.size then
           b := ((addEntry f (tyS T) args v).run b).2
       | none => pure ()
+  -- every selector applied in the input has one, so that each of its
+  -- applications evaluates (to the table's default when the engine has no
+  -- entry)
+  for (s, dd, c, j) in selectorsOf inputs do
+    let key := s!"\u0000wrong {c} {j} " ++ String.ofList (s.map Char.ofNat)
+    if !wrong.any (·.1 == key) then wrong := wrong.push (key, Model.wrongSelName c j, Model.wrongSelType s dd c j)
+  for (key, name, T) in wrong do
+    let (fid, b') := (tableOf key T []).run b
+    b := b'
+    if let some fid := fid then
+      let t := b.model.funs[fid]!
+      b := { b with model := { b.model with others := b.model.others.push (name, T, .fn fid t.dom t.rng) } }
   -- the function symbols: their top table
   for f in syms do
     if let .var x T := f then
@@ -357,10 +648,24 @@ def buildModel (ee : EE.EqualityEngine) (relevant : Std.HashSet Key) (syms : Lis
         if let some fid := fid then
           let t := b.model.funs[fid]!
           b := setConst x T (.fn fid t.dom t.rng) b
-  -- the other constants: the definitions, then the defaults
-  for (x, t) in defs do
+  -- the other constants: the defaults of those not defined, then the
+  -- definitions (which may use them), then the defaults of the rest
+  let defined := defs.map (·.1)
+  for x in syms do
     if let .var name T := x then
-      if let some v := b.model.eval t then b := setConst name T v b
+      if (b.model.const name T).isNone && !defined.contains x then
+        if let some v := defaultValue (tyS T) then b := setConst name T v b
+  -- (in passes: a definition may use one that comes later)
+  let mut pending := defs
+  for _ in [0:defs.length] do
+    if pending.isEmpty then break
+    let mut rest := []
+    for (x, t) in pending do
+      if let .var name T := x then
+        match b.model.eval t with
+        | some v => b := setConst name T v b
+        | none => rest := rest ++ [(x, t)]
+    pending := rest
   for x in syms do
     if let .var name T := x then
       if (b.model.const name T).isNone then

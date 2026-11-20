@@ -126,8 +126,9 @@ def useSat (cfg : Solver.Config) (out : List Node) (viaSat : Bool) : Bool :=
 
 /-- Solve the assertions of `sc`: the assertions given to the engine, and the
 engine's result. A conjunction of literals goes to the engine alone
-(`Solver.run`), anything else to the SAT solver and the engine
-(`Solver.runSat`), as do conjunctions with `viaSat`. -/
+(`Solver.run`), and to the SAT solver too if a theory sends a lemma; anything
+else to the SAT solver and the engine (`Solver.runSat`), as do conjunctions
+with `viaSat`. -/
 def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Bool := false)
     (preprocess : Bool := true) (wantProof : Bool := false) (cvc5Order : Bool := true)
     (viaSat : Bool := false) :
@@ -140,10 +141,13 @@ def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Boo
   let cfg : Solver.Config := { theories, termBased := opts.termBased, eeEvents, wantProof, cvc5Order }
   let r ← if useSat cfg out viaSat then pure (Solver.runSat cfg out) else do
     let lits ← engineLiterals named out
-    pure (Solver.run cfg lits)
+    let r := Solver.run cfg lits
+    -- the engine alone stops at a lemma (`unknown`, with nothing uncertified):
+    -- the SAT solver is then needed
+    pure (if r.answer == .unknown && r.uncertified.isNone && cfg.ufSolver then Solver.runSat cfg out else r)
   -- a `sat` stands only if its model satisfies the input assertions
   let r := if r.answer != .sat then r else
-    let M := buildModel r.ee (relevantTerms r.asserted) (freeConsts as) (engineDefs as opts preprocess)
+    let M := buildModel r.ee (relevantTerms r.asserted) (freeConsts as) (engineDefs as opts preprocess) as
     if M.satisfies as then { r with model := some M }
     else { r with answer := .unknown, uncertified := some "the model does not satisfy the input" }
   return (out, r)
