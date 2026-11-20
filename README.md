@@ -180,6 +180,7 @@ python3 scripts/gen-rules.py            # regenerate Telos/Rewriter/Rules/Genera
 python3 scripts/gen-term-order.py       # regenerate the generated part of TelosProofs/Core/TermOrder.lean
 lake build telos-fuzz && python3 scripts/fuzz.py --cvc5 PATH   # compare the rewriter with cvc5
 python3 scripts/fuzz-pp.py --cvc5 PATH [--proofs]               # compare the preprocessor with cvc5 (and check its proofs)
+python3 scripts/fuzz-lemmas.py --cvc5 PATH [--solver PATH]       # compare the rewriter with cvc5 on its solver's lemmas (-t im)
 python3 scripts/check-proofs.py --fuzz 500                      # proofs, with Ethos
 python3 scripts/loc-summary.py                                  # lines: spec, core, rewriter, preprocessor, proofs
 bash scripts/profile.sh                                         # where rewriting time goes

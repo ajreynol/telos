@@ -151,11 +151,30 @@ def is_literal(e):
     return isinstance(e, str) and (e[0] in '#"-' or e[0].isdigit())
 
 
+def offset(i):
+    """An index as a term and a constant offset: `(+ c t)` is `(t, c)`, a
+    literal `n` is `(None, n)` (`e` sorted: the constant comes first)."""
+    if is_literal(i):
+        return (None, i)
+    if isinstance(i, list) and len(i) == 3 and i[0] == "+" and is_literal(i[1]):
+        return (repr(i[2]), i[1])
+    return (repr(i), "0")
+
+
+def distinct_indices(idx):
+    """The indices are distinct by rewriting: pairwise, literals or the same
+    term with different constant offsets (`i`, `(+ -1 i)`). Writes at such
+    indices commute, and cvc5 orders them by node id, telos by its term
+    order."""
+    ks = [offset(i) for i in idx]
+    return len(set(ks)) == len(ks) and len({b for b, _ in ks}) == 1
+
+
 def order_free(e):
     """`orient_free(e)`, also with the arguments of commutative operators
-    sorted, and runs of `store` at distinct literal indices sorted: equal for
-    terms that differ only in orders that cvc5 takes from node ids, where telos
-    uses a structural order."""
+    sorted, and runs of `store` at distinct indices (`distinct_indices`)
+    sorted: equal for terms that differ only in orders that cvc5 takes from
+    node ids, where telos uses a structural order."""
     if isinstance(e, str):
         return e
     e = [order_free(x) for x in e]
@@ -164,14 +183,21 @@ def order_free(e):
         e = [e[0]] + sorted(e[1:], key=repr)
     if head == "store" and len(e) == 4:
         writes, base = [], e
-        while isinstance(base, list) and base and base[0] == "store" and len(base) == 4 \
-                and is_literal(base[2]):
+        while isinstance(base, list) and base and base[0] == "store" and len(base) == 4:
             writes.append((base[2], base[3]))
             base = base[1]
-        if len(writes) > 1 and len({i for i, _ in writes}) == len(writes):
-            for i, v in sorted(writes, key=repr):
+        # maximal runs of consecutive writes at pairwise distinct indices, from
+        # the innermost, each sorted (they commute)
+        runs = []
+        for w in reversed(writes):
+            if runs and distinct_indices([i for i, _ in runs[-1]] + [w[0]]):
+                runs[-1].append(w)
+            else:
+                runs.append([w])
+        for run in runs:
+            for i, v in sorted(run, key=repr):
                 base = ["store", base, i, v]
-            e = base
+        e = base
     return e
 
 
@@ -181,7 +207,11 @@ def run_cvc5(cvc5, script, extra=()):
                           "--print-arith-lit-token", *extra], input=script,
                          capture_output=True, text=True, check=False)
     if out.returncode != 0:
-        sys.exit(f"error: cvc5 failed:\n{out.stderr or out.stdout}")
+        import re
+        err = (out.stderr or out.stdout).strip().splitlines()
+        where = re.search(r"<stdin>:(\d+)\.", err[-1] if err else "")
+        line = script.splitlines()[int(where.group(1)) - 1] if where else ""
+        sys.exit(f"error: cvc5 failed: {err[-1] if err else ''}" + (f"\n  on: {line}" if line else ""))
     return [line for line in out.stdout.splitlines() if line.strip()]
 
 
@@ -211,8 +241,51 @@ def main():
     lines = subprocess.run([str(FUZZ), str(a.seed), str(a.count), str(a.depth)] + (["arith"] if a.arith else ["uf"] if a.uf else ["bv"] if a.bv else ["arrays"] if a.arrays else ["mixed"] if a.mixed else ["strings"] if a.strings else ["sets"] if a.sets else ["datatypes"] if a.datatypes else ["quantifiers"] if a.quantifiers else []),
                            capture_output=True, text=True, check=True).stdout.splitlines()
     cases = [tuple(line.split("\t")) for line in lines]
+    sys.exit(1 if compare_rewrites(a.cvc5, cases, a.show) else 0)
 
-    simplified = run_cvc5(a.cvc5, PRELUDE + "".join(f"(simplify {t})\n" for t, _ in cases))
+
+def int_of(t):
+    """The integer a printed constant denotes (`2`, `-2`, `(- 2)`), or None."""
+    if isinstance(t, list) and len(t) == 2 and t[0] == "-":
+        n = int_of(t[1])
+        return -n if n is not None else None
+    if isinstance(t, str) and t.lstrip("-").isdigit():
+        return int(t)
+    return None
+
+
+def negate_sum(p):
+    """`-p`, for a sum of monomials `p` in normal form."""
+    if isinstance(p, list) and p and p[0] == "+":
+        return ["+"] + [negate_sum(m) for m in p[1:]]
+    if isinstance(p, list) and len(p) == 3 and p[0] == "*" and int_of(p[1]) is not None:
+        c = -int_of(p[1])
+        return p[2] if c == 1 else ["*", str(c), p[2]]
+    return ["*", "-1", p]
+
+
+def sign_free(e):
+    """`order_free(e)`, also with each integer inequality `(not (>= p c))`
+    written `(>= -p 1-c)`: equal for terms that differ only in the sign of the
+    leading monomial of integer inequalities, which cvc5 takes from the order of
+    its node ids (an inequality with an integer constant is an integer one: a
+    real constant prints as `c/d`)."""
+    def go(e):
+        if isinstance(e, str):
+            return e
+        e = [go(x) for x in e]
+        if len(e) == 2 and e[0] == "not" and isinstance(e[1], list) and len(e[1]) == 3 \
+                and e[1][0] == ">=" and int_of(e[1][2]) is not None:
+            return [">=", negate_sum(e[1][1]), str(1 - int_of(e[1][2]))]
+        return e
+    return order_free(go(order_free(e)))
+
+
+def compare_rewrites(cvc5, cases, show, extra=(), prelude=PRELUDE):
+    """Compare telos's rewrites `cases` (pairs of a term and its telos rewrite)
+    with cvc5's, print the report, and return the number of semantic
+    disagreements. `extra` are options for cvc5."""
+    simplified = run_cvc5(cvc5, prelude + "".join(f"(simplify {t})\n" for t, _ in cases), extra)
     if len(simplified) != len(cases):
         sys.exit(f"error: expected {len(cases)} results from cvc5, got {len(simplified)}")
 
@@ -222,11 +295,11 @@ def main():
         checks.append(f"(push)(assert (not (= {ours} {theirs})))(check-sat)(pop)\n")
     # Each equivalence check gets a time limit: some string equivalences are hard
     # for cvc5. A check that times out (`unknown`) is reported as unverified.
-    verdicts = run_cvc5(a.cvc5, PRELUDE + "".join(checks), ["--tlimit-per=2000"])
+    verdicts = run_cvc5(cvc5, prelude + "".join(checks), [*extra, "--tlimit-per=2000"])
 
-    same, renamed, oriented, ordered, mismatches, unsound, unverified = 0, 0, 0, 0, [], [], 0
+    same, renamed, oriented, ordered, signed, mismatches, unsound, unverified = 0, 0, 0, 0, 0, [], [], 0
     for i, ((t, ours), theirs) in enumerate(zip(cases, simplified)):
-        if ours == theirs:
+        if ours == theirs or read_term(ours) == read_term(theirs):  # up to `let`s
             same += 1
         elif alpha_free(read_term(ours)) == alpha_free(read_term(theirs)):
             renamed += 1
@@ -234,6 +307,8 @@ def main():
             oriented += 1
         elif order_free(alpha_free(read_term(ours))) == order_free(alpha_free(read_term(theirs))):
             ordered += 1
+        elif sign_free(alpha_free(read_term(ours))) == sign_free(alpha_free(read_term(theirs))):
+            signed += 1
         else:
             mismatches.append((t, ours, theirs))
         for v, what, l, r in ((verdicts[2 * i], "input vs telos", t, ours),
@@ -244,19 +319,20 @@ def main():
                 unverified += 1
 
     n = len(cases)
-    version = subprocess.run([a.cvc5, "--version"], capture_output=True, text=True).stdout.splitlines()
-    print(f"reference: {version[0] if version else a.cvc5}")
+    version = subprocess.run([cvc5, "--version"], capture_output=True, text=True).stdout.splitlines()
+    print(f"reference: {version[0] if version else cvc5}")
     print(f"{n} terms: {same} identical to cvc5 ({100 * same / n:.1f}%), "
           + (f"{renamed} up to the names of bound variables, " if renamed else "")
           + f"{oriented} identical up to the orientation of equalities, "
           f"{ordered} up to the order of commutative arguments, "
-          f"{len(mismatches)} different, {len(unsound)} semantic disagreements"
+          + (f"{signed} up to the sign of integer inequalities, " if signed else "")
+          + f"{len(mismatches)} different, {len(unsound)} semantic disagreements"
           + (f" ({unverified} checks timed out)" if unverified else ""))
-    for t, ours, theirs in mismatches[: a.show]:
+    for t, ours, theirs in mismatches[: show]:
         print(f"\n  input: {t}\n  telos: {ours}\n  cvc5:  {theirs}")
     for what, l, r in unsound:
         print(f"\nSEMANTIC DISAGREEMENT ({what}):\n  {l}\n  {r}")
-    sys.exit(1 if unsound else 0)
+    return len(unsound)
 
 
 if __name__ == "__main__":
