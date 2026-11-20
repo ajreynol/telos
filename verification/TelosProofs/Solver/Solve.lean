@@ -278,8 +278,8 @@ theorem engineAssertions_sound {M : SmtModel} (hM : model_wf M) (as : List Node)
 
 /-- **Correctness of `unsat`.** If the engine answers `unsat` on a script whose
 assertions are Boolean, no well-formed model satisfies the input assertions. -/
-theorem solveScript_unsat (sc : Script) (u : UserOptions) (ee pp wp : Bool)
-    {out : List Node} {r : Solver.Result} (h : solveScript sc u ee pp wp = .ok (out, r))
+theorem solveScript_unsat (sc : Script) (u : UserOptions) (ee pp wp co : Bool)
+    {out : List Node} {r : Solver.Result} (h : solveScript sc u ee pp wp co = .ok (out, r))
     (hu : r.answer = .unsat) {opts : PPOptions} {as : List Node}
     (hin : ppInput sc u = .ok (opts, as)) (hb : ∀ a ∈ as, HasBoolType a.toEo) :
     ∀ M, model_wf M → ¬ TrueIn M (inputNode as).toEo := by

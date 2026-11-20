@@ -190,6 +190,29 @@ The CPC proof is emitted afterwards from the EE's proof forest, which uses
 `ProofEqEngine` does, and through `Proof.emitChainWith`. As for preprocessing,
 results are the same with and without proofs.
 
+## Fidelity mode and fast mode
+
+The engine is a port of cvc5, compared with it event by event, so where cvc5's
+choices are arbitrary (they follow node ids, hash maps, creation order) telos
+imitates them. That imitation is for testing only. The design:
+- **Fidelity mode** (the default, used by `--theory-events`, `--replay` and the
+  fuzzer) makes the same choices as cvc5 wherever telos can, so that the events
+  match.
+- **A fast mode** may make other choices, cheaper or simpler, and its events
+  may differ from cvc5's. What it must keep is the answers' certificates: an
+  `unsat` is certified by its explanation, a `sat` by its model, whatever the
+  choices that led to them. So no choice of this kind needs a proof, and the
+  correctness theorems hold in both modes (they quantify over the setting).
+
+Only choices that decide the *form* of what is produced belong to this
+switch, not the reasoning. Each such imitation is marked and goes under the
+switch. Now: `Solver.Config.cvc5Order` (off with `--no-cvc5-order`), which
+imitates cvc5's order of nodes to orient the equalities of shared terms and of
+lemma atoms, and rewrites lemma atoms as cvc5's preprocessing does.
+Candidates as the engine grows: the order of classes in the splits (cvc5's
+`std::set<Node>`), the order of explanations, and the replay's emulation of the
+SAT solver (replay only).
+
 ## Stage 1: conjunctions of literals
 
 The input is an SMT-LIB script. It goes through telos's preprocessor, which

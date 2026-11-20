@@ -6,7 +6,7 @@ import Telos
 ```
 telos [--proof] [--proof-dir DIR] [--profile] FILE
 telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE
-telos --theory-events [--theory-events-ee] [--no-preprocess] [--proof] [--proof-dir DIR] [PREPROCESSING OPTIONS] FILE
+telos --theory-events [--theory-events-ee] [--no-preprocess] [--no-cvc5-order] [--proof] [--proof-dir DIR] [PREPROCESSING OPTIONS] FILE
 telos --replay TRACE [--theory-events-ee] FILE
 ```
 
@@ -48,7 +48,9 @@ the events at the interface of the theory solvers, as cvc5 prints them with
 `--theory-events-ee`, also the central equality engine's notifications, as
 cvc5's `-o theory-events-ee`. With `--no-preprocess`, the assertions are given
 to the engine as they are (for testing it on cvc5's own preprocessed
-assertions). An `unsat` answer is certified: the input assertions are
+assertions). With `--no-cvc5-order`, the engine does not imitate cvc5's order of
+nodes, which only decides the form of what it produces (the orientation of
+equalities), so its events may differ from cvc5's. An `unsat` answer is certified: the input assertions are
 unsatisfiable (`Telos.solve_unsat_correct`); with `--proof` (or `--proof-dir
 DIR`, writing `DIR/proof.eo`), its CPC refutation of the literals follows.
 
@@ -71,6 +73,8 @@ structure Options where
   theoryEvents : Bool := false
   theoryEventsEE : Bool := false
   noPreprocess : Bool := false
+  /-- Do not imitate cvc5's order of nodes (`Solver.Config.cvc5Order`). -/
+  noCvc5Order : Bool := false
   replay : Option String := none
   pp : Preprocess.UserOptions := {}
 
@@ -83,6 +87,7 @@ def parseArgs : List String → Options → Except String Options
   | "--theory-events" :: rest, o => parseArgs rest { o with theoryEvents := true }
   | "--theory-events-ee" :: rest, o => parseArgs rest { o with theoryEventsEE := true }
   | "--no-preprocess" :: rest, o => parseArgs rest { o with noPreprocess := true }
+  | "--no-cvc5-order" :: rest, o => parseArgs rest { o with noCvc5Order := true }
   | "--replay" :: t :: rest, o => parseArgs rest { o with replay := some t }
   | ["--replay"], _ => .error "--replay needs a trace file"
   | "--proof-dir" :: d :: rest, o => parseArgs rest { o with proofDir := some d }
@@ -94,7 +99,7 @@ def parseArgs : List String → Options → Except String Options
     else parseArgs rest { o with file := some f }
 
 def usage : String :=
-  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE\n       telos --theory-events [--theory-events-ee] [--no-preprocess] [--proof] [--proof-dir DIR] [PREPROCESSING OPTIONS] FILE\n       telos --replay TRACE [--theory-events-ee] FILE"
+  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE\n       telos --theory-events [--theory-events-ee] [--no-preprocess] [--no-cvc5-order] [--proof] [--proof-dir DIR] [PREPROCESSING OPTIONS] FILE\n       telos --replay TRACE [--theory-events-ee] FILE"
 
 def main (args : List String) : IO UInt32 := do
   let opts ← match parseArgs args {} with
@@ -117,7 +122,7 @@ def main (args : List String) : IO UInt32 := do
     | .error e => IO.eprintln s!"telos: {e}"; return 1
   if opts.theoryEvents then
     let withProof := opts.proof || opts.proofDir.isSome
-    match theoryEvents sc opts.pp opts.theoryEventsEE (!opts.noPreprocess) withProof with
+    match theoryEvents sc opts.pp opts.theoryEventsEE (!opts.noPreprocess) withProof (!opts.noCvc5Order) with
     | .ok (out, unc, proof) =>
       IO.print out
       if let some e := unc then IO.eprintln s!"telos: {e}"

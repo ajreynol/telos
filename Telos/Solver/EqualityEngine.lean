@@ -254,6 +254,10 @@ structure Ctx where
   when it happens, as cvc5's `EqualityEngineNotify` is: it reads the engine as it
   is then, and records its outputs as notes. -/
   onNote : Note → EqualityEngine → EqualityEngine := fun _ ee => ee
+  /-- Imitate cvc5's order of nodes where it only decides the form of what is
+  produced (the orientation of equalities), so that the events are cvc5's
+  (`Config.cvc5Order`). -/
+  cvc5Order : Bool := true
 
 abbrev EEM := ReaderT Ctx (StateM EqualityEngine)
 
@@ -424,7 +428,7 @@ def notifyTriggerTermEquality (tag : Nat) (t₁ t₂ : Node) (value : Bool) : EE
   -- cvc5 orients by node ids, the older term first: approximated by the order
   -- in which the engine met the terms
   let ids := (← get).nodeIds
-  let (a, b) := if ageLt ids t₂ t₁ then (t₂, t₁) else (t₁, t₂)
+  let (a, b) := if (← read).cvc5Order && ageLt ids t₂ t₁ then (t₂, t₁) else (t₁, t₂)
   let eq := Node.eqNode a b
   let lit := if value then eq else Node.notNode eq
   if (← get).teConflict then return false

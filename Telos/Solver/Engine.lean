@@ -91,6 +91,12 @@ structure Config where
   /-- Replaying a trace: the inputs, including the shared equalities asserted
   to the theories, come from it. -/
   replaying : Bool := false
+  /-- Fidelity to cvc5 where it only decides the form of what is produced, not
+  the reasoning: imitate cvc5's order of nodes (by id) to orient the equalities
+  of shared terms and of lemma atoms, and rewrite lemma atoms as cvc5's
+  preprocessing does. On for fuzzing and replay, where the events must be
+  cvc5's; a fast mode may turn it off (the answers are certified either way). -/
+  cvc5Order : Bool := true
 
 /-- A Boolean term skolem (`Env::isBooleanTermSkolem`): the purification
 skolem of a Boolean term in a term position, which term formula removal
@@ -271,7 +277,7 @@ def eeCtx : EngineM EE.Ctx := do
   let asg := (← get).assignment
   let dt := (← read).dtSolver
   let base : EE.Ctx := { congruenceKinds := fun k => UF.congruenceKind k || (dt && DT.congruenceKind k),
-                         value := fun a => asg.get? ⟨a⟩ }
+                         value := fun a => asg.get? ⟨a⟩, cvc5Order := (← read).cvc5Order }
   return if dt then { base with onNote := DT.onNote base } else base
 
 /-- Run an operation of the equality engine, and take its notes. -/
@@ -697,6 +703,9 @@ def flushLemmas : EngineM Unit := do
       -- term on the right: approximated by the order in which the equality
       -- engine met the terms (a term it does not have is the newest)
       for atom in formulaAtoms lem #[] do
+        if !(← read).cvc5Order then
+          preRegister atom
+          continue
         let ids := (← get).ee.nodeIds
         let atom := match atom with
           | .app (.kind .EQUAL) #[l, r] =>
