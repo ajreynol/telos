@@ -6,6 +6,7 @@ import Telos.Preprocess.Options
 import Telos.Solver.Event
 import Telos.Solver.EqualityEngine
 import Telos.Solver.Theory.UF
+import Telos.Solver.EqBuild
 
 /-!
 # The theory engine, on conjunctions of literals
@@ -126,10 +127,16 @@ structure State where
   propagated : Array Node := #[]
   /-- The theories that were given a literal. -/
   used : Array Theory := #[]
+  /-- The literals asserted, in order. -/
+  asserted : Array Node := #[]
   /-- UF's facts, and how many it has processed. -/
   ufFacts : Array Node := #[]
   ufHead : Nat := 0
   ee : EE.EqualityEngine := default
+  /-- The certificate of the conflict: its assumptions and a proof of
+  `(true, false)` from them (`Telos/Solver/EqProof.lean`), or why there is
+  none. -/
+  cert : Except String (Array Node × EqProof) := .error "no conflict"
 
 abbrev EngineM := ReaderT Config (StateM State)
 
@@ -191,7 +198,8 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
       -- `eqNotifyConstantTermMerge`: the conflict, explained
       let (exp, _) ← runEE (EE.explainLit (Node.eqNode a b))
       emit (.conflict (← level) .THEORY_BUILTIN "EQ_CONSTANT_MERGE" (EE.mkAnd exp))
-      modify fun s => { s with inConflict := true, theoryConflict := true }
+      let cert := EE.conflictOfConstants (← get).ee (← get).asserted exp a b
+      modify fun s => { s with inConflict := true, theoryConflict := true, cert }
 
 /-- Run an operation of the equality engine and process its notes. -/
 def withEE (x : EE.EEM α) : EngineM α := do
@@ -303,7 +311,8 @@ def assertFact (lit : Node) : EngineM Unit := do
 /-- The SAT solver assigns `lit` and asserts it. -/
 def assign (lit : Node) : EngineM Unit := do
   let (atom, pol) := atomOf lit
-  modify fun s => { s with assignment := s.assignment.insert ⟨atom⟩ pol }
+  modify fun s => { s with assignment := s.assignment.insert ⟨atom⟩ pol,
+                           asserted := s.asserted.push lit }
   assertFact lit
 
 /-- `Theory::check` of one theory: for UF, its facts are asserted to the
@@ -333,12 +342,18 @@ def check (e : Effort) : EngineM Unit := do
         if (← get).inConflict then break
 
 /-- The explanation of a propagated literal (`TheoryEngine::getExplanation`
-without sharing: the theory of its atom explains it). -/
-def explain (lit : Node) : EngineM Node := do
+without sharing: the theory of its atom explains it), as its assumptions. -/
+def explain (lit : Node) : EngineM (Array Node) := do
   if (← read).ufSolver then
     let (exp, _) ← runEE (EE.explainLit lit)
-    return EE.mkAnd exp
-  return Node.mkTrue
+    return exp
+  return #[]
+
+/-- The literal that makes `lit` false: its negation. -/
+def negate (lit : Node) : Node :=
+  match lit with
+  | .app (.kind .NOT) #[a] => a
+  | _ => Node.notNode lit
 
 /-- What the SAT solver does with the propagated literals. -/
 inductive SatResult where
@@ -357,7 +372,10 @@ def satPropagate : EngineM SatResult := do
     match (← get).assignment.get? ⟨atom⟩ with
     | some v =>
       if v != pol then
-        emit (.explain (← level) lit (← explain lit))
+        let exp ← explain lit
+        emit (.explain (← level) lit (EE.mkAnd exp))
+        let cert := EE.conflictOfPropagation (← get).ee (← get).asserted exp lit (negate lit)
+        modify fun s => { s with cert }
         return .conflict
     | none =>
       assign lit
@@ -373,7 +391,9 @@ def solve (lits : List Node) : EngineM Answer := do
   if (← read).ufSolver then
     let ctx ← eeCtx
     modify fun s => { s with ee := EE.init ctx }
-  if lits.contains Node.mkFalse then return .unsat
+  if lits.contains Node.mkFalse then
+    modify fun s => { s with cert := .ok (#[Node.mkFalse], .symm (.assume 0)) }
+    return .unsat
   modify fun s => { s with level := 1 }
   for l in lits do preRegister (atomOf l).1
   -- the unit clauses: two that contradict each other are a conflict
@@ -381,7 +401,14 @@ def solve (lits : List Node) : EngineM Answer := do
   for l in lits do
     let (atom, pol) := atomOf l
     match units.get? ⟨atom⟩ with
-    | some v => if v != pol then return .unsat
+    | some v =>
+      if v != pol then
+        -- the atom, asserted with both polarities
+        let p : EqProof := match atom with
+          | .app (.kind .EQUAL) #[_, _] => .trans (.symm (.eqTrue (.assume 0))) (.assume 1)
+          | _ => .trans (.symm (.assume 0)) (.assume 1)
+        modify fun s => { s with cert := .ok (#[atom, Node.notNode atom], p) }
+        return .unsat
     | none => units := units.insert ⟨atom⟩ pol
   let mut seen : Std.HashSet Key := {}
   for l in lits do
@@ -402,9 +429,47 @@ def solve (lits : List Node) : EngineM Answer := do
     return .sat
   return .unknown
 
-/-- Run `solve` on `lits`: the answer and the events. -/
-def run (c : Config) (lits : List Node) : Answer × Array Event :=
+/-- The result of the engine. -/
+structure Result where
+  answer : Answer
+  events : Array Event
+  /-- Why an `unsat` of the engine was not certified, and so answered
+  `unknown`. -/
+  uncertified : Option String := none
+  /-- The certificate of an `unsat` answer. -/
+  cert : Option (Array Node × EqProof) := none
+
+/-- The certificate `(A, p)` refutes the literals `lits`: `p` proves
+`(true, false)` from the closed assumptions `A`, all of which are among
+`lits`. -/
+def certifies (lits : List Node) (A : Array Node) (p : EqProof) : Bool :=
+  A.all (fun l => lits.any (fun x => decide (x = l))) && EqProof.checkConflict A p
+
+/-- Run `solve` on `lits`. An `unsat` answer stands only if its certificate
+refutes `lits` (`certifies`), and is `unknown` otherwise. -/
+def run (c : Config) (lits : List Node) : Result :=
   let (a, s) := ((solve lits).run c).run {}
-  (a, s.events)
+  if a != .unsat then { answer := a, events := s.events } else
+  match s.cert with
+  | .error e => { answer := .unknown, events := s.events, uncertified := some e }
+  | .ok (A, p) =>
+    if certifies lits A p then { answer := .unsat, events := s.events, cert := some (A, p) }
+    else { answer := .unknown, events := s.events, uncertified := some "the certificate does not check" }
+
+/-- **An `unsat` answer is certified**: it comes with a certificate that
+refutes the literals. (`verification/TelosProofs/Solver/Engine.lean` turns
+this into: no well-formed model satisfies the literals.) -/
+theorem run_unsat (c : Config) (lits : List Node) (h : (run c lits).answer = .unsat) :
+    ∃ A p, certifies lits A p = true := by
+  unfold run at h
+  split at h
+  split at h
+  · simp_all
+  · split at h
+    · simp at h
+    · rename_i A p _
+      split at h
+      · exact ⟨A, p, by assumption⟩
+      · simp at h
 
 end Telos.Solver

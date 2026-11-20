@@ -1,5 +1,6 @@
 import TelosProofs.Rewriter.Rewriter
 import TelosProofs.Preprocess.Preprocess
+import TelosProofs.Solver.Solve
 
 /-!
 # Axiom audit
@@ -34,3 +35,4 @@ elab "#assert_axioms " id:ident : command => do
 -- and `preprocess_correct`.
 #assert_axioms Telos.rewrite_correct_of_logos
 #assert_axioms Telos.preprocess_correct_of_logos
+#assert_axioms Telos.Frontend.solveScript_unsat

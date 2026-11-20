@@ -6,7 +6,7 @@ import Telos
 ```
 telos [--proof] [--proof-dir DIR] [--profile] FILE
 telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE
-telos --theory-events [--theory-events-ee] [--no-preprocess] [PREPROCESSING OPTIONS] FILE
+telos --theory-events [--theory-events-ee] [--no-preprocess] [--proof] [--proof-dir DIR] [PREPROCESSING OPTIONS] FILE
 ```
 
 Reads an SMT-LIB script of declarations and `(simplify t)` commands (`-` for
@@ -47,7 +47,9 @@ the events at the interface of the theory solvers, as cvc5 prints them with
 `--theory-events-ee`, also the central equality engine's notifications, as
 cvc5's `-o theory-events-ee`. With `--no-preprocess`, the assertions are given
 to the engine as they are (for testing it on cvc5's own preprocessed
-assertions).
+assertions). An `unsat` answer is certified: the input assertions are
+unsatisfiable (`Telos.solve_unsat_correct`); with `--proof` (or `--proof-dir
+DIR`, writing `DIR/proof.eo`), its CPC refutation of the literals follows.
 -/
 
 open Telos Telos.Frontend
@@ -82,7 +84,7 @@ def parseArgs : List String → Options → Except String Options
     else parseArgs rest { o with file := some f }
 
 def usage : String :=
-  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE\n       telos --theory-events [--theory-events-ee] [--no-preprocess] [PREPROCESSING OPTIONS] FILE"
+  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE\n       telos --theory-events [--theory-events-ee] [--no-preprocess] [--proof] [--proof-dir DIR] [PREPROCESSING OPTIONS] FILE"
 
 def main (args : List String) : IO UInt32 := do
   let opts ← match parseArgs args {} with
@@ -95,8 +97,19 @@ def main (args : List String) : IO UInt32 := do
     | .ok sc => pure sc
     | .error e => IO.eprintln s!"telos: {e}"; return 1
   if opts.theoryEvents then
-    match theoryEvents sc opts.pp opts.theoryEventsEE (!opts.noPreprocess) with
-    | .ok out => IO.print out; return 0
+    let withProof := opts.proof || opts.proofDir.isSome
+    match theoryEvents sc opts.pp opts.theoryEventsEE (!opts.noPreprocess) withProof with
+    | .ok (out, unc, proof) =>
+      IO.print out
+      if let some e := unc then IO.eprintln s!"telos: unsat not certified ({e}): answering unknown"
+      match proof with
+      | some (.ok text) =>
+        match opts.proofDir with
+        | some d => IO.FS.createDirAll d; IO.FS.writeFile s!"{d}/proof.eo" text
+        | none => IO.print text
+      | some (.error e) => IO.eprintln s!"telos: no proof: {e}"; return 1
+      | none => pure ()
+      return 0
     | .error e => IO.eprintln s!"telos: {e}"; return 1
   if opts.postAsserts then
     let withProof := opts.proof || opts.proofDir.isSome

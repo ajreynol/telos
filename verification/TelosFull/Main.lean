@@ -123,7 +123,18 @@ theorem preprocess_correct (as : List Node) (h : (Preprocess.inputNode as).WellT
     (Preprocess.inputNode as).Equiv (Preprocess.preprocessCert as opts).1 :=
   preprocess_correct_of_logos as h opts
 
+/-- **Correctness of `unsat`** (`telos --theory-events`). If the theory engine
+answers `unsat` on a script whose assertions are Boolean, no well-formed model
+satisfies them. -/
+theorem solve_unsat_correct (sc : Frontend.Script) (u : Preprocess.UserOptions) (ee pp : Bool)
+    {out : List Node} {r : Solver.Result} (h : Frontend.solveScript sc u ee pp = .ok (out, r))
+    (hu : r.answer = .unsat) {opts : Preprocess.PPOptions} {as : List Node}
+    (hin : Frontend.ppInput sc u = .ok (opts, as)) (hb : ∀ a ∈ as, HasBoolType a.toEo) :
+    ∀ M, model_wf M → ¬ TrueIn M (Preprocess.inputNode as).toEo :=
+  Frontend.solveScript_unsat sc u ee pp h hu hin hb
+
 end Telos
 
 #assert_axioms Telos.rewrite_correct
 #assert_axioms Telos.preprocess_correct
+#assert_axioms Telos.solve_unsat_correct

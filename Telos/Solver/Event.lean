@@ -110,6 +110,21 @@ inductive Event where
   | eeDiseq (level : Nat) (t₁ t₂ reason : Node)
   deriving Inhabited
 
+/-- The event with its nodes mapped by `f` (for naming skolems). -/
+def Event.map (f : Node → Node) : Event → Event
+  | .prereg k t => .prereg k (f t)
+  | .assert k T l => .assert k T (f l)
+  | .fact k T id l e => .fact k T id (f l) (f e)
+  | .lemma k T id l => .lemma k T id (f l)
+  | .conflict k T id c => .conflict k T id (f c)
+  | .propagate k T l => .propagate k T (f l)
+  | .explain k l e => .explain k (f l) (f e)
+  | .phase k l p => .phase k (f l) p
+  | .eeNewClass k t => .eeNewClass k (f t)
+  | .eeMerge k a b => .eeMerge k (f a) (f b)
+  | .eeDiseq k a b r => .eeDiseq k (f a) (f b) (f r)
+  | e => e
+
 /-- The event as cvc5 prints it, without the newline. -/
 def Event.print (N : DtNames) : Event → String
   | .prereg k t => s!"(prereg {k} {t.toSmtLibLet N})"

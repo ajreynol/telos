@@ -1,5 +1,6 @@
 import Telos.Frontend.PostAsserts
 import Telos.Solver.Engine
+import Telos.Solver.EqProofCpc
 
 /-!
 # `--theory-events`: solving conjunctions of literals
@@ -9,10 +10,15 @@ the theory engine (`Telos/Solver/Engine.lean`) if it is a conjunction of
 literals, and prints the engine's events as cvc5 prints them with
 `-o theory-events` (`cvc5-theory-events.patch`), then the answer.
 
-The literals are those of the preprocessed assertions, flattened through `and`,
-as cvc5's CNF stream asserts the children of a top-level `and` as units. Their
-skolems are named as `--post-asserts` names them (`@purify_1`, …), so the
-events print them as the post-asserts do.
+The literals are those of the preprocessed assertions, split at a top-level
+`and`, as cvc5's CNF stream asserts the children of a top-level `and` as units.
+The engine works on the skolems themselves; they are printed as
+`--post-asserts` names them (`@purify_1`, …).
+
+An `unsat` answer means that the input assertions are unsatisfiable
+(`verification/TelosProofs/Solver/Solve.lean`): the engine's certificate
+refutes the literals, which hold in every model of the preprocessed
+assertions, which are equivalent to the input ones.
 
 Anything else (a disjunction, an `ite`, a Boolean equality) has SAT structure,
 which telos does not handle yet: the input is reported as unsupported.
@@ -38,42 +44,94 @@ def isConnective : Node → Bool
     | _ => false
   | _ => false
 
-/-- The literals of a conjunction: `true` has none, `and` the literals of its
-children; `none` if `n` is not a conjunction of literals. -/
-partial def conjLiterals (n : Node) : Option (List Node) :=
+/-- A literal: an atom, or the negation of one. -/
+def isLiteral (n : Node) : Bool :=
+  match n with
+  | .app (.kind .NOT) #[a] => !isConnective a
+  | _ => !isConnective n
+
+/-- The literals of a preprocessed assertion: `true` has none, a conjunction of
+literals its conjuncts, a literal itself; `none` otherwise. (The rewriter
+flattens nested conjunctions.) -/
+def conjLiterals (n : Node) : Option (List Node) :=
   if n == Node.mkTrue then some []
   else match n with
-    | .app (.kind .AND) cs => cs.toList.foldlM (fun acc c => (acc ++ ·) <$> conjLiterals c) []
-    | .app (.kind .NOT) #[a] => if isConnective a then none else some [n]
-    | _ => if isConnective n then none else some [n]
+    | .app (.kind .AND) cs =>
+      if 2 ≤ cs.size && cs.all isLiteral then some cs.toList else none
+    | _ => if isLiteral n then some [n] else none
 
-/-- The preprocessed assertions of `sc`, with their skolems named as
-`printPostAsserts` names them. -/
-def namedAssertions (sc : Script) (out : Array Node) (defs : List Node) : List Node :=
-  let rhs := defs.filterMap fun
-    | .app (.kind .EQUAL) #[.var .., t] => some t
-    | _ => none
-  ((nameSkolems sc.dtNames (out.toList ++ rhs)).1).take out.size
+/-- The assertions given to the engine: the input assertions `as`, preprocessed
+with the options `opts` unless `preprocess` is false. The preprocessed ones are
+the conjuncts of the pipeline but its last, the definitions slot
+(`Pipeline.assertions`). -/
+def engineAssertions (as : List Node) (opts : Preprocess.PPOptions) (preprocess : Bool) : List Node :=
+  if as.isEmpty || !preprocess then as else
+    match (Preprocess.preprocessCert as opts).1 with
+    | .app (.kind .AND) cs => if 2 ≤ cs.size then cs.toList.dropLast else [.app (.kind .AND) cs]
+    | n => [n]
+
+/-- The literals of the assertions, or the first that is not a conjunction of
+literals. -/
+def literalsOf (out : List Node) : Except Node (List Node) :=
+  out.foldlM (fun acc a => match conjLiterals a with
+    | some ls => .ok (acc ++ ls)
+    | none => .error a) []
+
+/-- A `distinct` atom, which the UF solver does not handle (cvc5's
+`DistinctExtension`). -/
+def isDistinct (l : Node) : Bool :=
+  match (atomOf l).1 with
+  | .app (.kind .DISTINCT) _ => true
+  | _ => false
+
+/-- The literals of the assertions `out` given to the engine, or why they are
+not supported; `named` prints a node with its skolems named. -/
+def engineLiterals (named : Node → String) (out : List Node) : Except String (List Node) :=
+  match literalsOf out with
+  | .ok ls =>
+    match ls.find? isDistinct with
+    | some l => .error s!"unsupported: the literal {named l} is a distinct"
+    | none => .ok ls
+  | .error a => .error s!"unsupported: the preprocessed assertion {named a} is not a conjunction of literals"
+
+theorem engineLiterals_ok {named : Node → String} {out lits : List Node}
+    (h : engineLiterals named out = .ok lits) : literalsOf out = .ok lits := by
+  unfold engineLiterals at h
+  split at h
+  · rename_i ls hl
+    split at h
+    · simp at h
+    · simp only [Except.ok.injEq] at h; subst h; exact hl
+  · simp at h
+
+/-- Solve the assertions of `sc`: the assertions given to the engine, and the
+engine's result. -/
+def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Bool := false)
+    (preprocess : Bool := true) : Except String (List Node × Solver.Result) := do
+  let theories ← enabledTheories (sc.logic.getD "ALL")
+  let (opts, as) ← ppInput sc u
+  let out := engineAssertions as opts preprocess
+  let named (n : Node) : String :=
+    (substSkolems ((namedSkolems sc.dtNames out).map fun (k, v, _) => (k, v)) n).toSmtLibLet sc.dtNames
+  let lits ← engineLiterals named out
+  return (out, Solver.run { theories, termBased := opts.termBased, eeEvents } lits)
 
 /-- Preprocess `sc`, solve the result if it is a conjunction of literals, and
-print the events and the answer. -/
+print the events and the answer; also why an `unsat` of the engine was not
+certified, if it was not (the answer is then `unknown`), and with `withProof`
+the CPC refutation of the literals of a certified `unsat`
+(`Telos/Solver/EqProofCpc.lean`), whose skolems are their CPC terms. Skolems
+are printed as `--post-asserts` names them in the events. -/
 def theoryEvents (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Bool := false)
-    (preprocess : Bool := true) : Except String String := do
-  let logic := sc.logic.getD "ALL"
-  let theories ← enabledTheories logic
-  let (opts, as) ← ppInput sc u
-  let out := if as.isEmpty || !preprocess then as else
-    let p := Preprocess.preprocessCert as opts
-    namedAssertions sc (Preprocess.Pipeline.assertions p) (Preprocess.Pipeline.defs p)
-  let lits ← out.foldlM (fun acc a => match conjLiterals a with
-      | some ls => pure (acc ++ ls)
-      | none => throw s!"unsupported: the preprocessed assertion {a.toSmtLibLet sc.dtNames} is not a conjunction of literals")
-    []
-  for l in lits do
-    if let .app (.kind .DISTINCT) _ := (atomOf l).1 then
-      throw s!"unsupported: the literal {l.toSmtLibLet sc.dtNames} is a distinct"
-  let (answer, events) := Solver.run { theories, termBased := opts.termBased, eeEvents } lits
-  let lines := events.toList.map (·.print sc.dtNames)
-  return "\n".intercalate (lines ++ [answer.name]) ++ "\n"
+    (preprocess : Bool := true) (withProof : Bool := false) :
+    Except String (String × Option String × Option (Except String String)) := do
+  let (out, r) ← solveScript sc u eeEvents preprocess
+  let σ := (namedSkolems sc.dtNames out).map fun (k, v, _) => (k, v)
+  let lines := r.events.toList.map fun e => (e.map (substSkolems σ)).print sc.dtNames
+  let proof := if !withProof then none else
+    match r.cert with
+    | some (A, p) => some (renderRefutation sc.names sc.decls A p)
+    | none => none
+  return ("\n".intercalate (lines ++ [r.answer.name]) ++ "\n", r.uncertified, proof)
 
 end Telos.Frontend

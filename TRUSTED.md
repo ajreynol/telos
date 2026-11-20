@@ -58,10 +58,19 @@ text, and are not covered by it:
   unverified. A parsing bug can make telos rewrite a different term than the one
   written; the result is still equivalent to the term telos read.
 - proof output (`Telos/Core/Proof/`, `Telos/Core/RuleNames.lean`,
-  `Telos/Preprocess/ProofExt.lean`). A rewriter proof is checked by Logos's
-  checker before it is printed; a preprocessing proof only with
-  `--check-proof`. Either is meant to be checked by its reader (Ethos or
-  Logos).
+  `Telos/Preprocess/ProofExt.lean`, `Telos/Solver/EqProofCpc.lean`). A rewriter
+  proof is checked by Logos's checker before it is printed; a preprocessing
+  proof only with `--check-proof`; a refutation of the theory engine never.
+  Each is meant to be checked by its reader (Ethos or Logos).
+
+The theory engine (`Telos/Solver/`: the equality engine, UF, the engine, and
+the builder of certificates `EqBuild.lean`) is not trusted either. An `unsat`
+answer stands only if its certificate (`Telos/Solver/EqProof.lean`) checks and
+its assumptions are among the input literals, and the checker is proven sound
+(`Telos.solve_unsat_correct`). A bug in the engine can make it answer `unknown`,
+or differ from cvc5, but not answer `unsat` on a satisfiable input. Its `sat`
+answers are not certified yet: they rely on the completeness of the UF solver,
+and the correctness theorem does not cover them.
 
 ## Tools
 

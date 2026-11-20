@@ -383,6 +383,67 @@ condition for fidelity, not for soundness:
 
 3. **Soundness and proofs:** the equality proofs, the checker and its theorem,
    and CPC proof output for `unsat`.
+
+   *Done (2026-11-20).*
+   - **Certificate** (`Telos/Solver/EqProof.lean`): `assume`, `symm`, `trans`,
+     n-ary `cong`, and `eqTrue`.
+     - The congruence rule carries a path from an assumption to the
+       application, which makes the application well typed
+       (`ChildTyping.children_wellTyped`).
+     - The checker is linear on nodes. Its only call into Logos is
+       `__eo_is_closed` on the conflict's assumptions, which makes the
+       condition stable for congruence.
+   - **Builder** (`Telos/Solver/EqBuild.lean`):
+     - It follows the equality graph.
+     - Curried congruence is reassembled argument by argument along the path
+       between the internal nodes.
+     - Reflexivity merges become `eqTrue`.
+     - A congruence term that occurs in no literal of the explanation is
+       reached through the asserted literal it occurs in, which is added to
+       the assumptions.
+   - **Engine:** every `unsat` comes with a certificate:
+     - propagation conflicts (`explain`);
+     - `EQ_CONSTANT_MERGE`;
+     - contradictory units;
+     - `false` from preprocessing.
+
+     `Solver.run` answers `unsat` only if the certificate's assumptions are
+     among the literals and it checks (`certifies`), and `unknown` otherwise,
+     with a warning on standard error.
+   - **Theorems:**
+     - `verification/TelosProofs/Solver/EqProof.lean`: `check_sound` and
+       `checkConflict_sound`.
+     - `verification/TelosProofs/Solver/Solve.lean`: `run_unsat_sound`, and
+       `Frontend.solveScript_unsat`. If the engine answers `unsat` on a script
+       with Boolean assertions, no well-formed model satisfies the input
+       assertions. The proof goes through the literals of the engine's
+       assertions (`conjLiterals_sound`) and `preprocess_correct`.
+     - `solveScript_unsat` is audited in `TelosProofs/Axioms.lean`, and
+       `TelosFull` states the unconditional `Telos.solve_unsat_correct`.
+     - To make this provable, the engine now works on the skolems themselves,
+       which are renamed `@purify_k` only when printing.
+   - **Proofs** (`Telos/Solver/EqProofCpc.lean`): with `--proof` or
+     `--proof-dir`, the CPC refutation of the literals.
+     - It uses `false_intro`, `true_intro`, `symm`, `trans`, `cong` with
+       `refl`, and finally `symm` and `true_elim`.
+     - The last step states `false`, so that a checker that accepts the proof
+       has checked a refutation.
+     - Telos does not check it itself; `fuzz-solve.py --proofs` has Ethos
+       check it.
+   - **Results:**
+     - Every `unsat` of the fuzzing is certified: about 1,000 over seeds 31–35,
+       41, 42, 51 and 52.
+     - Ethos accepts every refutation: 193 over seeds 51 and 52, plus the 5 of
+       `test/solve`.
+     - A 4,000-literal transitivity conflict takes 0.39s, against cvc5's 0.45s.
+       Its 13,000-line proof is accepted by Ethos in 0.1s.
+   - **Not covered:**
+     - `sat` answers (they need a model, and its check, which is milestone 4
+       of `solver-plan.md`);
+     - disequalities explained by several reasons (rare; the builder fails,
+       and the answer is `unknown`).
+     - The subset check of `certifies` is quadratic, which is fine at these
+       sizes.
 4. **A second theory in the central EE:** arrays, then datatypes. These bring
    the first lemmas. The unit ones go through the stand-in; the first lemma
    that is not a unit ends the run with `unknown`, and also ends the

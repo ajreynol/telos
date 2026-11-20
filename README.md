@@ -146,7 +146,13 @@ answer. That cvc5 output needs the patch `cvc5-theory-events.patch`.
 So far the engine and UF are ported: cvc5's equality engine, used as the central
 one, and UF. They cover logics in which UF is the only theory (QF_UF). In other
 logics the theories' checks do nothing, and the answer is `unknown` as soon as
-a theory gets a literal. The answers are not certified yet.
+a theory gets a literal.
+
+An `unsat` answer is certified: it stands only if the engine's certificate (an
+equality proof, `Telos/Solver/EqProof.lean`) checks. The answer is then
+correct: the input assertions are unsatisfiable (`Telos.solve_unsat_correct`).
+With `--proof` (or `--proof-dir DIR`), the CPC refutation follows, which Ethos
+checks. `sat` answers are not certified yet.
 `scripts/fuzz-solve.py --cvc5 PATH` compares the events with cvc5's: with
 `--cvc5-pp --ee`, on cvc5's own preprocessed assertions and with the equality
 engine's notifications. See

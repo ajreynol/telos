@@ -98,15 +98,20 @@ def declareFun (N : DtNames) (name : String) (T : TypeNode) : String :=
   let (as, r) := args T
   s!"(declare-fun {name} ({" ".intercalate (as.map (·.toSmtLibWith N))}) {r.toSmtLibWith N})"
 
-/-- The skolems of the assertions `ns` named as symbols (`@purify_1`, …), and
-their declarations. -/
-def nameSkolems (N : DtNames) (ns : List Node) : List Node × List String :=
+/-- The skolems of the nodes `ns`, each with the symbol that names it
+(`@purify_1`, …, numbered in order of first occurrence) and its declaration. -/
+def namedSkolems (N : DtNames) (ns : List Node) : List (Node × Node × String) :=
   let ks := (ns.flatMap topSkolems).foldl (fun acc k => if acc.contains k then acc else acc ++ [k]) []
-  let named := ks.zipIdx.filterMap fun (k, i) => do
+  ks.zipIdx.filterMap fun (k, i) => do
     let .skolem id _ := k | none
     let T ← k.typeHint
     let name := s!"{id.name}_{i + 1}"
     return (k, Node.var name T, declareFun N name T)
+
+/-- The skolems of the assertions `ns` named as symbols (`@purify_1`, …), and
+their declarations. -/
+def nameSkolems (N : DtNames) (ns : List Node) : List Node × List String :=
+  let named := namedSkolems N ns
   (ns.map (substSkolems (named.map fun (k, v, _) => (k, v))), named.map (·.2.2))
 
 /-- The assertions of `sc`, and the preprocessing options for its logic and
