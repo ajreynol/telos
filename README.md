@@ -155,7 +155,11 @@ Where it does not apply, it is certified by an equality proof instead
 (`Telos/Solver/EqProof.lean`). The answer is then correct: the input
 assertions are unsatisfiable (`Telos.solve_unsat_correct`).
 With `--proof` (or `--proof-dir DIR`), the CPC refutation follows, which Ethos
-checks. `sat` answers are not certified yet.
+checks. A `sat` answer is certified too: telos builds a model from the
+equality engine's classes of the relevant terms (`Telos/Solver/Model.lean`)
+and evaluates the input assertions in it, answering `unknown` if one is not
+true. The answer is then correct: the assertions are true in a well-formed
+model (`Telos.solve_sat_correct`).
 `scripts/fuzz-solve.py --cvc5 PATH` compares the events with cvc5's: with
 `--cvc5-pp --ee`, on cvc5's own preprocessed assertions and with the equality
 engine's notifications.

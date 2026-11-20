@@ -74,9 +74,15 @@ answer stands only if its conflict is certified:
   input literals and which the proven checker accepts.
 
 Either way the answer is correct (`Telos.solve_unsat_correct`). A bug in the engine can make it answer `unknown`,
-or differ from cvc5, but not answer `unsat` on a satisfiable input. Its `sat`
-answers are not certified yet: they rely on the completeness of the UF solver,
-and the correctness theorem does not cover them.
+or differ from cvc5, but not answer `unsat` on a satisfiable input.
+
+A `sat` answer stands only if its model (`Telos/Solver/Model.lean`), built
+from the equality engine, satisfies the input assertions: telos evaluates them
+in it. The model builder is not trusted; the evaluation is proven to be
+Logos's, in a well-formed Logos model of the model (`Solver.satisfies_sound`),
+so the answer is correct (`Telos.solve_sat_correct`). A bug in the engine or
+the builder can make telos answer `unknown`, but not `sat` on an
+unsatisfiable input.
 
 ## Tools
 

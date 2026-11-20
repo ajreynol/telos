@@ -278,8 +278,8 @@ theorem engineAssertions_sound {M : SmtModel} (hM : model_wf M) (as : List Node)
 
 /-- **Correctness of `unsat`.** If the engine answers `unsat` on a script whose
 assertions are Boolean, no well-formed model satisfies the input assertions. -/
-theorem solveScript_unsat (sc : Script) (u : UserOptions) (ee pp : Bool)
-    {out : List Node} {r : Solver.Result} (h : solveScript sc u ee pp = .ok (out, r))
+theorem solveScript_unsat (sc : Script) (u : UserOptions) (ee pp wp : Bool)
+    {out : List Node} {r : Solver.Result} (h : solveScript sc u ee pp wp = .ok (out, r))
     (hu : r.answer = .unsat) {opts : PPOptions} {as : List Node}
     (hin : ppInput sc u = .ok (opts, as)) (hb : ∀ a ∈ as, HasBoolType a.toEo) :
     ∀ M, model_wf M → ¬ TrueIn M (inputNode as).toEo := by
@@ -294,7 +294,14 @@ theorem solveScript_unsat (sc : Script) (u : UserOptions) (ee pp : Bool)
       obtain ⟨rfl, rfl⟩ := h
       have hgood := literalsOf_sound hM _ [] lits (engineLiterals_ok hlits) (by simp)
         (engineAssertions_sound hM as opts pp hb hv)
-      exact Solver.run_unsat_sound _ lits hu (fun l hl => (hgood l hl).1) M hM
+      -- the check of a `sat` answer turns it into `unknown`, never into `unsat`
+      generalize hr : Solver.run _ lits = r0 at hu
+      have hu' : r0.answer = .unsat := by
+        split at hu
+        · exact hu
+        · split at hu <;> simp_all
+      rw [← hr] at hu'
+      exact Solver.run_unsat_sound _ lits hu' (fun l hl => (hgood l hl).1) M hM
         (fun l hl => (hgood l hl).2)
 
 end Frontend

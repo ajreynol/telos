@@ -70,6 +70,15 @@ def engineAssertions (as : List Node) (opts : Preprocess.PPOptions) (preprocess 
     | .app (.kind .AND) cs => if 2 ≤ cs.size then cs.toList.dropLast else [.app (.kind .AND) cs]
     | n => [n]
 
+/-- The definitions of the variables that preprocessing solved (`x := t`), from
+the pipeline's definitions slot. -/
+def engineDefs (as : List Node) (opts : Preprocess.PPOptions) (preprocess : Bool) : List (Node × Node) :=
+  if as.isEmpty || !preprocess then [] else
+    let p := Preprocess.preprocessCert as opts
+    (Preprocess.Pipeline.defs p).filterMap fun
+      | .app (.kind .EQUAL) #[x@(.var ..), t] => some (x, t)
+      | _ => none
+
 /-- The literals of the assertions, or the first that is not a conjunction of
 literals. -/
 def literalsOf (out : List Node) : Except Node (List Node) :=
@@ -114,7 +123,13 @@ def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Boo
   let named (n : Node) : String :=
     (substSkolems ((namedSkolems sc.dtNames out).map fun (k, v, _) => (k, v)) n).toSmtLibLet sc.dtNames
   let lits ← engineLiterals named out
-  return (out, Solver.run { theories, termBased := opts.termBased, eeEvents, wantProof } lits)
+  let r := Solver.run { theories, termBased := opts.termBased, eeEvents, wantProof } lits
+  -- a `sat` stands only if its model satisfies the input assertions
+  let r := if r.answer != .sat then r else
+    let M := buildModel r.ee (relevantTerms r.asserted) (freeConsts as) (engineDefs as opts preprocess)
+    if M.satisfies as then { r with model := some M }
+    else { r with answer := .unknown, uncertified := some "the model does not satisfy the input" }
+  return (out, r)
 
 /-- Preprocess `sc`, solve the result if it is a conjunction of literals, and
 print the events and the answer; also why an `unsat` of the engine was not
@@ -133,7 +148,7 @@ def theoryEvents (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Bo
     | some (A, p) => some (renderRefutation sc.names sc.decls A p)
     | none => none
   let note := match r.uncertified with
-    | some e => some s!"unsat not certified ({e}): answering unknown"
+    | some e => some s!"answer not certified ({e}): answering unknown"
     | none => if r.byCertificate then some "unsat by certificate (the verified explanation did not apply)" else none
   return ("\n".intercalate (lines ++ [r.answer.name]) ++ "\n", note, proof)
 

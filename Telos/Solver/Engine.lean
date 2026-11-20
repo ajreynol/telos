@@ -8,6 +8,7 @@ import Telos.Solver.EqualityEngine
 import Telos.Solver.Theory.UF
 import Telos.Solver.EqBuild
 import Telos.Solver.Explain
+import Telos.Solver.Model
 
 /-!
 # The theory engine, on conjunctions of literals
@@ -616,6 +617,12 @@ structure Result where
   /-- The `unsat` was certified by a certificate, not by the verified
   explanation. -/
   byCertificate : Bool := false
+  /-- For a `sat` answer: the equality engine and the literals asserted, from
+  which the model is built (`buildModel`). -/
+  ee : EE.EqualityEngine := default
+  asserted : Array Node := #[]
+  /-- The model of a certified `sat` answer. -/
+  model : Option Model := none
 
 /-- The certificate `(A, p)` refutes the literals `lits`: `p` proves
 `(true, false)` from the closed assumptions `A`, all of which are among
@@ -681,7 +688,7 @@ explanation of the conflict, the last event, is computed here. -/
 def run (c : Config) (lits : List Node) : Result :=
   let c := { c with defer := true }
   let (a, s) := ((solve lits).run c).run {}
-  if a != .unsat then { answer := a, events := s.events } else
+  if a != .unsat then { answer := a, events := s.events, ee := s.ee, asserted := s.asserted } else
   match s.pending with
   | some p =>
     match certifyV lits s.ee p with

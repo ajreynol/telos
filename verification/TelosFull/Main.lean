@@ -110,6 +110,7 @@ instance logosFacts : LogosFacts where
     exacts [ChildArgs.tuple_update_args idx x y h, ChildArgs.update_args idx x y h]
   dt_sel_arg := ChildArgs.dt_sel_arg
   dt_cons_args := ChildArgs.dt_cons_args
+  type_default_ok _ huc T h := type_default_typed_canonical_of_type_wf huc T h
 
 /-- **Correctness of the rewriter.** Rewriting a well-typed node gives an
 equivalent node. -/
@@ -126,15 +127,26 @@ theorem preprocess_correct (as : List Node) (h : (Preprocess.inputNode as).WellT
 /-- **Correctness of `unsat`** (`telos --theory-events`). If the theory engine
 answers `unsat` on a script whose assertions are Boolean, no well-formed model
 satisfies them. -/
-theorem solve_unsat_correct (sc : Frontend.Script) (u : Preprocess.UserOptions) (ee pp : Bool)
-    {out : List Node} {r : Solver.Result} (h : Frontend.solveScript sc u ee pp = .ok (out, r))
+theorem solve_unsat_correct (sc : Frontend.Script) (u : Preprocess.UserOptions) (ee pp wp : Bool)
+    {out : List Node} {r : Solver.Result} (h : Frontend.solveScript sc u ee pp wp = .ok (out, r))
     (hu : r.answer = .unsat) {opts : Preprocess.PPOptions} {as : List Node}
     (hin : Frontend.ppInput sc u = .ok (opts, as)) (hb : ∀ a ∈ as, HasBoolType a.toEo) :
     ∀ M, model_wf M → ¬ TrueIn M (Preprocess.inputNode as).toEo :=
-  Frontend.solveScript_unsat sc u ee pp h hu hin hb
+  Frontend.solveScript_unsat sc u ee pp wp h hu hin hb
+
+/-- **Correctness of `sat`** (`telos --theory-events`). If the theory engine
+answers `sat`, its model satisfies the assertions: they are true in a
+well-formed model. -/
+theorem solve_sat_correct (sc : Frontend.Script) (u : Preprocess.UserOptions) (ee pp wp : Bool)
+    {out : List Node} {r : Solver.Result} (h : Frontend.solveScript sc u ee pp wp = .ok (out, r))
+    (hs : r.answer = .sat) {opts : Preprocess.PPOptions} {as : List Node}
+    (hin : Frontend.ppInput sc u = .ok (opts, as)) :
+    ∃ M, model_wf M ∧ TrueIn M (Preprocess.inputNode as).toEo :=
+  Frontend.solveScript_sat sc u ee pp wp h hs hin
 
 end Telos
 
 #assert_axioms Telos.rewrite_correct
 #assert_axioms Telos.preprocess_correct
 #assert_axioms Telos.solve_unsat_correct
+#assert_axioms Telos.solve_sat_correct

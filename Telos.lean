@@ -55,6 +55,7 @@ import Telos.Solver.EqualityEngine
 import Telos.Solver.Theory.UF
 import Telos.Solver.EqProof
 import Telos.Solver.EqBuild
+import Telos.Solver.Model
 import Telos.Solver.Engine
 import Telos.Solver.EqProofCpc
 import Telos.Frontend.PostAsserts

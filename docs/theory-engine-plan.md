@@ -625,6 +625,75 @@ as before.
 - **The closedness of the reasons**, checked through Logos once per answer.
 - **The subset check of the reasons**, which is quadratic.
 
+## Stage 4: certified `sat`
+
+A `sat` answer is certified by a model, checked by **evaluation**, not by the
+rewriter: the model is a substitution (values for the free constants, finite
+tables for the functions), and the input assertions must evaluate to `true`
+under it. Evaluation is complete for ground terms over the model's values, and
+it is cheap and simple to prove; the rewriter would add nothing.
+
+### The model
+
+`Telos/Solver/Model.lean`:
+- **Values** (`MVal`): Booleans, the elements of uninterpreted sorts
+  (numbered), and functions, given by tables with a default, curried as in
+  Logos.
+- **The builder** (`buildModel`), as cvc5's `TheoryEngineModelBuilder` does
+  for UF:
+  - each class of an uninterpreted sort is an element of its own;
+  - each relevant application gives an entry of its function's table;
+  - then the definitions of the variables solved by preprocessing are
+    evaluated, and the other constants get defaults.
+- **The relevant terms** (`relevantTerms`): the subterms of the asserted
+  literals, as `Theory::computeRelevantTerms`. Only these are considered, so
+  terms of the central equality engine that are not relevant (from atoms that
+  were registered but never asserted) give no table entries.
+- **The check** (`Model.satisfies`): the tables and constants are well typed,
+  and every input assertion evaluates to `true`. The evaluator is memoized on
+  nodes, so it is linear in the DAG. It covers the Boolean connectives,
+  equality, `distinct`, `ite`, constants, and applications of declared
+  functions; anything else evaluates to nothing, and the answer is `unknown`.
+  For `distinct`, the elements must have one Logos type, as Logos's
+  translation requires (checked with Logos's own typing).
+
+### The theorem
+
+`verification/TelosProofs/Solver/Model.lean`:
+- `toSmtModel M`, the Logos model of a model, interprets the constants by
+  their values, the function identifiers by the tables, and every other
+  symbol by the default of its type.
+- `toSmtModel_wf`: it is well formed, given the well-typedness that
+  `satisfies` checks. This uses one new `LogosFacts` field, the typing and
+  canonicity of `__smtx_type_default`
+  (`type_default_typed_canonical_of_type_wf`).
+- `ev_sound`: by induction on the fuel, with a memo invariant, every value
+  `Model.ev` gives is the value of the node in `toSmtModel M`.
+- `satisfies_sound`, then `Frontend.solveScript_sat` and
+  `Telos.solve_sat_correct`: a `sat` answer means the input assertions are
+  true in a well-formed model.
+
+### Results
+
+All the `sat` answers of the fuzzer are certified (seeds 101 to 107), and the
+events are unchanged.
+
+### Several theories: the model equality engine
+
+cvc5 builds models in a separate *model equality engine*, filled by each
+theory (`collectModelInfo`) with its relevant terms only. It is a filtering of
+the central engine: irrelevant terms must not constrain the model.
+
+For UF alone, the classes of the relevant terms in the central engine are the
+same, so the builder filters the central engine instead. The plan for when a
+second theory arrives (arrays, datatypes, arithmetic):
+- port `TheoryModel` with its own equality engine, filled per theory from its
+  relevant terms;
+- port `TheoryEngineModelBuilder` (the assignment of values to classes, by
+  type, with the theories' fixed values first);
+- keep the check unchanged: the builder stays untrusted, and the evaluator
+  grows with the theories' operators.
+
 ## Order of work (all stages)
 
 1. **Equality engine.** Port `theory/uf/equality_engine.cpp` (about 3k lines)

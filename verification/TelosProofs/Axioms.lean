@@ -1,6 +1,6 @@
 import TelosProofs.Rewriter.Rewriter
 import TelosProofs.Preprocess.Preprocess
-import TelosProofs.Solver.Solve
+import TelosProofs.Solver.Model
 
 /-!
 # Axiom audit
@@ -38,3 +38,5 @@ elab "#assert_axioms " id:ident : command => do
 #assert_axioms Telos.Frontend.solveScript_unsat
 #assert_axioms Telos.Solver.EE.explainLitV_sound
 #assert_axioms Telos.Solver.run_unsat_sound
+#assert_axioms Telos.Frontend.solveScript_sat
+#assert_axioms Telos.Solver.satisfies_sound

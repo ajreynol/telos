@@ -173,6 +173,11 @@ class LogosFacts : Prop where
   `Smtm.generic_apply_type_of_non_special_head_closed`. -/
   dt_cons_args : ∀ (s : native_String) (d : DatatypeDecl) (i : native_Nat) (xs : List Term),
     HasSmtType (xs.foldl Term.Apply (Term.DtCons s d i)) → ∀ x ∈ xs, HasSmtType x
+  /-- `Smtm.type_default_typed_canonical_of_type_wf`: the default value of a
+  well-formed type has that type, and is canonical. -/
+  type_default_ok : ∀ (uc : SmtUSortDom), usort_dom_wf uc → ∀ (T : SmtType),
+    __smtx_type_wf T = true →
+    __smtx_typeof_value (__smtx_type_default T) = T ∧ __smtx_value_canonical uc (__smtx_type_default T) = true
 
 /-! ## Facts that need no Logos proof -/
 
