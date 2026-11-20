@@ -278,6 +278,38 @@ by the EE's `explain`.
 - **What is not needed:** no invariant of the EE is proven, and Logos is not
   called.
 
+### Preprocessed inputs: fidelity, not soundness
+
+The engine expects preprocessed literals: rewritten atoms, no term `ite`s, and
+the operators that theory preprocessing eliminates gone. Today the front end
+(`Telos/Frontend/Solve.lean`) runs the preprocessor and passes the result to
+`Solver.run`, which takes any `List Node` and assumes nothing about it.
+
+The proposal, pending the user's decision, is to treat this expectation as a
+condition for fidelity, not for soundness:
+
+- **Soundness assumes nothing about the input.** The engine's theorems are
+  stated over any well-typed literals: `unsat` means the literals are
+  unsatisfiable, because every conflict carries a certificate checked on the
+  actual nodes; `sat` means they are satisfiable, because the model is evaluated
+  on the actual nodes. The front end composes this with
+  `preprocess_correct`.
+- **Fidelity is checked where the input arrives.** A decidable predicate checks
+  that the input is a literal in preprocessed form. Inputs that fail it are
+  `unsupported`. Inputs that pass it but break a theory's expectations give
+  `unknown`, or a trace that differs from cvc5's, and never a wrong answer.
+- **Local structure is parsed, not assumed.** A theory that needs a normal form,
+  such as arithmetic's `(>= p c)`, parses the atom into its own
+  representation, with a lemma that the parse means the same as the node. A
+  parse that fails gives `unsupported` or `unknown`.
+- **No proof-carrying "came from the preprocessor" type.** Such a type would
+  need proofs that preprocessing establishes the invariants. Some of them,
+  idempotence of the rewriter for example, are not true of cvc5, which telos
+  matches. Also, cvc5 preprocesses lemmas too (`TheoryPreprocessor`: rewriting,
+  `ite` removal, `ppRewrite`), so the invariants would have to be
+  re-established inside the engine anyway. The engine will call the rewriter
+  and theory preprocessing on its lemmas as a library.
+
 ### Milestones
 
 1. **The driver.** *Done (2026-11-20).*
@@ -300,8 +332,11 @@ by the EE's `explain`.
 
    Details of the skeleton:
    - The enabled theories are those of the widened logic, with strings
-     enabling UF and quantifiers, and `ALL` adding FF, FP, SEP and BAGS (as
-     observed).
+     enabling UF and quantifiers (as observed).
+   - The theories outside safe mode are not modelled. cvc5 enables FF, FP,
+     SEP and BAGS for `ALL`, and their checks do nothing there; the comparator
+     drops their events from cvc5's traces. Logics that require them are
+     unsupported.
    - Boolean variables are neither preregistered nor asserted to a theory.
    - The children of a top-level `and` are asserted as units.
    - The answer is `sat` only when no theory got a literal.

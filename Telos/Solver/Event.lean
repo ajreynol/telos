@@ -14,21 +14,19 @@ printed as cvc5 prints them, with `let`s (`Node.toSmtLibLet`).
 
 namespace Telos.Solver
 
-/-- cvc5's theories (`src/theory/theory_id.h`), in cvc5's order, which is the
-order in which the theory engine runs their checks. -/
+/-- cvc5's theories (`src/theory/theory_id.h`) that safe mode
+(`--safe-mode=safe`) supports, in cvc5's order, which is the order in which the
+theory engine runs their checks. The others (finite fields, floating point,
+separation logic, bags) are not modelled. -/
 inductive Theory where
   | THEORY_BUILTIN
   | THEORY_BOOL
   | THEORY_UF
   | THEORY_ARITH
   | THEORY_BV
-  | THEORY_FF
-  | THEORY_FP
   | THEORY_ARRAYS
   | THEORY_DATATYPES
-  | THEORY_SEP
   | THEORY_SETS
-  | THEORY_BAGS
   | THEORY_STRINGS
   | THEORY_QUANTIFIERS
   deriving DecidableEq, Repr, Inhabited, Hashable
@@ -37,9 +35,8 @@ namespace Theory
 
 /-- All theories, in cvc5's order. -/
 def all : List Theory :=
-  [THEORY_BUILTIN, THEORY_BOOL, THEORY_UF, THEORY_ARITH, THEORY_BV, THEORY_FF, THEORY_FP,
-   THEORY_ARRAYS, THEORY_DATATYPES, THEORY_SEP, THEORY_SETS, THEORY_BAGS, THEORY_STRINGS,
-   THEORY_QUANTIFIERS]
+  [THEORY_BUILTIN, THEORY_BOOL, THEORY_UF, THEORY_ARITH, THEORY_BV, THEORY_ARRAYS,
+   THEORY_DATATYPES, THEORY_SETS, THEORY_STRINGS, THEORY_QUANTIFIERS]
 
 def name : Theory → String
   | THEORY_BUILTIN => "THEORY_BUILTIN"
@@ -47,13 +44,9 @@ def name : Theory → String
   | THEORY_UF => "THEORY_UF"
   | THEORY_ARITH => "THEORY_ARITH"
   | THEORY_BV => "THEORY_BV"
-  | THEORY_FF => "THEORY_FF"
-  | THEORY_FP => "THEORY_FP"
   | THEORY_ARRAYS => "THEORY_ARRAYS"
   | THEORY_DATATYPES => "THEORY_DATATYPES"
-  | THEORY_SEP => "THEORY_SEP"
   | THEORY_SETS => "THEORY_SETS"
-  | THEORY_BAGS => "THEORY_BAGS"
   | THEORY_STRINGS => "THEORY_STRINGS"
   | THEORY_QUANTIFIERS => "THEORY_QUANTIFIERS"
 

@@ -31,18 +31,19 @@ otherwise.
 namespace Telos.Solver
 
 /-- The theories that cvc5 enables for a logic, after `SetDefaults::widenLogic`
-(observed with `-o theory-events`: the theories whose `check` cvc5 calls). -/
+(observed with `-o theory-events`: the theories whose `check` cvc5 calls),
+among those of safe mode. For `ALL`, cvc5 also enables finite fields, floating
+point, separation logic and bags, which telos does not model: their checks do
+nothing on inputs that do not use them, and `scripts/fuzz-solve.py` drops them
+from cvc5's traces. A logic that requires one of them is not supported. -/
 def enabledTheories (logic : String) : Except String (List Theory) := do
   let l ← Preprocess.Logic.parse logic
   let l := l.widen
   -- strings enable `strings-exp`, which needs quantifiers, and UF
   let l := if l.strings then { l with quantified := true, uf := true } else l
   let base := if logic.startsWith "QF_" then (logic.drop 3).toString else logic
-  let others : List Theory ←
-    if base == "ALL" then pure [.THEORY_FF, .THEORY_FP, .THEORY_SEP, .THEORY_BAGS]
-    else if base.startsWith "SEP_" then pure [.THEORY_SEP]
-    else if l.others > 0 then throw s!"the logic {logic} has theories telos does not support"
-    else pure []
+  if base != "ALL" && l.others > 0 then
+    throw s!"unsupported: the logic {logic} has theories outside safe mode"
   let on : Theory → Bool
     | .THEORY_BUILTIN | .THEORY_BOOL => true
     | .THEORY_UF => l.uf
@@ -53,7 +54,6 @@ def enabledTheories (logic : String) : Except String (List Theory) := do
     | .THEORY_SETS => l.sets
     | .THEORY_STRINGS => l.strings
     | .THEORY_QUANTIFIERS => l.quantified
-    | T => others.contains T
   return Theory.all.filter on
 
 /-- The configuration of the engine. -/
