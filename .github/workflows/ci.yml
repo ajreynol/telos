@@ -58,6 +58,12 @@ jobs:
           # the same events as cvc5's recorded traces
           scripts/fuzz-solve.py --recorded --strict test/solve/*.smt2
 
+      - name: Replaying cvc5's recorded traces gives the same events
+        run: |
+          for t in test/replay/*.trace; do
+            .lake/build/bin/telos --replay "$t" --theory-events-ee "${t%.trace}.smt2" | diff - "$t"
+          done
+
 
   # telos's proofs, against the Logos theorems they use as a hypothesis
   # (`LogosFacts`), so that none of Logos's proofs are built.

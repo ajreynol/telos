@@ -59,3 +59,4 @@ import Telos.Solver.Engine
 import Telos.Solver.EqProofCpc
 import Telos.Frontend.PostAsserts
 import Telos.Frontend.Solve
+import Telos.Frontend.Replay

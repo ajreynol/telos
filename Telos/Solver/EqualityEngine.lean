@@ -30,9 +30,12 @@ What is not ported yet:
   of `true` and `false`, and their disequality propagation is inert;
 - interpreted function kinds and their evaluation (`MERGED_THROUGH_CONSTANTS` of
   `f(c₁, …, cₙ) = c`), which no theory telos has uses yet;
-- backtracking (`backtrack`, `undoMerge`), which inputs without SAT structure
-  never need;
 - the master equality engine of quantified logics.
+
+The engine is context dependent, as cvc5's is on the SAT context: `push` saves
+its counters (cvc5's `CDO`s: the numbers of nodes, merges, lookups, triggers
+and deduced disequalities), and `popTo` restores them and undoes what came
+after (`backtrack`, `undoMerge`), in cvc5's order.
 
 Instead of calling back the theory engine (`EqualityEngineNotify`), the engine
 records notes (`Note`), which the caller turns into events. The one callback
@@ -124,6 +127,18 @@ inductive Note where
   | constantMerge (t₁ t₂ : Node)
   deriving Inhabited
 
+/-- The context-dependent counters of the engine, saved at each push. -/
+structure Counters where
+  nodes : Nat
+  assertedEqs : Nat
+  lookups : Nat
+  triggers : Nat
+  deducedDiseqs : Nat
+  deducedReasons : Nat
+  propLog : Nat
+  done : Bool
+  deriving Inhabited
+
 /-- The tag of `THEORY_LAST`, which cvc5 uses to mark a disequality as
 propagated with its reasons stored. -/
 def lastTag : Nat := 63
@@ -162,6 +177,19 @@ structure EqualityEngine where
   notes : Array Note := #[]
   /-- The theory engine is in conflict: a propagation failed. -/
   teConflict : Bool := false
+  /-- The merges, in order (`d_assertedEqualities`): the class kept and the
+  class merged into it, or `none` for a merge of constants. -/
+  assertedEqs : Array (Option (Nat × Nat)) := #[]
+  /-- The lookups stored, in order (`d_applicationLookups`). -/
+  appLookups : Array FunApp := #[]
+  /-- The disequalities whose reasons were stored, in order
+  (`d_deducedDisequalities`). -/
+  deducedDiseqs : Array (Nat × Nat) := #[]
+  /-- The previous values of the entries of `propagatedDiseqs` set, in order
+  (it is a `CDHashMap` in cvc5). -/
+  propLog : Array ((Nat × Nat) × Option Nat) := #[]
+  /-- The counters saved at each push: the `i`-th, when leaving level `i`. -/
+  saved : Array Counters := #[]
   deriving Inhabited
 
 /-- What the engine reads from its owner. -/
@@ -208,7 +236,8 @@ def newNode (t : Node) : EEM Nat :=
 /-- `storeApplicationLookup`: `funId` is the application of its normalized
 form; an equality of a class with itself is true, of two constants false. -/
 def storeApplicationLookup (norm : FunApp) (funId : Nat) : EEM Unit := do
-  modify fun s => { s with lookup := s.lookup.insert norm funId }
+  modify fun s => { s with lookup := s.lookup.insert norm funId,
+                           appLookups := s.appLookups.push norm }
   if norm.type == .equality then
     let s ← get
     if norm.a == norm.b then
@@ -265,13 +294,16 @@ if any. -/
 def storePropagatedDiseq (tag l r : Nat) : EEM Unit :=
   modify fun s =>
     let tags := (s.propagatedDiseqs.getD (l, r) 0) ||| (1 <<< tag)
+    let log := (s.propLog.push ((l, r), s.propagatedDiseqs.get? (l, r))).push
+      ((r, l), s.propagatedDiseqs.get? (r, l))
     let pd := (s.propagatedDiseqs.insert (l, r) tags).insert (r, l) tags
     if s.deducedReasons.size > s.deducedReasonsSize then
       let ref := (s.deducedReasonsSize, s.deducedReasons.size)
-      { s with propagatedDiseqs := pd
+      { s with propagatedDiseqs := pd, propLog := log
                diseqReasons := (s.diseqReasons.insert (l, r) ref).insert (r, l) ref
+               deducedDiseqs := s.deducedDiseqs.push (l, r)
                deducedReasonsSize := s.deducedReasons.size }
-    else { s with propagatedDiseqs := pd }
+    else { s with propagatedDiseqs := pd, propLog := log }
 
 def pushReason (a b : Nat) : EEM Unit :=
   modify fun s => { s with deducedReasons := s.deducedReasons.push (a, b) }
@@ -363,7 +395,8 @@ def propagate : EEM Unit := do
     addGraphEdge cand.t1 cand.t2 cand.type cand.reason
     let s ← get
     if s.isConstant[c₁]! && s.isConstant[c₂]! then
-      modify fun s => { s with done := true, teConflict := true }
+      modify fun s => { s with done := true, teConflict := true,
+                               assertedEqs := s.assertedEqs.push none }
       note (.constantMerge s.nodes[c₁]! s.nodes[c₂]!)
       continue
     let into :=
@@ -373,7 +406,9 @@ def propagate : EEM Unit := do
         if s.isConstant[c₂]! then c₂ else c₁
       else if s.enodes[c₂]!.size > s.enodes[c₁]!.size then c₂
       else c₁
-    let fired ← if into == c₂ then merge c₂ c₁ else merge c₁ c₂
+    let other := if into == c₂ then c₁ else c₂
+    modify fun s => { s with assertedEqs := s.assertedEqs.push (some (into, other)) }
+    let fired ← merge into other
     for tid in fired do
       if (← get).done then break
       let info := (← get).triggerInfos[tid]!
@@ -665,5 +700,112 @@ def mkAnd (as : Array Node) : Node :=
   if as.isEmpty then Node.mkTrue
   else if as.size == 1 then as[0]!
   else Node.mkNode .AND as
+
+/-! ## Context levels -/
+
+/-- The counters now. -/
+def counters (s : EqualityEngine) : Counters :=
+  { nodes := s.nodes.size, assertedEqs := s.assertedEqs.size, lookups := s.appLookups.size,
+    triggers := s.triggers.size, deducedDiseqs := s.deducedDiseqs.size,
+    deducedReasons := s.deducedReasonsSize, propLog := s.propLog.size, done := s.done }
+
+/-- Enter a new context level. -/
+def push (s : EqualityEngine) : EqualityEngine := { s with saved := s.saved.push (counters s) }
+
+/-- `undoMerge`: separate the class `c₂` from the class `c₁` it was merged
+into. -/
+def undoMerge (s : EqualityEngine) (c₁ c₂ : Nat) : EqualityEngine := Id.run do
+  let e₁ := s.enodes[c₁]!
+  let e₂ := s.enodes[c₂]!
+  -- the same swap of the rings as the merge, and the size back
+  let e₁' : ENode := { e₁ with next := e₂.next, size := e₁.size - e₂.size }
+  let e₂' : ENode := { e₂ with next := e₁.next }
+  let mut s := { s with enodes := (s.enodes.set! c₁ e₁').set! c₂ e₂' }
+  let mut cur := c₂
+  let mut fuel := s.enodes.size
+  while fuel > 0 do
+    fuel := fuel - 1
+    s := { s with enodes := s.enodes.modify cur fun n => { n with find := c₂ } }
+    let mut t := s.nodeTriggers[cur]!
+    let mut tf := s.triggers.size
+    while tf > 0 do
+      tf := tf - 1
+      match t with
+      | none => break
+      | some tid =>
+        s := { s with triggers := s.triggers.modify tid fun x => { x with classId := c₂ } }
+        t := s.triggers[tid]!.next
+    cur := s.enodes[cur]!.next
+    if cur == c₂ then break
+  return s
+
+/-- `backtrack`: undo what came after the counters `c`, in cvc5's order. -/
+def backtrack (s : EqualityEngine) (c : Counters) : EqualityEngine := Id.run do
+  let mut s := s
+  if c.assertedEqs < s.assertedEqs.size then
+    s := { s with queue := #[], qhead := 0 }
+    for k in [0:s.assertedEqs.size - c.assertedEqs] do
+      let i := s.assertedEqs.size - 1 - k
+      if let some (l, r) := s.assertedEqs[i]! then s := undoMerge s l r
+    s := { s with assertedEqs := s.assertedEqs.take c.assertedEqs }
+    let keep := 2 * c.assertedEqs
+    let mut i := s.edges.size
+    while i ≥ keep + 2 do
+      i := i - 2
+      let e₁ := s.edges[i]!
+      let e₂ := s.edges[i + 1]!
+      s := { s with graph := (s.graph.set! e₂.node e₁.next).set! e₁.node e₂.next }
+    s := { s with edges := s.edges.take keep }
+  if c.triggers < s.triggers.size then
+    for k in [0:s.triggers.size - c.triggers] do
+      let i := s.triggers.size - 1 - k
+      let t := s.triggers[i]!
+      s := { s with nodeTriggers := s.nodeTriggers.set! t.classId t.next }
+    s := { s with triggers := s.triggers.take c.triggers,
+                  triggerInfos := s.triggerInfos.take c.triggers }
+  if c.lookups < s.appLookups.size then
+    for k in [0:s.appLookups.size - c.lookups] do
+      let i := s.appLookups.size - 1 - k
+      s := { s with lookup := s.lookup.erase s.appLookups[i]! }
+    s := { s with appLookups := s.appLookups.take c.lookups }
+  if c.nodes < s.nodes.size then
+    for k in [0:s.nodes.size - c.nodes] do
+      let i := s.nodes.size - 1 - k
+      s := { s with nodeIds := s.nodeIds.erase ⟨s.nodes[i]!⟩ }
+      if let some (orig, _) := s.apps[i]! then
+        -- remove the application from the use lists of its arguments, b then a
+        for x in [orig.b, orig.a] do
+          let top := s.useNodes[s.useNodes.size - 1]!
+          s := { s with enodes := s.enodes.modify x fun n => { n with useList := top.next },
+                        useNodes := s.useNodes.pop }
+    let n := c.nodes
+    s := { s with nodes := s.nodes.take n, apps := s.apps.take n, nodeTriggers := s.nodeTriggers.take n,
+                  isConstant := s.isConstant.take n, isEquality := s.isEquality.take n,
+                  isInternal := s.isInternal.take n, graph := s.graph.take n, enodes := s.enodes.take n }
+  if c.deducedDiseqs < s.deducedDiseqs.size then
+    for k in [0:s.deducedDiseqs.size - c.deducedDiseqs] do
+      let i := s.deducedDiseqs.size - 1 - k
+      let (a, b) := s.deducedDiseqs[i]!
+      s := { s with diseqReasons := (s.diseqReasons.erase (a, b)).erase (b, a) }
+    s := { s with deducedReasons := s.deducedReasons.take c.deducedReasons,
+                  deducedDiseqs := s.deducedDiseqs.take c.deducedDiseqs }
+  s := { s with deducedReasonsSize := c.deducedReasons }
+  -- the propagated disequalities, a context-dependent map
+  if c.propLog < s.propLog.size then
+    for k in [0:s.propLog.size - c.propLog] do
+      let i := s.propLog.size - 1 - k
+      let (key, old) := s.propLog[i]!
+      s := { s with propagatedDiseqs := match old with
+        | some v => s.propagatedDiseqs.insert key v
+        | none => s.propagatedDiseqs.erase key }
+    s := { s with propLog := s.propLog.take c.propLog }
+  return { s with done := c.done }
+
+/-- Return to context level `k`: restore the counters saved when leaving it. -/
+def popTo (s : EqualityEngine) (k : Nat) : EqualityEngine :=
+  if h : k < s.saved.size then
+    let c := s.saved[k]
+    { backtrack s c with saved := s.saved.take k }
+  else s
 
 end Telos.Solver.EE

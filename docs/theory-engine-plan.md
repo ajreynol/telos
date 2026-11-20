@@ -451,6 +451,90 @@ condition for fidelity, not for soundness:
 5. **Arithmetic and theory combination,** and with them, replay or the SAT
    solver.
 
+## Stage 2: backtracking and replay
+
+*Done (2026-11-20).*
+
+### Backtracking
+
+The equality engine is context dependent, as cvc5's is
+(`Telos/Solver/EqualityEngine.lean`, "Context levels"):
+- **Push** saves its counters, which are cvc5's `CDO`s: nodes, merges, lookups,
+  triggers, deduced disequalities and their reasons, the log of the propagated
+  disequalities, and `done`.
+- **Pop** restores them and undoes what came after, in cvc5's order
+  (`backtrack`, `undoMerge`):
+  - merges, by swapping the rings back and resetting finds and trigger
+    classes;
+  - graph edges;
+  - triggers;
+  - lookups;
+  - nodes, with their use lists;
+  - disequality reasons;
+  - the propagated-disequality map.
+
+The engine's own context-dependent state is saved likewise (`Saved`, `pushLevel`,
+`popTo`):
+- the SAT assignment (a trail);
+- the preregistration cache (a log);
+- UF's facts and how many it has processed;
+- `factsAsserted`;
+- the conflict flags;
+- the propagated and asserted literals.
+
+The equality engine's notion of "the theory engine is in conflict" is copied
+from the engine's at each call, so that it is restored on pop as well.
+
+### Replay
+
+With `telos --replay TRACE FILE` (`Telos/Frontend/Replay.lean`, `Solver.replay`):
+- **Inputs:** telos reads cvc5's trace and gives its theories the inputs, in
+  order:
+  - `prereg`, `assert` and `check`, at their levels (pushes are implicit);
+  - `pop`;
+  - requests for explanations (`explain`): telos computes its own, which are
+    compared.
+- **Terms:** the trace's terms are read as `simplify` queries of `FILE`, which
+  is cvc5's `-o post-asserts` output, so the skolems are its `@purify_k`
+  symbols.
+- **Comparison:** `fuzz-solve.py --replay` runs cvc5, splits its output into
+  the preprocessed benchmark and the trace, replays it, and compares. The
+  random benchmarks then have disjunctions.
+
+### Results
+
+- **Random benchmarks:**
+  - 900 random QF_UF benchmarks with clauses (seeds 61–63, up to 20
+    assertions, 320 of them with backtracking): 897 traces identical to
+    cvc5's as text, EE notifications included.
+  - 200 larger ones (seed 64, up to 50 assertions): 194 identical.
+- **The other cases** differ only in explanations that cvc5 minimized:
+  - With proofs, cvc5 shrinks an explanation to the assumptions its proof uses
+    (`ProofNodeManager::mkScope`), and the proof may reuse facts proven
+    before.
+  - So some of cvc5's explanations are strict subsets of the equality engine's,
+    in hash-set order.
+  - Without `--produce-proofs`, cvc5's explanations are exactly telos's.
+  - The comparator counts these separately ("up to cvc5's minimized
+    explanations").
+- **cvc5's regressions:** all 25 QF_UF regressions that cvc5 accepts and telos
+  supports agree, 2 of them only up to minimized explanations.
+- **Boolean term skolems:** the regressions showed that cvc5 treats Boolean
+  term skolems as theory atoms of UF (`Env::isBooleanTermSkolem`, `CnfStream`).
+  These are the purification skolems of Boolean terms in term positions; telos
+  now does too (`isBooleanTermSkolem`).
+- **Speed:** a 600-clause benchmark with a 31,600-line trace and 1,688 pops
+  replays in 0.96s, against cvc5's 0.37s. Reading the trace's terms is part of
+  that.
+- **Tests:** `test/replay/` holds recorded traces, which CI replays.
+
+### Not covered
+
+- `unsat` answers in replay: the answer is the SAT solver's. Conflicts are
+  still compared as events.
+- The minimization of explanations by cvc5's proofs: it would need its proof
+  equality engine and proof cache.
+
 ## Order of work (all stages)
 
 1. **Equality engine.** Port `theory/uf/equality_engine.cpp` (about 3k lines)

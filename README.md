@@ -155,7 +155,13 @@ With `--proof` (or `--proof-dir DIR`), the CPC refutation follows, which Ethos
 checks. `sat` answers are not certified yet.
 `scripts/fuzz-solve.py --cvc5 PATH` compares the events with cvc5's: with
 `--cvc5-pp --ee`, on cvc5's own preprocessed assertions and with the equality
-engine's notifications. See
+engine's notifications.
+
+With `--replay TRACE`, telos gives its theories the inputs of a trace of cvc5's
+(on cvc5's preprocessed benchmark), including the SAT solver's decisions and
+backtracking, and prints its events. So the theories are tested on inputs with
+SAT structure without a SAT solver (`scripts/fuzz-solve.py --replay`,
+`test/replay/`). See
 [`docs/theory-engine-plan.md`](docs/theory-engine-plan.md).
 
 See [`docs/design.md`](docs/design.md) for the architecture and roadmap,

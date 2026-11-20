@@ -81,9 +81,22 @@ structure Config where
   (`-o theory-events-ee`). -/
   eeEvents : Bool := false
 
-/-- The theory that owns a term (`Env::theoryOf`). -/
+/-- A Boolean term skolem (`Env::isBooleanTermSkolem`): the purification
+skolem of a Boolean term in a term position, which term formula removal
+introduces. cvc5 treats these as theory atoms of UF. In a replayed trace
+(`Telos/Frontend/Replay.lean`) the skolems are the symbols that cvc5 printed,
+named `@purify_k`. -/
+def isBooleanTermSkolem (t : Node) : Bool :=
+  match t with
+  | .skolem .PURIFY _ => t.typeHint == some .boolean
+  | .var name .boolean => name.startsWith "@purify_"
+  | _ => false
+
+/-- The theory that owns a term (`Env::theoryOf`): Boolean term skolems belong
+to UF. -/
 def Config.theoryOf (c : Config) (t : Node) : Theory :=
-  Theory.ofTheoryId (Preprocess.ppTheoryOf c.termBased t)
+  let T := Theory.ofTheoryId (Preprocess.ppTheoryOf c.termBased t)
+  if T == .THEORY_BOOL && isBooleanTermSkolem t then .THEORY_UF else T
 
 /-- UF is solved: it is the only theory, so there is no sharing, and the logic
 is quantifier-free. -/
@@ -104,6 +117,21 @@ def Answer.name : Answer → String
 
 /-- The stand-in for the SAT solver: the value of each assigned atom. -/
 abbrev Assignment := Std.HashMap Key Bool
+
+/-- The context-dependent state of the engine saved at a push (cvc5's `CDO`s
+and `CDList`s: the theory engine's flags, the facts of the theories, the
+propagated literals, the SAT assignment, the preregistration cache). -/
+structure Saved where
+  assignTrail : Nat
+  preregLog : Nat
+  ufFacts : Nat
+  ufHead : Nat
+  factsAsserted : Bool
+  inConflict : Bool
+  theoryConflict : Bool
+  propagated : Nat
+  asserted : Nat
+  deriving Inhabited
 
 structure State where
   events : Array Event := #[]
@@ -133,6 +161,13 @@ structure State where
   ufFacts : Array Node := #[]
   ufHead : Nat := 0
   ee : EE.EqualityEngine := default
+  /-- The atoms assigned, in order, for backtracking the assignment. -/
+  assignTrail : Array Key := #[]
+  /-- The previous values of the entries of `preregVisited` set, in order. -/
+  preregLog : Array (Key × Option Nat) := #[]
+  /-- The context-dependent state saved at each push: the `i`-th, when
+  leaving level `i`. -/
+  saved : Array Saved := #[]
   /-- The certificate of the conflict: its assumptions and a proof of
   `(true, false)` from them (`Telos/Solver/EqProof.lean`), or why there is
   none. -/
@@ -164,8 +199,9 @@ def eeCtx : EngineM EE.Ctx := do
 /-- Run an operation of the equality engine, and take its notes. -/
 def runEE (x : EE.EEM α) : EngineM (α × Array EE.Note) := do
   let ctx ← eeCtx
-  let ee ← modifyGet fun s => (s.ee, { s with ee := default })
-  let (a, ee) := (x.run ctx).run { ee with notes := #[] }
+  -- the engine's conflict flag, which is context dependent, is the source of truth
+  let (ee, inConflict) ← modifyGet fun s => ((s.ee, s.inConflict), { s with ee := default })
+  let (a, ee) := (x.run ctx).run { ee with notes := #[], teConflict := inConflict }
   let notes := ee.notes
   modify fun s => { s with ee := { ee with notes := #[] } }
   return (a, notes)
@@ -246,6 +282,11 @@ def alreadyVisited (cur parent : Node) : EngineM Bool := do
   | none => return false
   | some v => return isAlreadyVisited (← read) v cur parent
 
+/-- Set the theories `cur` was preregistered with (a context-dependent map). -/
+def setVisited (cur : Node) (v : Nat) : EngineM Unit :=
+  modify fun s => { s with preregLog := s.preregLog.push (⟨cur⟩, s.preregVisited.get? ⟨cur⟩),
+                           preregVisited := s.preregVisited.insert ⟨cur⟩ v }
+
 /-- `PreRegisterVisitor::visit`: preregister `cur` with its theory, its
 parent's, and its type's when they differ or the type is finite. -/
 def visitPrereg (cur parent : Node) : EngineM Unit := do
@@ -262,9 +303,9 @@ def visitPrereg (cur parent : Node) : EngineM Unit := do
   for T in ths do
     if !hasTheory visited T then
       visited := visited ||| theoryBit T
-      modify fun s => { s with preregVisited := s.preregVisited.insert ⟨cur⟩ visited }
+      setVisited cur visited
       theoryPreRegister T cur
-  modify fun s => { s with preregVisited := s.preregVisited.insert ⟨cur⟩ visited }
+  setVisited cur visited
 
 /-- The children of a term, as cvc5 iterates them (without the operator). -/
 def children : Node → Array Node
@@ -312,8 +353,47 @@ def assertFact (lit : Node) : EngineM Unit := do
 def assign (lit : Node) : EngineM Unit := do
   let (atom, pol) := atomOf lit
   modify fun s => { s with assignment := s.assignment.insert ⟨atom⟩ pol,
+                           assignTrail := s.assignTrail.push ⟨atom⟩,
                            asserted := s.asserted.push lit }
   assertFact lit
+
+/-! ## Context levels -/
+
+instance : Inhabited Key := ⟨⟨default⟩⟩
+
+/-- Enter a new SAT context level (`Context::push`). -/
+def pushLevel : EngineM Unit :=
+  modify fun s =>
+    let sv : Saved := ⟨s.assignTrail.size, s.preregLog.size, s.ufFacts.size, s.ufHead,
+      s.factsAsserted, s.inConflict, s.theoryConflict, s.propagated.size, s.asserted.size⟩
+    { s with saved := s.saved.push sv, level := s.level + 1, ee := EE.push s.ee }
+
+/-- Return to the SAT context level `k` (`Context::pop`), restoring what was
+saved when leaving it. -/
+def popTo (k : Nat) : EngineM Unit :=
+  modify fun s => Id.run do
+    let some sv := s.saved[k]? | return s
+    let mut asg := s.assignment
+    for i in [sv.assignTrail:s.assignTrail.size] do
+      asg := asg.erase s.assignTrail[i]!
+    let mut pv := s.preregVisited
+    for k' in [0:s.preregLog.size - sv.preregLog] do
+      let (key, old) := s.preregLog[s.preregLog.size - 1 - k']!
+      pv := match old with
+        | some v => pv.insert key v
+        | none => pv.erase key
+    return { s with
+      assignment := asg, assignTrail := s.assignTrail.take sv.assignTrail,
+      preregVisited := pv, preregLog := s.preregLog.take sv.preregLog,
+      ufFacts := s.ufFacts.take sv.ufFacts, ufHead := sv.ufHead,
+      factsAsserted := sv.factsAsserted, inConflict := sv.inConflict,
+      theoryConflict := sv.theoryConflict, propagated := s.propagated.take sv.propagated,
+      asserted := s.asserted.take sv.asserted,
+      saved := s.saved.take k, level := k, ee := EE.popTo s.ee k }
+
+/-- Raise the context level to `k` (pushes are implicit in cvc5's traces). -/
+def raiseTo (k : Nat) : EngineM Unit := do
+  while (← get).level < k do pushLevel
 
 /-- `Theory::check` of one theory: for UF, its facts are asserted to the
 equality engine, until the engine is in conflict. -/
@@ -394,7 +474,7 @@ def solve (lits : List Node) : EngineM Answer := do
   if lits.contains Node.mkFalse then
     modify fun s => { s with cert := .ok (#[Node.mkFalse], .symm (.assume 0)) }
     return .unsat
-  modify fun s => { s with level := 1 }
+  pushLevel
   for l in lits do preRegister (atomOf l).1
   -- the unit clauses: two that contradict each other are a conflict
   let mut units : Std.HashMap Key Bool := {}
@@ -428,6 +508,48 @@ def solve (lits : List Node) : EngineM Answer := do
   if s.used.isEmpty || ((← read).ufSolver && s.used.all (· == .THEORY_UF)) then
     return .sat
   return .unknown
+
+/-! ## Replay -/
+
+/-- An input event of a cvc5 trace (`-o theory-events`): what the SAT solver
+and the theory engine ask of the theories. -/
+inductive Input where
+  | prereg (level : Nat) (atom : Node)
+  | assert (level : Nat) (lit : Node)
+  | check (level : Nat) (T : Theory) (e : Effort)
+  | pop (level : Nat)
+  /-- The SAT solver asks for the explanation of a propagated literal. -/
+  | explain (level : Nat) (lit : Node)
+
+/-- Replay one input. -/
+def replayInput : Input → EngineM Unit
+  | .prereg k atom => do
+    if k == 0 then
+      -- `true` and `false`, at the solver's initialization
+      emit (.prereg 0 atom)
+    else
+      raiseTo k
+      emit (.prereg k atom)
+      preRegisterVisit atom
+  | .assert k lit => do raiseTo k; assign lit
+  | .check k T e => do raiseTo k; theoryCheck T e
+  | .pop k => do popTo k; emit (.pop k)
+  | .explain k lit => do
+    raiseTo k
+    emit (.explain k lit (EE.mkAnd (← explain lit)))
+
+/-- **Replay** a cvc5 trace: give the theories the inputs that cvc5's SAT
+solver and theory engine gave its theories, in order, and record telos's
+events. The SAT solver's decisions and backtracking come from the trace, so
+the theories are compared with cvc5's on inputs with SAT structure, without a
+SAT solver. -/
+def replay (c : Config) (inputs : List Input) : Array Event :=
+  let act : EngineM Unit := do
+    if c.ufSolver then
+      let ctx ← eeCtx
+      modify fun s => { s with ee := EE.init ctx }
+    for i in inputs do replayInput i
+  ((act.run c).run {}).2.events
 
 /-- The result of the engine. -/
 structure Result where

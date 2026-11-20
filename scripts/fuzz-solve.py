@@ -25,6 +25,12 @@ Comparing:
 The input events alone are also compared, over the whole trace: they are what
 the engine's skeleton produces, whatever the theory solvers do.
 
+A benchmark agrees "up to minimized explanations" when, in addition, some of
+cvc5's explanations are strict subsets of telos's. With proofs, cvc5 minimizes
+an explanation to the assumptions its proof uses (`ProofNodeManager::mkScope`),
+and the proof may reuse facts proven before, so it can be shorter than the
+equality engine's (which telos's is, and cvc5's is without proofs).
+
 A benchmark agrees "up to explanations" when the only differences are in the
 explanations of `explain` and `conflict` events that have the same literals in
 another order.
@@ -49,12 +55,18 @@ cvc5's by node id, which changes the events.
 With `--proofs`, the CPC refutation of each `unsat` of telos (`--proof-dir`) is
 checked by Ethos; its last step states `false`.
 
+With `--replay`, cvc5 runs on the benchmark with `-o post-asserts` too, and
+telos replays its trace on its preprocessed form (`telos --replay`): telos's
+theories get the inputs that cvc5's got, including the SAT solver's decisions
+and backtracking, and their outputs are compared. The random benchmarks then
+have disjunctions (also with `--clauses`).
+
 With `--recorded`, cvc5 is not run: each FILE.smt2 is compared with the trace
 recorded next to it, FILE.cvc5 (as in `test/solve/`).
 
 Usage:
   scripts/fuzz-solve.py [--cvc5 PATH] [--seed N] [--count N] [--size N] [--show N] [--ee] [--cvc5-pp]
-                        [--proofs] [--strict]
+                        [--proofs] [--replay] [--clauses] [--strict]
                         [--recorded] [FILE.smt2 ...]
 
 Build first: `lake build telos`.
@@ -139,9 +151,30 @@ def uf_literal(rng):
     return atom if rng.random() < 0.6 else f"(not {atom})"
 
 
-def uf_benchmark(rng, size):
-    lits = [uf_literal(rng) for _ in range(rng.randint(2, size))]
-    return UF_PRELUDE + "".join(f"(assert {l})\n" for l in lits) + "(check-sat)\n"
+def uf_benchmark(rng, size, clauses=False):
+    """A conjunction of literals; with `clauses`, some of the assertions are
+    disjunctions of two or three literals, so that the SAT solver decides and
+    backtracks."""
+    out = []
+    for _ in range(rng.randint(2, size)):
+        if clauses and rng.random() < 0.6:
+            k = rng.randint(2, 3)
+            out.append("(or " + " ".join(uf_literal(rng) for _ in range(k)) + ")")
+        else:
+            out.append(uf_literal(rng))
+    return UF_PRELUDE + "".join(f"(assert {l})\n" for l in out) + "(check-sat)\n"
+
+
+def split_cvc5(text):
+    """cvc5's output with `-o post-asserts -o theory-events`: the preprocessed
+    benchmark, and the event lines (the answer dropped)."""
+    if ";; post-asserts start" not in text:
+        return None, None
+    before, rest = text.split(";; post-asserts start\n", 1)
+    pp, after = rest.split(";; post-asserts end", 1)
+    events = [l for l in (before + after).splitlines()
+              if l.startswith("(") and l[1:].split(" ", 1)[0] in INPUTS | OUTPUTS]
+    return pp, events
 
 
 def neg_free(e):
@@ -214,6 +247,29 @@ def loose(counter):
     return out
 
 
+def explanation_lits(t):
+    return {repr(x) for x in t[1:]} if isinstance(t, list) and t and t[0] == "and" else {repr(t)}
+
+
+def minimized(oo, to):
+    """The outputs differ only in explanations, each of cvc5's a subset of
+    telos's: cvc5 with proofs minimizes an explanation to the assumptions of
+    its proof (`ProofNodeManager::mkScope`), which may reuse proofs it stored
+    before, so some are shorter than the equality engine's."""
+    def strip(c):
+        out = collections.Counter()
+        for k, n in c.items():
+            e = eval(k)
+            out[repr(e[:-1] if e[0] in ("explain", "conflict") else e)] += n
+        return out
+    if strip(oo) != strip(to):
+        return False
+    ex_o = sorted((eval(k) for k in oo if eval(k)[0] in ("explain", "conflict")), key=lambda e: repr(e[:-1]))
+    ex_t = sorted((eval(k) for k in to if eval(k)[0] in ("explain", "conflict")), key=lambda e: repr(e[:-1]))
+    return len(ex_o) == len(ex_t) and all(explanation_lits(t[-1]) <= explanation_lits(o[-1])
+                                          for o, t in zip(ex_o, ex_t))
+
+
 def compare(ours, theirs):
     """`same`, `explanations` (same up to the order of explained literals), or
     a description of the first difference."""
@@ -231,6 +287,9 @@ def compare(ours, theirs):
         if oo != to:
             if loose(oo) == loose(to):
                 verdict = "explanations"
+                continue
+            if minimized(oo, to):
+                verdict = "minimized"
                 continue
             only_o = oo - to
             only_t = to - oo
@@ -291,6 +350,9 @@ def main():
     ap.add_argument("--proofs", action="store_true",
                     help="check the CPC refutation of each unsat with Ethos (telos --proof-dir)")
     ap.add_argument("--ethos", default=shutil.which("ethos") or "ethos")
+    ap.add_argument("--replay", action="store_true",
+                    help="replay cvc5's trace on telos's theories (telos --replay), on cvc5's preprocessed benchmark")
+    ap.add_argument("--clauses", action="store_true", help="random benchmarks with disjunctions")
     ap.add_argument("--size", type=int, default=6, help="the most literals of a random benchmark")
     ap.add_argument("files", nargs="*")
     a = ap.parse_args()
@@ -302,11 +364,40 @@ def main():
         rng = random.Random(a.seed)
         for i in range(a.count):
             p = tmp / f"s{i}.smt2"
-            p.write_text(uf_benchmark(rng, a.size))
+            p.write_text(uf_benchmark(rng, a.size, a.clauses or a.replay))
             files.append(p)
     counts = collections.Counter()
     diffs, failures, proof_failures = [], [], []
     for path in files:
+        if a.replay:
+            out, cerr = run([a.cvc5, *CVC5_OPTS, "-o", "post-asserts"] + (["-o", "theory-events-ee"] if a.ee else []),
+                            path)
+            pp, events = split_cvc5(out or "")
+            if pp is None:
+                failures.append((path, cerr or "no output"))
+                continue
+            tpath = path.with_suffix(".pp.smt2")
+            tpath.write_text(pp)
+            trace = path.with_suffix(".trace")
+            trace.write_text("\n".join(events) + "\n")
+            ours, err = run([str(TELOS), "--replay", str(trace)] + (["--theory-events-ee"] if a.ee else []), tpath)
+            if ours is None:
+                failures.append((path, err))
+                continue
+            theirs_lines = [l for l in events if not UNSAFE.search(l)]
+            if ours.strip().splitlines() == theirs_lines:
+                counts["identical"] += 1
+            po, pt = parse_events(ours), parse_events("\n".join(theirs_lines))
+            counts["pops"] += sum(1 for e in pt[0] if e[0] == "pop") > 0
+            if [e for e in po[0] if e[0] in INPUTS] == [e for e in pt[0] if e[0] in INPUTS]:
+                counts["inputs"] += 1
+            v = compare(po, pt)
+            if v in ("same", "explanations", "minimized"):
+                counts[v] += 1
+            else:
+                counts["different"] += 1
+                diffs.append((path, v))
+            continue
         tpath = path
         if a.cvc5_pp:
             pp, perr = run([a.cvc5, "--safe-mode=safe", "--ee-mode=central", "--produce-proofs",
@@ -346,16 +437,19 @@ def main():
         if [e for e in po[0] if e[0] in INPUTS] == [e for e in pt[0] if e[0] in INPUTS]:
             counts["inputs"] += 1
         v = compare(po, pt)
-        if v in ("same", "explanations"):
+        if v in ("same", "explanations", "minimized"):
             counts[v] += 1
         else:
             counts["different"] += 1
             diffs.append((path, v))
     n = len(files)
     print(f"{n} benchmarks: {counts['same']} the same events as cvc5, {counts['explanations']} up to the "
-          f"order of explanations, {counts['different']} different, {counts['unsupported']} unsupported, "
+          f"order of explanations, {counts['minimized']} up to cvc5's minimized explanations, "
+          f"{counts['different']} different, {counts['unsupported']} unsupported, "
           f"{len(failures)} failed; the input events (prereg, assert, check, pop) agree on {counts['inputs']}; "
-          f"{counts['identical']} identical as text; cvc5 answered sat {counts['sat']}, unsat {counts['unsat']}")
+          f"{counts['identical']} identical as text" +
+          (f"; {counts['pops']} with backtracking" if a.replay else
+           f"; cvc5 answered sat {counts['sat']}, unsat {counts['unsat']}"))
     for path, v in diffs[:a.show]:
         print(f"\n  {path}: {v}")
     for path, err in failures[:a.show]:
