@@ -44,41 +44,77 @@ events** at the boundary of each theory solver.
 
 ### Events
 
-The trace is split into **inputs**, which the theory engine and SAT side hand
-to a theory, and **outputs**, which a theory produces through its output channel,
-its inference manager, or the central EE. Each event names the theory and, for
-outputs, the `InferenceId`.
+Implemented as a cvc5 patch, `cvc5-theory-events.patch` (2026-11-20), which
+adds two output tags. Every event is one line, an s-expression whose first
+argument `k` is the **SAT context level** when the event happens. Pushes are
+implicit, in the level going up; pops are explicit. `T` is a `TheoryId`
+(`THEORY_UF`, …), `id` an `InferenceId`, and terms print as in `-o lemmas` (with
+`let`s).
+
+The trace is split into **inputs**, which the theory engine and the SAT side
+hand to a theory, and **outputs**, which a theory produces.
+
+`-o theory-events`:
 
 | Kind | Event | cvc5 location |
 |---|---|---|
-| input | `(prereg T t)`: register a term or atom | `TheoryEngine::preRegister` |
-| input | `(assert T lit)`: a literal given to theory T | `TheoryEngine::assertToTheory` |
-| input | `(check T effort)`: start of a `check` call (standard, full, last-call) | `TheoryEngine::check` |
-| input | `(push k)` / `(pop k)`: SAT context level | context level changes in `TheoryEngine` |
-| input | `(merge T t₁ t₂)` / `(diseq T t₁ t₂)`: central-EE notifications to T | `EqEngineManagerCentral::CentralNotifyClass` |
-| output | `(fact T id lit)`: an internal fact asserted to the EE | `TheoryInferenceManager::processInternalFact` (already `Trace("im")`) |
-| output | `(lemma T id φ props)` | `TheoryInferenceManager::trustedLemma` (already `Trace("im")`) |
-| output | `(conflict T id φ)` | `TheoryInferenceManager::trustedConflict` (already `Trace("im")`) |
-| output | `(propagate T lit)` | `TheoryInferenceManager::propagateLit` |
-| output | `(phase T lit pol)`, decision-strategy literals | `preferPhase`, `DecisionManager` |
-| output | `(incomplete T id)` | `setModelUnsound` / `setRefutationUnsound` |
+| input | `(prereg k t)`: an atom registered with the theory engine | `TheoryEngine::preRegister` |
+| input | `(assert k T lit)`: a literal given to theory T, from the SAT solver or from theory combination | `Theory::assertFact` |
+| input | `(check k T effort)`: a `check` call (`EFFORT_STANDARD`, `EFFORT_FULL`, `EFFORT_LAST_CALL`) | `Theory::check`, at entry, before the early exit |
+| input | `(pop k)`: the SAT context was popped, and is now at level k | a `ContextNotifyObj` on the SAT context |
+| output | `(fact k T id lit exp)`: an internal fact asserted to the EE | `TheoryInferenceManager::processInternalFact` |
+| output | `(lemma k T id φ)` | `TheoryEngine::lemma` (so it includes combination lemmas) |
+| output | `(conflict k T id conj)`: the conflicting conjunction | `TheoryEngine::conflict` |
+| output | `(propagate k T lit)` | `TheoryEngine::propagate` |
+| output | `(explain k lit exp)`: a propagation's explanation, when the SAT solver asks for it | `TheoryEngine::getExplanation` |
+| output | `(phase k lit pol)` | `OutputChannel::preferPhase` |
+| output | `(model-unsound k T id)`, `(refutation-unsound k T id)` | `TheoryEngine::setModelUnsound` / `setRefutationUnsound` |
 
-There is also an optional second level, EE internals: `addTerm`, each merge
-with its reason, and each `explain` with its result. That level is verbose, and
-is only for finding where the two sides first diverge.
+`-o theory-events-ee`, the central EE's notifications to the theories, used to
+localize where the two sides diverge:
+
+| Event | cvc5 location |
+|---|---|
+| `(ee-new-class k t)` | `EqEngineManagerCentral::CentralNotifyClass::eqNotifyNewClass` |
+| `(ee-merge k t₁ t₂)` | `…::eqNotifyMerge` |
+| `(ee-diseq k t₁ t₂ reason)` | `…::eqNotifyDisequal` |
+
+What the first runs show:
+
+- **A conflict is often a SAT conflict, not a theory one.** The theory
+  propagates a literal that the SAT solver already has false, and the
+  explanation is the `explain` event. The QF_UF example in the patch's
+  regression ends that way: there is no `conflict` event.
+- **Solving starts at level 1, not 0.**
+- **In central mode, propagations from the central EE are under
+  `THEORY_BUILTIN`.**
+- **The same literal can be propagated twice in a row** (via the shared-terms
+  path). That is real cvc5 behaviour, which the comparison has to allow for or
+  reproduce.
+- **The volume is large.** 300 regress0 benchmarks gave 2.1M `assert` events
+  and 370k `check` events, so the comparator must stream.
+
+Not yet covered:
+
+- the quantifiers engine (`QuantifiersEngine::check` is not `Theory::check`);
+- decision-strategy literals (`DecisionManager`);
+- the EE internals of the non-central EEs (arithmetic's).
+
+The patch was checked as follows:
+
+- answers are unchanged with the tags on, across 400 regress0 benchmarks;
+- every event line is a balanced s-expression;
+- the printer regressions pass, including the new
+  `regress0/printer/theory-events.smt2`.
 
 ### The cvc5 side
 
-- **Use an output tag, not `Trace`.** Our cvc5 build has tracing off
-  (`--show-config`: tracing no), like any release build. A new output tag,
-  `-o theory-events`, works in release builds and costs nothing when it is off,
-  like `-o lemmas` (`prop/theory_proxy.cpp`).
-- **Print terms with the same printer and settings as `-o post-asserts`,** so
-  the comparator reuses `fuzz-pp.py`'s normalization (alpha-renaming,
-  definitions, skolem names).
-- **This is a small cvc5 patch.** It touches about six hook points, mostly next
-  to the existing `Trace("im")` lines. It could go upstream as a debugging aid,
-  in the same spirit as `-o post-asserts`; track it in `upstream-requests.md`.
+- **An output tag, not `Trace`.** Release builds have tracing off. Output tags
+  work there and cost one bit test per hook when off, like `-o lemmas`.
+- **Terms use the default printer,** the same one as `-o post-asserts`, so the
+  comparator can reuse `fuzz-pp.py`'s normalization: alpha-renaming,
+  definitions and skolem names.
+- **It could go upstream as a debugging aid** (see `upstream-requests.md`).
 
 ### The telos side
 
@@ -154,7 +190,116 @@ The CPC proof is emitted afterwards from the EE's proof forest, which uses
 `ProofEqEngine` does, and through `Proof.emitChainWith`. As for preprocessing,
 results are the same with and without proofs.
 
-## Order of work
+## Stage 1: conjunctions of literals
+
+The input is an SMT-LIB script. It goes through telos's preprocessor, which
+already matches cvc5's `-o post-asserts`. If every remaining assertion is a
+literal, the literals are asserted one at a time; otherwise the answer is
+`unsupported`. There is no SAT solver, no decision and no backtracking, so
+every event is at level 1 and there is no `pop`.
+
+### What cvc5 does on such inputs (observed with `-o theory-events`)
+
+1. `prereg` for each atom, in assertion order, as the CNF stream meets it. cvc5
+   first preregisters `true` and `false` at level 0.
+2. `assert` for each literal, in assertion order, to `theoryOf` its atom.
+3. `check EFFORT_STANDARD`, for each enabled theory that has a check, in
+   theory-id order.
+4. `propagate`s. In central mode they come from `THEORY_BUILTIN`, including for
+   literals that were already asserted.
+5. A propagated literal that is false in the assignment is a SAT conflict: the
+   SAT solver asks for an `explain`, and the answer is `unsat`. A conflict
+   inside a theory is a `conflict` event.
+6. Otherwise `check EFFORT_FULL`. If it produces nothing, the answer is `sat`.
+
+### Fuzzing has to get past preprocessing
+
+Preprocessing solves most equalities between variables: the substitution
+`a := b`, and `a := (f b)` when it isn't cyclic. A random conjunction is
+usually decided, or reduced to almost nothing, before the theory engine sees
+it. The generator has to produce literals that survive: disequalities,
+predicates, cyclic equalities such as `(= b (f (f b)))`, and equalities between
+applications. Then it should keep only the benchmarks whose post-asserts are
+all literals.
+
+### Components
+
+- **`Telos/Solver/Event.lean`:** the events, printed exactly as cvc5 prints them
+  (the `let` printer of `-o post-asserts`), plus `TheoryId`, `InferenceId` (the
+  ones used so far) and `Effort`.
+- **`Telos/Solver/Assignment.lean`, a stand-in for the SAT solver:** the values
+  of the literals, the queue of propagations, and a conflict when a propagated
+  literal is false, which triggers `explain`. On units it behaves like minisat.
+  It is also where lemmas will go: a lemma that is a unit is asserted, and on a
+  lemma that is not, the engine stops with `unknown`.
+- **`Telos/Solver/EqualityEngine.lean`:** a faithful port of
+  `uf/equality_engine.cpp`:
+  - node ids and curried applications;
+  - use lists and the lookup table;
+  - the equality graph with reasons;
+  - the choice of representative;
+  - the pending queue;
+  - triggers (term equalities and predicates);
+  - disequalities;
+  - `explain`.
+
+  It keeps a trail from the start, but undo comes later.
+- **`Telos/Solver/Theory/UF.lean`:** `TheoryUF` in central mode. It registers
+  terms and triggers, takes facts, and propagates and reports conflicts from the
+  EE's notifications (including merges of constants, such as `true` with
+  `false`).
+- **`Telos/Solver/TheoryEngine.lean`:**
+  - `theoryOf` (ported from `Theory::theoryOf`, with the default `theoryof-mode`);
+  - `preRegister`, `assertToTheory` and the `check` loop;
+  - `propagate`, `getExplanation`, `lemma` and `conflict`;
+  - the central EE manager.
+- **The `--theory-events` command-line mode:** it prints the events, then the
+  answer.
+- **`scripts/fuzz-solve.py`:** runs cvc5 with the patch and telos on the same
+  input, and compares the events by rounds. It reports agreement at two
+  levels: exact, and same literals.
+- **`test/solve/`:** inputs with expected traces, run by CI.
+
+### Soundness
+
+An `explain` or a conflict comes with an **equality proof**: a tree of
+`assume`, `refl`, `symm`, `trans` and `cong`, like cvc5's `eq::EqProof`, built
+by the EE's `explain`.
+
+- **Static soundness:** a small checker on Nodes, which is decidable and
+  linear in the size of the DAG, with a semantic theorem in `verification/`. If
+  the check returns `(a, b)` and the assumptions hold in M, then `a = b` in M.
+  That gives "`unsat` ⇒ the input is unsatisfiable", composed with
+  `preprocess_correct`.
+- **Cost:** the check runs only on conflicts, so it costs about as much as the
+  explanation.
+- **Proofs:** the same tree prints as CPC (`trans`, `cong`, `symm`, `true_intro`
+  and `false_intro`) for `--proof`.
+- **What is not needed:** no invariant of the EE is proven, and Logos is not
+  called.
+
+### Milestones
+
+1. **The driver:**
+   - check that the post-asserts are all literals;
+   - `prereg`, `assert` and `check` events;
+   - the stand-in for the SAT solver;
+   - a trivial engine with no theories, which reproduces cvc5's event skeleton
+     on pure Boolean inputs.
+2. **The EE and UF on QF_UF:**
+   - Target: the events agree exactly with cvc5 on the fuzzed conjunctions.
+   - The fidelity points are the order of propagations, the choice of
+     representative, and the order of the literals in explanations.
+3. **Soundness and proofs:** the equality proofs, the checker and its theorem,
+   and CPC proof output for `unsat`.
+4. **A second theory in the central EE:** arrays, then datatypes. These bring
+   the first lemmas. The unit ones go through the stand-in; the first lemma
+   that is not a unit ends the run with `unknown`, and also ends the
+   comparison.
+5. **Arithmetic and theory combination,** and with them, replay or the SAT
+   solver.
+
+## Order of work (all stages)
 
 1. **Equality engine.** Port `theory/uf/equality_engine.cpp` (about 3k lines)
    faithfully, because everything in central mode goes through it:
@@ -185,7 +330,8 @@ results are the same with and without proofs.
 
 ## Setup checklist
 
-- [ ] cvc5 branch with `-o theory-events` (hooks listed under [Events](#events)).
+- [x] cvc5 patch with `-o theory-events` and `-o theory-events-ee`
+      (`cvc5-theory-events.patch`; see [Events](#events)).
 - [ ] A generator mode in `scripts/fuzz.py` / `fuzz-pp.py` for **conjunctions of
       literals** (QF_UF first). Feed both tools the same post-preprocessing
       assertions: telos's preprocessor already matches cvc5's, or replay cvc5's
