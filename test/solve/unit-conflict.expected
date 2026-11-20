@@ -1,0 +1,6 @@
+(prereg 0 true)
+(prereg 0 false)
+(prereg 1 (= b (f b)))
+(prereg 1 (let ((_let_1 (f a))) (= _let_1 (f _let_1))))
+(prereg 1 (= b (f (f b))))
+unsat

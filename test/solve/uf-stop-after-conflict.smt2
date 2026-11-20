@@ -1,0 +1,10 @@
+; After the propagation conflict, UF asserts no more facts.
+(set-logic QF_UF)
+(declare-sort U 0)
+(declare-fun f (U) U)
+(declare-fun a () U) (declare-fun b () U) (declare-fun c () U)
+(assert (not (= (f a) (f (f (f a))))))
+(assert (= a (f (f a))))
+(assert (not (= b (f c))))
+(assert (not (= c (f b))))
+(check-sat)

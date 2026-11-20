@@ -55,8 +55,8 @@ jobs:
           for f in test/solve/*.smt2; do
             (.lake/build/bin/telos --theory-events "$f" 2>&1 || true) | diff - "${f%.smt2}.expected"
           done
-          # against cvc5's recorded traces (not yet required to agree)
-          scripts/fuzz-solve.py --recorded test/solve/*.smt2
+          # the same events as cvc5's recorded traces
+          scripts/fuzz-solve.py --recorded --strict test/solve/*.smt2
 
 
   # telos's proofs, against the Logos theorems they use as a hypothesis

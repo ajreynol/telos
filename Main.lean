@@ -6,7 +6,7 @@ import Telos
 ```
 telos [--proof] [--proof-dir DIR] [--profile] FILE
 telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE
-telos --theory-events [PREPROCESSING OPTIONS] FILE
+telos --theory-events [--theory-events-ee] [--no-preprocess] [PREPROCESSING OPTIONS] FILE
 ```
 
 Reads an SMT-LIB script of declarations and `(simplify t)` commands (`-` for
@@ -43,7 +43,11 @@ With `--theory-events`, `FILE` is a benchmark whose preprocessed assertions are
 a conjunction of literals. telos solves it with its theory engine and prints
 the events at the interface of the theory solvers, as cvc5 prints them with
 `-o theory-events` (`cvc5-theory-events.patch`), then the answer
-(`Telos/Frontend/Solve.lean`). Other inputs are reported as unsupported.
+(`Telos/Frontend/Solve.lean`). Other inputs are reported as unsupported. With
+`--theory-events-ee`, also the central equality engine's notifications, as
+cvc5's `-o theory-events-ee`. With `--no-preprocess`, the assertions are given
+to the engine as they are (for testing it on cvc5's own preprocessed
+assertions).
 -/
 
 open Telos Telos.Frontend
@@ -56,6 +60,8 @@ structure Options where
   profile : Bool := false
   postAsserts : Bool := false
   theoryEvents : Bool := false
+  theoryEventsEE : Bool := false
+  noPreprocess : Bool := false
   pp : Preprocess.UserOptions := {}
 
 def parseArgs : List String → Options → Except String Options
@@ -65,6 +71,8 @@ def parseArgs : List String → Options → Except String Options
   | "--check-proof" :: rest, o => parseArgs rest { o with checkProof := true }
   | "--post-asserts" :: rest, o => parseArgs rest { o with postAsserts := true }
   | "--theory-events" :: rest, o => parseArgs rest { o with theoryEvents := true }
+  | "--theory-events-ee" :: rest, o => parseArgs rest { o with theoryEventsEE := true }
+  | "--no-preprocess" :: rest, o => parseArgs rest { o with noPreprocess := true }
   | "--proof-dir" :: d :: rest, o => parseArgs rest { o with proofDir := some d }
   | ["--proof-dir"], _ => .error "--proof-dir needs a directory"
   | f :: rest, o =>
@@ -74,7 +82,7 @@ def parseArgs : List String → Options → Except String Options
     else parseArgs rest { o with file := some f }
 
 def usage : String :=
-  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE\n       telos --theory-events [PREPROCESSING OPTIONS] FILE"
+  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE\n       telos --theory-events [--theory-events-ee] [--no-preprocess] [PREPROCESSING OPTIONS] FILE"
 
 def main (args : List String) : IO UInt32 := do
   let opts ← match parseArgs args {} with
@@ -87,7 +95,7 @@ def main (args : List String) : IO UInt32 := do
     | .ok sc => pure sc
     | .error e => IO.eprintln s!"telos: {e}"; return 1
   if opts.theoryEvents then
-    match theoryEvents sc opts.pp with
+    match theoryEvents sc opts.pp opts.theoryEventsEE (!opts.noPreprocess) with
     | .ok out => IO.print out; return 0
     | .error e => IO.eprintln s!"telos: {e}"; return 1
   if opts.postAsserts then

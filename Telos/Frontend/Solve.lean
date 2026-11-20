@@ -16,6 +16,12 @@ events print them as the post-asserts do.
 
 Anything else (a disjunction, an `ite`, a Boolean equality) has SAT structure,
 which telos does not handle yet: the input is reported as unsupported.
+
+With `preprocess := false` (`--no-preprocess`), the assertions are given to the
+engine as they are: for testing the engine on inputs that are already
+preprocessed, such as cvc5's `-o post-asserts` output, whose equalities cvc5
+orients by node id. The engine assumes nothing about its input for soundness
+(`docs/theory-engine-plan.md`, "Preprocessed inputs").
 -/
 
 namespace Telos.Frontend
@@ -51,18 +57,22 @@ def namedAssertions (sc : Script) (out : Array Node) (defs : List Node) : List N
 
 /-- Preprocess `sc`, solve the result if it is a conjunction of literals, and
 print the events and the answer. -/
-def theoryEvents (sc : Script) (u : Preprocess.UserOptions := {}) : Except String String := do
+def theoryEvents (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Bool := false)
+    (preprocess : Bool := true) : Except String String := do
   let logic := sc.logic.getD "ALL"
   let theories ← enabledTheories logic
   let (opts, as) ← ppInput sc u
-  let out := if as.isEmpty then [] else
+  let out := if as.isEmpty || !preprocess then as else
     let p := Preprocess.preprocessCert as opts
     namedAssertions sc (Preprocess.Pipeline.assertions p) (Preprocess.Pipeline.defs p)
   let lits ← out.foldlM (fun acc a => match conjLiterals a with
       | some ls => pure (acc ++ ls)
       | none => throw s!"unsupported: the preprocessed assertion {a.toSmtLibLet sc.dtNames} is not a conjunction of literals")
     []
-  let (answer, events) := Solver.run { theories, termBased := opts.termBased } lits
+  for l in lits do
+    if let .app (.kind .DISTINCT) _ := (atomOf l).1 then
+      throw s!"unsupported: the literal {l.toSmtLibLet sc.dtNames} is a distinct"
+  let (answer, events) := Solver.run { theories, termBased := opts.termBased, eeEvents } lits
   let lines := events.toList.map (·.print sc.dtNames)
   return "\n".intercalate (lines ++ [answer.name]) ++ "\n"
 

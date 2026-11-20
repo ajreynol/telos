@@ -143,10 +143,13 @@ cvc5's theory engine (`Telos/Solver/`), and prints the events at the interface
 of the theory solvers, as cvc5 prints them with `-o theory-events`, then the
 answer. That cvc5 output needs the patch `cvc5-theory-events.patch`.
 
-So far only the engine's skeleton is ported: registration, assertion and the
-checks. There are no theory solvers yet, so the answer is `unknown` as soon as
-a theory gets a literal. `scripts/fuzz-solve.py --cvc5 PATH` compares the
-events with cvc5's. See
+So far the engine and UF are ported: cvc5's equality engine, used as the central
+one, and UF. They cover logics in which UF is the only theory (QF_UF). In other
+logics the theories' checks do nothing, and the answer is `unknown` as soon as
+a theory gets a literal. The answers are not certified yet.
+`scripts/fuzz-solve.py --cvc5 PATH` compares the events with cvc5's: with
+`--cvc5-pp --ee`, on cvc5's own preprocessed assertions and with the equality
+engine's notifications. See
 [`docs/theory-engine-plan.md`](docs/theory-engine-plan.md).
 
 See [`docs/design.md`](docs/design.md) for the architecture and roadmap,
@@ -174,7 +177,8 @@ Two Lake projects, so the rewriter and preprocessor build without Mathlib:
     preprocessing (`Theory/`), and the certified steps that introduce skolems
     and reorganize conjunctions;
   - `Telos/Solver/` (`TelosSolver`): the theory engine: its events
-    (`Event.lean`) and the engine (`Engine.lean`);
+    (`Event.lean`), the equality engine (`EqualityEngine.lean`), the theories
+    (`Theory/`) and the engine (`Engine.lean`);
   - `Telos/Frontend/` (`TelosFrontend`): SMT-LIB scripts (`Script.lean`),
     `simplify` queries (`Simplify.lean`), `-o post-asserts`
     (`PostAsserts.lean`) and `--theory-events` (`Solve.lean`);

@@ -51,6 +51,8 @@ import Telos.Preprocess.Preprocess
 import Telos.Frontend.Script
 import Telos.Frontend.Simplify
 import Telos.Solver.Event
+import Telos.Solver.EqualityEngine
+import Telos.Solver.Theory.UF
 import Telos.Solver.Engine
 import Telos.Frontend.PostAsserts
 import Telos.Frontend.Solve

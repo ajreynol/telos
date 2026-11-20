@@ -1,8 +1,11 @@
 import Std.Data.HashMap
 import Std.Data.HashSet
 import Telos.Core.Node.Key
+import Telos.Core.Node.FastType
 import Telos.Preprocess.Options
 import Telos.Solver.Event
+import Telos.Solver.EqualityEngine
+import Telos.Solver.Theory.UF
 
 /-!
 # The theory engine, on conjunctions of literals
@@ -10,22 +13,33 @@ import Telos.Solver.Event
 A port of cvc5's `TheoryEngine` (`src/theory/theory_engine.cpp`) for inputs with
 no SAT structure: the preprocessed assertions are literals, which are asserted
 one at a time, as cvc5's SAT solver does with unit clauses. A small stand-in
-for the SAT solver (`Assignment`) keeps the values of the literals.
+for the SAT solver keeps the values of the literals and the literals the
+theories propagate.
 
 What cvc5 does on such inputs, observed with `-o theory-events`
 (`docs/theory-engine-plan.md`, "Stage 1"):
 
-1. it preregisters `true` and `false` at level 0;
-2. it preregisters each atom, in assertion order, at level 1;
-3. it asserts each literal, in order, to the theory of its atom;
-4. it runs the theory engine's `check` at standard effort, then at full effort:
-   each runs every enabled theory's `check`, in cvc5's order, until no new
-   facts are asserted.
+1. it preregisters `true` and `false` at level 0, then each atom at level 1, in
+   assertion order (`TheoryEngine::preRegister`), each subterm with the
+   theories that own it (`PreRegisterVisitor`);
+2. if two literals contradict each other, the SAT solver answers `unsat`
+   before asserting anything;
+3. otherwise it asserts each literal, in order, to the theory of its atom;
+4. it runs the theory engine's `check` at standard effort: each enabled theory's
+   `check`, in cvc5's order, until no new facts are asserted. The theories'
+   propagations go to the SAT solver. A propagated literal that is false
+   is a conflict, explained by the theory (`explain`); one not yet assigned is
+   assigned and asserted, and the checks run again;
+5. then at full effort, likewise.
 
-The engine records each event (`Event`), for comparison with cvc5's trace.
-There are no theory solvers yet: every theory's `check` does nothing. So the
-answer is `sat` only when no theory was given a literal, and `unknown`
-otherwise.
+The only theory solver is UF (`Telos/Solver/Theory/UF.lean`) with the central
+equality engine (`Telos/Solver/EqualityEngine.lean`), and only in logics where
+it is the only theory, so that theory combination (sharing) is not needed.
+Elsewhere the theories' checks do nothing, and the answer is `unknown` as soon
+as a theory gets a literal.
+
+The answers are not certified yet (milestone 3 of the plan): the events are
+for comparison with cvc5.
 -/
 
 namespace Telos.Solver
@@ -62,10 +76,18 @@ structure Config where
   theories : List Theory
   /-- cvc5's `theoryof-mode` is `term` (`PPOptions.termBased`). -/
   termBased : Bool := false
+  /-- Also record the central equality engine's notifications
+  (`-o theory-events-ee`). -/
+  eeEvents : Bool := false
 
-/-- The theory that owns an atom (`Theory::theoryOf`). -/
-def Config.theoryOf (c : Config) (atom : Node) : Theory :=
-  Theory.ofTheoryId (Preprocess.ppTheoryOf c.termBased atom)
+/-- The theory that owns a term (`Env::theoryOf`). -/
+def Config.theoryOf (c : Config) (t : Node) : Theory :=
+  Theory.ofTheoryId (Preprocess.ppTheoryOf c.termBased t)
+
+/-- UF is solved: it is the only theory, so there is no sharing, and the logic
+is quantifier-free. -/
+def Config.ufSolver (c : Config) : Bool :=
+  c.theories == [.THEORY_BUILTIN, .THEORY_BOOL, .THEORY_UF]
 
 /-- The answer to `check-sat`. -/
 inductive Answer where
@@ -87,19 +109,34 @@ structure State where
   /-- The SAT context level. -/
   level : Nat := 0
   assignment : Assignment := {}
-  /-- The atoms preregistered so far. -/
+  /-- The atoms registered with the SAT solver so far. -/
   registered : Std.HashSet Key := {}
+  /-- The theories each term was preregistered with, as a set of theory
+  indices (`PreRegisterVisitor::d_visited`). -/
+  preregVisited : Std.HashMap Key Nat := {}
   /-- Facts were asserted to a theory since the last round of checks
   (`TheoryEngine::d_factsAsserted`). -/
   factsAsserted : Bool := false
+  /-- `TheoryEngine::d_inConflict`. -/
   inConflict : Bool := false
+  /-- A theory reported a conflict (rather than propagating a false literal). -/
+  theoryConflict : Bool := false
+  /-- The literals propagated to the SAT solver since it last looked
+  (`TheoryEngine::d_propagatedLiterals`). -/
+  propagated : Array Node := #[]
   /-- The theories that were given a literal. -/
   used : Array Theory := #[]
+  /-- UF's facts, and how many it has processed. -/
+  ufFacts : Array Node := #[]
+  ufHead : Nat := 0
+  ee : EE.EqualityEngine := default
 
 abbrev EngineM := ReaderT Config (StateM State)
 
 def emit (e : Event) : EngineM Unit :=
   modify fun s => { s with events := s.events.push e }
+
+def level : EngineM Nat := do return (← get).level
 
 /-- The atom and polarity of a literal. -/
 def atomOf (lit : Node) : Node × Bool :=
@@ -112,12 +149,144 @@ Boolean variable, which only the SAT solver sees. -/
 def isTheoryAtom (c : Config) (atom : Node) : Bool :=
   c.theoryOf atom != .THEORY_BOOL
 
+/-- The equality engine's view of the engine. -/
+def eeCtx : EngineM EE.Ctx := do
+  let asg := (← get).assignment
+  return { congruenceKinds := UF.congruenceKind, value := fun a => asg.get? ⟨a⟩ }
+
+/-- Run an operation of the equality engine, and take its notes. -/
+def runEE (x : EE.EEM α) : EngineM (α × Array EE.Note) := do
+  let ctx ← eeCtx
+  let ee ← modifyGet fun s => (s.ee, { s with ee := default })
+  let (a, ee) := (x.run ctx).run { ee with notes := #[] }
+  let notes := ee.notes
+  modify fun s => { s with ee := { ee with notes := #[] } }
+  return (a, notes)
+
+/-- `TheoryEngine::propagate` without sharing: the literal goes to the SAT
+solver, unless it is already true there; a false one puts the engine in
+conflict. -/
+def propagate (T : Theory) (lit : Node) : EngineM Unit := do
+  emit (.propagate (← level) T lit)
+  if (← get).inConflict then return
+  let (atom, pol) := atomOf lit
+  match (← get).assignment.get? ⟨atom⟩ with
+  | some v =>
+    if v == pol then return
+    modify fun s => { s with inConflict := true }
+  | none => pure ()
+  modify fun s => { s with propagated := s.propagated.push lit }
+
+/-- Process the notes of the central equality engine
+(`EqEngineManagerCentral`): its propagations and conflicts are
+`THEORY_BUILTIN`'s. -/
+def processNotes (notes : Array EE.Note) : EngineM Unit := do
+  for n in notes do
+    match n with
+    | .newClass t => if (← read).eeEvents then emit (.eeNewClass (← level) t)
+    | .merge a b => if (← read).eeEvents then emit (.eeMerge (← level) a b)
+    | .disequal a b r => if (← read).eeEvents then emit (.eeDiseq (← level) a b r)
+    | .propagate lit => propagate .THEORY_BUILTIN lit
+    | .constantMerge a b =>
+      -- `eqNotifyConstantTermMerge`: the conflict, explained
+      let (exp, _) ← runEE (EE.explainLit (Node.eqNode a b))
+      emit (.conflict (← level) .THEORY_BUILTIN "EQ_CONSTANT_MERGE" (EE.mkAnd exp))
+      modify fun s => { s with inConflict := true, theoryConflict := true }
+
+/-- Run an operation of the equality engine and process its notes. -/
+def withEE (x : EE.EEM α) : EngineM α := do
+  let (a, notes) ← runEE x
+  processNotes notes
+  return a
+
+/-- `Theory::preRegisterTerm` of theory `T`. -/
+def theoryPreRegister (T : Theory) (t : Node) : EngineM Unit := do
+  if T == .THEORY_UF && (← read).ufSolver then withEE (UF.preRegisterTerm t)
+
+/-- The theory that owns a type (`Theory::theoryOf(TypeNode)`). -/
+def typeTheory (T : TypeNode) : Theory := Theory.ofTheoryId T.theoryId
+
+/-- Whether a type is finite (`Env::isFiniteType`), for the types telos's
+solvers handle. -/
+def isFiniteType : TypeNode → Bool
+  | .boolean | .bitVector _ => true
+  | _ => false
+
+def theoryBit (T : Theory) : Nat := 1 <<< (Theory.all.idxOf T)
+
+def hasTheory (set : Nat) (T : Theory) : Bool := (set >>> (Theory.all.idxOf T)) % 2 == 1
+
+/-- `isAlreadyVisited` of the preregistration visitor. -/
+def isAlreadyVisited (c : Config) (visited : Nat) (cur parent : Node) : Bool :=
+  let ct := c.theoryOf cur
+  if !hasTheory visited ct then false
+  else if cur == parent then true
+  else
+    let pt := c.theoryOf parent
+    if !hasTheory visited pt then false
+    else match cur.typeHint with
+      | some T => if ct == pt && !isFiniteType T then true else hasTheory visited (typeTheory T)
+      | none => ct == pt
+
+/-- `PreRegisterVisitor::alreadyVisited`. -/
+def alreadyVisited (cur parent : Node) : EngineM Bool := do
+  match parent with
+  | .app (.kind k) _ =>
+    if (k == .FORALL || k == .EXISTS) && cur != parent then return true
+  | _ => pure ()
+  match (← get).preregVisited.get? ⟨cur⟩ with
+  | none => return false
+  | some v => return isAlreadyVisited (← read) v cur parent
+
+/-- `PreRegisterVisitor::visit`: preregister `cur` with its theory, its
+parent's, and its type's when they differ or the type is finite. -/
+def visitPrereg (cur parent : Node) : EngineM Unit := do
+  let c ← read
+  let mut visited := (← get).preregVisited.getD ⟨cur⟩ 0
+  let ct := c.theoryOf cur
+  let mut ths : Array Theory := #[ct]
+  if cur != parent then
+    let pt := c.theoryOf parent
+    ths := ths.push pt
+    match cur.typeHint with
+    | some T => if ct != pt || isFiniteType T then ths := ths.push (typeTheory T)
+    | none => pure ()
+  for T in ths do
+    if !hasTheory visited T then
+      visited := visited ||| theoryBit T
+      modify fun s => { s with preregVisited := s.preregVisited.insert ⟨cur⟩ visited }
+      theoryPreRegister T cur
+  modify fun s => { s with preregVisited := s.preregVisited.insert ⟨cur⟩ visited }
+
+/-- The children of a term, as cvc5 iterates them (without the operator). -/
+def children : Node → Array Node
+  | .app _ cs => cs
+  | _ => #[]
+
+/-- `NodeVisitor<PreRegisterVisitor>::run`: a post-order traversal, the children
+pushed in order and so visited last first. -/
+def preRegisterVisit (atom : Node) : EngineM Unit := do
+  -- (node, parent, children added)
+  let mut stack : Array (Node × Node × Bool) := #[(atom, atom, false)]
+  while h : stack.size > 0 do
+    let (cur, parent, added) := stack[stack.size - 1]
+    if ← alreadyVisited cur parent then
+      stack := stack.pop
+    else if added then
+      visitPrereg cur parent
+      stack := stack.pop
+    else
+      stack := stack.set! (stack.size - 1) (cur, parent, true)
+      for c in children cur do
+        if !(← alreadyVisited c cur) then stack := stack.push (c, cur, false)
+
 /-- `TheoryEngine::preRegister`, for an atom met by the CNF stream. -/
 def preRegister (atom : Node) : EngineM Unit := do
   if (← get).registered.contains ⟨atom⟩ then return
   modify fun s => { s with registered := s.registered.insert ⟨atom⟩ }
   if !isTheoryAtom (← read) atom then return
-  emit (.prereg (← get).level atom)
+  emit (.prereg (← level) atom)
+  preRegisterVisit atom
 
 /-- `Theory::assertFact`, via `TheoryEngine::assertFact`: the literal is given
 to the theory of its atom. -/
@@ -126,56 +295,112 @@ def assertFact (lit : Node) : EngineM Unit := do
   let c ← read
   if !isTheoryAtom c atom then return
   let T := c.theoryOf atom
-  emit (.assert (← get).level T lit)
+  emit (.assert (← level) T lit)
   modify fun s => { s with factsAsserted := true,
                            used := if s.used.contains T then s.used else s.used.push T }
+  if T == .THEORY_UF then modify fun s => { s with ufFacts := s.ufFacts.push lit }
 
-/-- The SAT solver assigns `lit` (a unit, or a propagated literal). Returns
-false on a propositional conflict: `lit` is already false. -/
-def assign (lit : Node) : EngineM Bool := do
+/-- The SAT solver assigns `lit` and asserts it. -/
+def assign (lit : Node) : EngineM Unit := do
   let (atom, pol) := atomOf lit
-  match (← get).assignment.get? ⟨atom⟩ with
-  | some v => return v == pol
-  | none =>
-    modify fun s => { s with assignment := s.assignment.insert ⟨atom⟩ pol }
-    assertFact lit
-    return true
+  modify fun s => { s with assignment := s.assignment.insert ⟨atom⟩ pol }
+  assertFact lit
 
-/-- `Theory::check` of one theory. -/
+/-- `Theory::check` of one theory: for UF, its facts are asserted to the
+equality engine, until the engine is in conflict. -/
 def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
-  emit (.check (← get).level T e)
+  emit (.check (← level) T e)
+  if T == .THEORY_UF && (← read).ufSolver then
+    repeat
+      let s ← get
+      if s.inConflict || s.ufHead ≥ s.ufFacts.size then break
+      let fact := s.ufFacts[s.ufHead]!
+      modify fun s => { s with ufHead := s.ufHead + 1 }
+      withEE (UF.assertFact fact)
 
 /-- `TheoryEngine::check`: rounds of checks of every enabled theory, while new
 facts are asserted and there is no conflict. At full effort the first round
 always runs. -/
 def check (e : Effort) : EngineM Unit := do
   if e == .full then modify fun s => { s with factsAsserted := true }
-  -- each round asserts no new facts yet, so the loop runs at most once
-  if (← get).factsAsserted && !(← get).inConflict then
+  repeat
+    let s ← get
+    if !s.factsAsserted || s.inConflict then break
     modify fun s => { s with factsAsserted := false }
     for T in (← read).theories do
       if T.hasCheck then
         theoryCheck T e
         if (← get).inConflict then break
 
+/-- The explanation of a propagated literal (`TheoryEngine::getExplanation`
+without sharing: the theory of its atom explains it). -/
+def explain (lit : Node) : EngineM Node := do
+  if (← read).ufSolver then
+    let (exp, _) ← runEE (EE.explainLit lit)
+    return EE.mkAnd exp
+  return Node.mkTrue
+
+/-- What the SAT solver does with the propagated literals. -/
+inductive SatResult where
+  | conflict
+  | newFacts
+  | quiet
+
+/-- The SAT solver takes the propagated literals: a false one is a conflict,
+which it asks the theory to explain; unassigned ones are assigned and
+asserted. -/
+def satPropagate : EngineM SatResult := do
+  let lits ← modifyGet fun s => (s.propagated, { s with propagated := #[] })
+  let mut progress := false
+  for lit in lits do
+    let (atom, pol) := atomOf lit
+    match (← get).assignment.get? ⟨atom⟩ with
+    | some v =>
+      if v != pol then
+        emit (.explain (← level) lit (← explain lit))
+        return .conflict
+    | none =>
+      assign lit
+      progress := true
+  return if progress then .newFacts else .quiet
+
 /-- Solve the conjunction of the literals `lits`, as cvc5's SAT solver does
-with unit clauses: register their atoms, assert them, then check at standard
-and at full effort. -/
+with unit clauses. -/
 def solve (lits : List Node) : EngineM Answer := do
   emit (.prereg 0 Node.mkTrue)
   emit (.prereg 0 Node.mkFalse)
   modify fun s => { s with registered := (s.registered.insert ⟨Node.mkTrue⟩).insert ⟨Node.mkFalse⟩ }
+  if (← read).ufSolver then
+    let ctx ← eeCtx
+    modify fun s => { s with ee := EE.init ctx }
   if lits.contains Node.mkFalse then return .unsat
   modify fun s => { s with level := 1 }
   for l in lits do preRegister (atomOf l).1
+  -- the unit clauses: two that contradict each other are a conflict
+  let mut units : Std.HashMap Key Bool := {}
   for l in lits do
-    if !(← assign l) then return .unsat
-  check .standard
-  if (← get).inConflict then return .unsat
-  check .full
-  if (← get).inConflict then return .unsat
-  -- no theory solver is implemented yet: `sat` only if no theory has a literal
-  return if (← get).used.isEmpty then .sat else .unknown
+    let (atom, pol) := atomOf l
+    match units.get? ⟨atom⟩ with
+    | some v => if v != pol then return .unsat
+    | none => units := units.insert ⟨atom⟩ pol
+  let mut seen : Std.HashSet Key := {}
+  for l in lits do
+    let (atom, _) := atomOf l
+    if !seen.contains ⟨atom⟩ then
+      seen := seen.insert ⟨atom⟩
+      assign l
+  let mut effort := Effort.standard
+  repeat
+    check effort
+    if (← get).theoryConflict then return .unsat
+    match ← satPropagate with
+    | .conflict => return .unsat
+    | .newFacts => effort := .standard
+    | .quiet => if effort == .full then break else effort := .full
+  let s ← get
+  if s.used.isEmpty || ((← read).ufSolver && s.used.all (· == .THEORY_UF)) then
+    return .sat
+  return .unknown
 
 /-- Run `solve` on `lits`: the answer and the events. -/
 def run (c : Config) (lits : List Node) : Answer × Array Event :=

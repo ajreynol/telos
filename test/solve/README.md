@@ -8,7 +8,6 @@ Each `NAME.smt2` is a benchmark for `telos --theory-events`:
   `cvc5-theory-events.patch`:
   `cvc5 --safe-mode=safe --ee-mode=central --produce-proofs -o theory-events NAME.smt2`.
 
-`scripts/fuzz-solve.py --recorded test/solve/*.smt2` compares the two without
-cvc5. Until the UF solver is in (milestone 2 of
-`docs/theory-engine-plan.md`), telos has no propagations, so only `boolean` and
-`false` agree.
+`scripts/fuzz-solve.py --recorded --strict test/solve/*.smt2` compares the two
+without cvc5, as CI does: every supported case has the same events as cvc5.
+`unsupported-ite` is skipped, because it has SAT structure.

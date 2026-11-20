@@ -344,6 +344,43 @@ condition for fidelity, not for soundness:
    - Target: the events agree exactly with cvc5 on the fuzzed conjunctions.
    - The fidelity points are the order of propagations, the choice of
      representative, and the order of the literals in explanations.
+
+   *Done (2026-11-20).*
+   - Files: `Telos/Solver/EqualityEngine.lean` (the port of
+     `uf/equality_engine.cpp`), `Telos/Solver/Theory/UF.lean`, and the engine,
+     which now has:
+     - the preregistration visitor (`PreRegisterVisitor`: post-order,
+       children last first, with the theories of each term, its parent and
+       its type);
+     - UF's fact processing;
+     - the central EE's propagations and `EQ_CONSTANT_MERGE` conflicts as
+       `THEORY_BUILTIN`'s;
+     - the stand-in for the SAT solver's handling of propagated literals
+       (false: `explain` and `unsat`; unassigned: asserted).
+   - New options: `--theory-events-ee` prints the central EE's notifications;
+     `--no-preprocess` gives the assertions to the engine as they are.
+   - Results:
+     - On cvc5's own preprocessed assertions (`fuzz-solve.py --cvc5-pp --ee`),
+       the traces are identical as text, EE notifications included. That
+       holds for 1500 random QF_UF conjunctions of up to 25 literals over
+       `f`, `g`, `h`, `P` and `Q` (seeds 11, 12, 21–23), about half of them
+       unsat.
+     - It also holds for a conjunction of 7500 literals: a 60,000-line trace,
+       in 0.38s against cvc5's 0.36s.
+     - End to end, with telos's own preprocessing, the events agree up to the
+       orientation of equalities, which is the preprocessor's known
+       difference (cvc5 orients by node id). That changes which class becomes
+       the representative, and so the order of later events.
+   - Not ported yet: trigger terms and the trigger-term sets of constants (for
+     sharing), interpreted kinds, and backtracking.
+   - UF runs only when it is the only theory (no sharing, quantifier-free).
+   - Observed and ported:
+     - Two contradictory unit literals give `unsat` after preregistration,
+       with no `assert`.
+     - After the theory engine is in conflict, UF asserts no more facts,
+       because `markInConflict` notifies every theory.
+     - With proofs on, the explanation cache is not symmetric.
+
 3. **Soundness and proofs:** the equality proofs, the checker and its theorem,
    and CPC proof output for `unsat`.
 4. **A second theory in the central EE:** arrays, then datatypes. These bring
@@ -390,7 +427,7 @@ condition for fidelity, not for soundness:
       (QF_UF, in `scripts/fuzz-solve.py`).
 - [x] `Telos/Solver/Event.lean`: the event type and its printer. The parser of
       cvc5's traces is in `scripts/fuzz-solve.py`.
-- [ ] `Telos/Solver/EqualityEngine.lean`: the EE port, with backtracking.
+- [x] `Telos/Solver/EqualityEngine.lean`: the EE port (backtracking still to do).
 - [x] `scripts/fuzz-solve.py`: run both sides and compare by rounds, with
       "exact" and "same literals" agreement.
 - [x] CI: a small corpus of recorded cvc5 traces, replayed by telos and compared,

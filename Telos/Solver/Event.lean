@@ -104,6 +104,10 @@ inductive Event where
   | phase (level : Nat) (lit : Node) (pol : Bool)
   | modelUnsound (level : Nat) (T : Theory) (id : String)
   | refutationUnsound (level : Nat) (T : Theory) (id : String)
+  /-- The central equality engine's notifications (`-o theory-events-ee`). -/
+  | eeNewClass (level : Nat) (t : Node)
+  | eeMerge (level : Nat) (t₁ t₂ : Node)
+  | eeDiseq (level : Nat) (t₁ t₂ reason : Node)
   deriving Inhabited
 
 /-- The event as cvc5 prints it, without the newline. -/
@@ -120,5 +124,8 @@ def Event.print (N : DtNames) : Event → String
   | .phase k l p => s!"(phase {k} {l.toSmtLibLet N} {p})"
   | .modelUnsound k T id => s!"(model-unsound {k} {T.name} {id})"
   | .refutationUnsound k T id => s!"(refutation-unsound {k} {T.name} {id})"
+  | .eeNewClass k t => s!"(ee-new-class {k} {t.toSmtLibLet N})"
+  | .eeMerge k a b => s!"(ee-merge {k} {a.toSmtLibLet N} {b.toSmtLibLet N})"
+  | .eeDiseq k a b r => s!"(ee-diseq {k} {a.toSmtLibLet N} {b.toSmtLibLet N} {r.toSmtLibLet N})"
 
 end Telos.Solver
