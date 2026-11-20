@@ -109,7 +109,8 @@ def main (args : List String) : IO UInt32 := do
   if let some t := opts.replay then
     let trace ← IO.FS.readFile t
     match replayScript input trace opts.theoryEventsEE with
-    | .ok out => IO.print out; return 0
+    | .ok out => IO.print out; if opts.profile then Profile.report
+                 return 0
     | .error e => IO.eprintln s!"telos: {e}"; return 1
   if opts.theoryEvents then
     let withProof := opts.proof || opts.proofDir.isSome

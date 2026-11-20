@@ -805,7 +805,8 @@ def backtrack (s : EqualityEngine) (c : Counters) : EqualityEngine := Id.run do
 def popTo (s : EqualityEngine) (k : Nat) : EqualityEngine :=
   if h : k < s.saved.size then
     let c := s.saved[k]
-    { backtrack s c with saved := s.saved.take k }
+    -- `s` is consumed by the update, so that `backtrack` updates in place
+    backtrack { s with saved := s.saved.take k } c
   else s
 
 end Telos.Solver.EE

@@ -90,11 +90,11 @@ def readTrace (trace : String) : Except String (Array RawInput × Array String) 
 
 /-- Replay the trace `trace` on the script `input`: telos's events, printed. -/
 def replayScript (input trace : String) (eeEvents : Bool := false) : Except String String := do
-  let (raw, terms) ← readTrace trace
+  let (raw, terms) ← Profile.time "replay" (fun _ => "read trace") fun _ => readTrace trace
   -- the terms of the trace, read as `simplify` queries of the script
   let text := input ++ "\n" ++ "\n".intercalate (terms.toList.map fun t => s!"(simplify {t})") ++ "\n"
-  let sc ← readScript text
-  let nodes ← sc.queries.toArray.mapM fun q => q.node
+  let sc ← Profile.time "replay" (fun _ => "parse terms") fun _ => readScript text
+  let nodes ← Profile.time "replay" (fun _ => "terms to nodes") fun _ => sc.queries.toArray.mapM fun q => q.node
   let node (i : Nat) : Except String Node :=
     match nodes[i]? with
     | some n => .ok n
@@ -107,7 +107,9 @@ def replayScript (input trace : String) (eeEvents : Bool := false) : Except Stri
     | .check k T e => return Input.check k T e
     | .pop k => return Input.pop k
     | .explain k t => return Input.explain k (← node t)
-  let events := replay { theories, termBased := opts.termBased, eeEvents } inputs
-  return String.join (events.toList.map fun e => e.print sc.dtNames ++ "\n")
+  let events := Profile.time "replay" (fun _ => "engine") fun _ =>
+    replay { theories, termBased := opts.termBased, eeEvents } inputs
+  return Profile.time "replay" (fun _ => "print events") fun _ =>
+    String.join (events.toList.map fun e => e.print sc.dtNames ++ "\n")
 
 end Telos.Frontend

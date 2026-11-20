@@ -370,26 +370,31 @@ def pushLevel : EngineM Unit :=
 
 /-- Return to the SAT context level `k` (`Context::pop`), restoring what was
 saved when leaving it. -/
-def popTo (k : Nat) : EngineM Unit :=
-  modify fun s => Id.run do
-    let some sv := s.saved[k]? | return s
-    let mut asg := s.assignment
-    for i in [sv.assignTrail:s.assignTrail.size] do
-      asg := asg.erase s.assignTrail[i]!
-    let mut pv := s.preregVisited
-    for k' in [0:s.preregLog.size - sv.preregLog] do
-      let (key, old) := s.preregLog[s.preregLog.size - 1 - k']!
-      pv := match old with
-        | some v => pv.insert key v
-        | none => pv.erase key
-    return { s with
-      assignment := asg, assignTrail := s.assignTrail.take sv.assignTrail,
-      preregVisited := pv, preregLog := s.preregLog.take sv.preregLog,
-      ufFacts := s.ufFacts.take sv.ufFacts, ufHead := sv.ufHead,
-      factsAsserted := sv.factsAsserted, inConflict := sv.inConflict,
-      theoryConflict := sv.theoryConflict, propagated := s.propagated.take sv.propagated,
-      asserted := s.asserted.take sv.asserted,
-      saved := s.saved.take k, level := k, ee := EE.popTo s.ee k }
+def popTo (k : Nat) : EngineM Unit := do
+  let some sv := (← get).saved[k]? | return
+  -- take the maps and the engine out of the state, so that they are updated in
+  -- place, not copied
+  let (asg, pv, ee) ← modifyGet fun s =>
+    ((s.assignment, s.preregVisited, s.ee), { s with assignment := {}, preregVisited := {}, ee := default })
+  let st ← get
+  let mut asg := asg
+  for i in [sv.assignTrail:st.assignTrail.size] do
+    asg := asg.erase st.assignTrail[i]!
+  let mut pv := pv
+  for k' in [0:st.preregLog.size - sv.preregLog] do
+    let (key, old) := st.preregLog[st.preregLog.size - 1 - k']!
+    pv := match old with
+      | some v => pv.insert key v
+      | none => pv.erase key
+  let ee := EE.popTo ee k
+  modify fun s => { s with
+    assignment := asg, assignTrail := s.assignTrail.take sv.assignTrail,
+    preregVisited := pv, preregLog := s.preregLog.take sv.preregLog,
+    ufFacts := s.ufFacts.take sv.ufFacts, ufHead := sv.ufHead,
+    factsAsserted := sv.factsAsserted, inConflict := sv.inConflict,
+    theoryConflict := sv.theoryConflict, propagated := s.propagated.take sv.propagated,
+    asserted := s.asserted.take sv.asserted,
+    saved := s.saved.take k, level := k, ee }
 
 /-- Raise the context level to `k` (pushes are implicit in cvc5's traces). -/
 def raiseTo (k : Nat) : EngineM Unit := do
