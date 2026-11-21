@@ -473,6 +473,9 @@ def assertShared (T : Theory) (lit : Node) : EngineM Unit := do
                                outputUsed := true, lemmasAdded := true }
     return
   let norm := lit
+  -- (cvc5's record is keyed by the literal itself; the flipped equality is
+  -- also taken as given while telos's orientation of equalities between
+  -- applications only approximates cvc5's node ids)
   let marked := (← get).markedBuiltin
   if marked.contains (markKey T norm) || marked.contains (markKey T (flipEq norm)) then return
   modify fun s => { s with markedBuiltin := s.markedBuiltin.insert (markKey T norm),
@@ -1176,7 +1179,10 @@ def dtPostCheck (full : Bool) : EngineM Unit := do
   withEEF DT.process
   let conflict : EngineM Bool := do return (← get).inConflict || (← get).ee.teConflict
   let dt : EngineM DT.State := do return (← get).ee.dt
-  if !full || (← conflict) || (← dt).sentLemmas > 0 || (← dt).lemmasAdded then return
+  -- (`Valuation::needCheck`: the output channel was used, or a lemma added, in
+  -- this call of `check`)
+  if !full || (← conflict) || (← dt).sentLemmas > 0 || (← get).outputUsed || (← get).lemmasAdded then
+    return
   repeat
     withEEF (do DT.reset; DT.checkCycles; DT.process)
     if (← conflict) || (← dt).sentLemmas > 0 then return
@@ -1220,6 +1226,8 @@ def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
       flushLemmas
     let _ ← withArith (Arith.postCheck (e == .full))
     flushArithDeferred
+    -- its lemmas go to the CNF stream before the next theory's check
+    flushLemmas
   if T == .THEORY_UF && (← read).eeSolver then
     repeat
       let s ← get
@@ -1261,12 +1269,13 @@ def equalityStatus (a b : Node) : EngineM Arith.EqStatus := do
   if ← eeAreDisequal a b then return .isFalse
   return .falseInModel
 
-/-- `TheoryUF::areCareDisequal`. -/
-def ufAreCareDisequal (x y : Node) : EngineM Bool := do
+/-- `areCareDisequal` of the theory `T`: disequal in the equality engine, or,
+for two trigger terms of `T`, disequal by `getEqualityStatus` (UF's override
+checks the disequality only for terms of the engine, which ours always are). -/
+def areCareDisequal (T : Theory) (x y : Node) : EngineM Bool := do
   let ee := (← get).ee
   if ee.nodeIds.contains ⟨x⟩ && ee.nodeIds.contains ⟨y⟩ && (← eeAreDisequal x y) then return true
-  let tag := Theory.THEORY_UF.tag
-  match eeTriggerRep? ee x tag, eeTriggerRep? ee y tag with
+  match eeTriggerRep? ee x T.tag, eeTriggerRep? ee y T.tag with
   | some xs, some ys =>
     match ← equalityStatus xs ys with
     | .isFalse | .falseAndPropagated | .falseInModel => return true
@@ -1274,30 +1283,32 @@ def ufAreCareDisequal (x y : Node) : EngineM Bool := do
   | _, _ => return false
 
 /-- `CarePairArgumentCallback::considerPath`. -/
-def ufConsiderPath (a b : Node) : EngineM Bool := do
+def considerPath (T : Theory) (a b : Node) : EngineM Bool := do
   if a == b then return true
   if a.isConst && b.isConst then return false
-  return !(← ufAreCareDisequal a b)
+  return !(← areCareDisequal T a b)
 
-/-- `TheoryUF::computeCareGraph`: for the applications of each function with a
-trigger argument, one per vector of argument representatives
-(`TNodeTrie::addTerm`), the pairs whose arguments may be equal
-(`nodeTriePathPairProcess`) give pairs of their trigger arguments that are not
-equal (`processCarePairArgs`, `addCarePairArgs`). The care graph is a set, so
-the order in which the pairs are found does not matter. -/
-def ufCarePairs : EngineM (Array (Node × Node)) := do
-  let tag := Theory.THEORY_UF.tag
+/-- The care pairs of the theory `T` from its function terms, grouped by `key`
+(`nodeTriePathPairProcess` on a trie per key): of the terms with a trigger
+argument, one per vector of argument representatives (`TNodeTrie::addTerm`),
+the pairs whose arguments may be equal (`considerPath`) give pairs of their
+trigger arguments that are not equal (`processCarePairArgs`,
+`addCarePairArgs`). The care graph is a set, so the order in which the pairs
+are found does not matter. -/
+def carePairsOf {κ : Type} [BEq κ] [Inhabited κ] (T : Theory) (terms : Array Node) (key : Node → Option κ) :
+    EngineM (Array (Node × Node)) := do
+  let tag := T.tag
   let ee := (← get).ee
-  let mut groups : Array (Node × Array (Array Node × Node)) := #[]
-  for app in (← get).ufFunctionTerms do
-    let .app (.node .APPLY_UF f) cs := app | continue
+  let mut groups : Array (κ × Array (Array Node × Node)) := #[]
+  for app in terms do
+    let (some k, .app _ cs) := (key app, app) | continue
     if !(cs.any fun c => (eeTriggerRep? ee c tag).isSome) then continue
     let reps := cs.map (eeRep ee)
-    match groups.findIdx? (·.1 == f) with
+    match groups.findIdx? (·.1 == k) with
     | some i =>
       if !(groups[i]!.2.any (·.1 == reps)) then
-        groups := groups.modify i fun (f, es) => (f, es.push (reps, app))
-    | none => groups := groups.push (f, #[(reps, app)])
+        groups := groups.modify i fun (k, es) => (k, es.push (reps, app))
+    | none => groups := groups.push (k, #[(reps, app)])
   let mut out := #[]
   for (_, es) in groups do
     for i in [0:es.size] do
@@ -1306,7 +1317,7 @@ def ufCarePairs : EngineM (Array (Node × Node)) := do
         let (r2, fb) := es[j]!
         let mut ok := true
         for k in [0:r1.size] do
-          if !(← ufConsiderPath r1[k]! r2[k]!) then ok := false; break
+          if !(← considerPath T r1[k]! r2[k]!) then ok := false; break
         if !ok then continue
         -- `processCarePairArgs`
         if ← eeAreEqual fa fb then continue
@@ -1318,13 +1329,38 @@ def ufCarePairs : EngineM (Array (Node × Node)) := do
             if !(← eeAreEqual x y) then out := out.push (xr, yr)
   return out
 
+/-- `TheoryUF::computeCareGraph`: its applications (registered), by function. -/
+def ufCarePairs : EngineM (Array (Node × Node)) := do
+  carePairsOf .THEORY_UF (← get).ufFunctionTerms fun
+    | .app (.node .APPLY_UF f) _ => some f
+    | _ => none
+
+/-- `TheoryDatatypes::computeCareGraph`: its function terms (`d_functionTerms`,
+the constructor applications with arguments and the selector applications, in
+the order of their classes' creation: the order of the engine's nodes), by
+operator and type (of the term for a constructor, of the argument for a
+selector). -/
+def dtCarePairs : EngineM (Array (Node × Node)) := do
+  let ee := (← get).ee
+  let mut terms := #[]
+  for h : i in [0:ee.nodes.size] do
+    if ee.isInternal[i]! then continue
+    match ee.nodes[i] with
+    | t@(.app (.node .APPLY_CONSTRUCTOR _) cs) => if cs.size > 0 then terms := terms.push t
+    | t@(.app (.node .APPLY_SELECTOR _) _) => terms := terms.push t
+    | _ => pure ()
+  carePairsOf .THEORY_DATATYPES terms fun
+    | t@(.app (.node .APPLY_CONSTRUCTOR f) _) => some (f, t.typeHint)
+    | .app (.node .APPLY_SELECTOR f) #[x] => some (f, x.typeHint)
+    | _ => none
+
 /-- cvc5's node order, for the care pairs (`EE.ageLt`, with the order of the
 declarations). -/
 def idLt (c : Config) (ids : Std.HashMap Key Nat) (a b : Node) : Bool := EE.ageLt ids a b c.declOrder
 
 /-- `CombinationCareGraph::combineTheories`: the care pairs of the parametric
-theories (UF here: arithmetic is not parametric, its model only prunes UF's
-pairs; datatypes' care graph is not ported), a set ordered by theory and node
+theories (UF and datatypes: arithmetic is not parametric, its model only
+prunes their pairs), a set ordered by theory and node
 ids, each a split of the equality
 (`COMBINATION_SPLIT`, by the builtin theory, whose lemmas are cached), whose
 literal gets the preferred phase `true`. -/
@@ -1333,6 +1369,8 @@ def combineTheories : EngineM Unit := do
   let mut pairs : Array (Nat × Node × Node) := #[]
   if c.eeSolver then
     for (a, b) in ← ufCarePairs do pairs := pairs.push (Theory.all.idxOf .THEORY_UF, a, b)
+  if c.dtSolver then
+    for (a, b) in ← dtCarePairs do pairs := pairs.push (Theory.all.idxOf .THEORY_DATATYPES, a, b)
   let ids := (← get).ee.nodeIds
   -- `CarePair`: the smaller node first; the set's order
   let normal := pairs.map fun (t, a, b) => if idLt c ids b a then (t, b, a) else (t, a, b)

@@ -496,7 +496,12 @@ def constraintFromFactQueue (fact : Node) : ArithM (Option Nat) := do
         | a => (false, a)
       let reEq := Telos.rewrite eq
       if reEq == Node.mkTrue || reEq == Node.mkFalse then
-        unsupported s!"a fact that rewrites to a constant: {fact.toSmtLib}"
+        -- a false one (`(not true)`, or `false`) is a conflict by itself
+        -- (`raiseBlackBoxConflict`), refuted by its Farkas combination; a true
+        -- one is ignored
+        if (reEq == Node.mkTrue) == isDistinct then
+          let cert := ([#[(fact, (1 : Rat))], #[(fact, -1)]].find? (checkFarkas #[fact])).map LinCert.farkas
+          modify fun s => { s with blackBox := s.blackBox <|> some (fact, cert) }
         return none
       if !(← isSetup reEq) then setupAtom reEq
       pure ((← get).lookup (if isDistinct then Node.notNode reEq else reEq))

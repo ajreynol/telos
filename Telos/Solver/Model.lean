@@ -425,6 +425,8 @@ with a constructor that has a field of the datatype or of an infinite type. -/
 def infiniteType : Nat → SmtType → Bool
   | 0, _ => false
   | _ + 1, .USort _ => true
+  | _ + 1, .Int => true
+  | _ + 1, .Real => true
   | f + 1, T@(.Datatype s dd) =>
     (consesOf s dd).any fun fs => fs.any fun F => F == T || infiniteType f F
   | _ + 1, _ => false
@@ -436,6 +438,8 @@ def valueAt : Nat → SmtType → Nat → Option MVal
   | 0, _, _ => none
   | _ + 1, .Bool, k => if k < 2 then some (.bool (k == 1)) else none
   | _ + 1, .USort s, k => some (.uval s k)
+  | _ + 1, .Int, k => some (.int k)
+  | _ + 1, .Real, k => some (.rat k)
   | f + 1, T@(.Datatype s dd), k =>
     let cs := (consesOf s dd).zipIdx
     match cs.find? (fun (fs, _) => fs.contains T) with
@@ -593,6 +597,47 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
       | _ => arithVals.get? ⟨t⟩
     if let some q := q? then
       arithOf := arithOf.insert r (if t.typeHint == some .integer then .int q.floor else .rat q)
+  -- an arithmetic class with an application of arithmetic (no leaf) takes
+  -- its value from those of the arguments' classes, as the model builder
+  -- evaluates the terms that are not assignable
+  let ratOf (v : MVal) : Option Rat := match v with
+    | .int k => some k
+    | .rat q => some q
+    | _ => none
+  let rec evalArith (vals : Std.HashMap Nat MVal) : Nat → Node → Option Rat
+    | 0, _ => none
+    | fuel + 1, t =>
+      match t with
+      | .const (.integer k) => some k
+      | .const (.rational q) => some q
+      | _ =>
+      match (id? t).bind vals.get? |>.bind ratOf with
+      | some q => some q
+      | none =>
+        match t with
+        | .app (.kind k) cs => do
+          let vs ← cs.toList.mapM (evalArith vals fuel)
+          match k, vs with
+          | .ADD, vs => some (vs.foldl (· + ·) 0)
+          | .MULT, vs => some (vs.foldl (· * ·) 1)
+          | .SUB, [a, b] => some (a - b)
+          | .NEG, [a] => some (-a)
+          | .TO_REAL, [a] => some a
+          | .TO_INTEGER, [a] => some (a.floor : Int)
+          | .ABS, [a] => some (if a < 0 then -a else a)
+          | .DIVISION, [a, b] => if b == 0 then none else some (a / b)
+          | _, _ => none
+        | _ => none
+  let mut changed := true
+  while changed do
+    changed := false
+    for h : i in [0:n] do
+      if ee.isInternal[i]! || arithOf.contains (find i) then continue
+      let t := ee.nodes[i]
+      let .app (.kind _) _ := t | continue
+      if let some q := evalArith arithOf 64 t then
+        arithOf := arithOf.insert (find i) (if t.typeHint == some .integer then .int q.floor else .rat q)
+        changed := true
   -- an arithmetic class with no value gets a fresh one, distinct from the
   -- others (as the model builder's type enumerators do)
   let mut usedArith : Array MVal := arithOf.fold (fun acc _ v => acc.push v) #[]
@@ -618,6 +663,42 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
       if some (find i) == falseRep then
         if let (some (_, _, c), some r) := (Model.consOf? f, id? x) then
           excluded := excluded.insert r (c :: excluded.getD r [])
+  -- a class of a datatype with selector terms but no constructor term has a
+  -- constructor applied to its selector terms (`getInstCons`, the constructors
+  -- with an infinite field first): the values of their classes, or fresh ones
+  -- for the fields with no selector term
+  let mut selTerms : Std.HashMap Nat (List (Nat × Nat × Nat)) := {}
+  for h : i in [0:n] do
+    if ee.isInternal[i]! then continue
+    if let .app (.node .APPLY_SELECTOR f) #[x] := ee.nodes[i] then
+      if let (some (_, _, c, j), some r) := (Model.selOf? f, id? x) then
+        if !cons.contains r then selTerms := selTerms.insert r ((c, j, find i) :: selTerms.getD r [])
+  let infField (F : SmtType) : Bool := infiniteType 16 F
+  let mut virtual : Std.HashMap Nat (native_String × SmtDatatypeDecl × Nat × List (Sum Nat MVal)) := {}
+  for (r, sels) in selTerms.toList do
+    let some T := ee.nodes[r]!.typeHint.map fun T => __eo_to_smt_type T.toEo | continue
+    let .Datatype s dd := T | continue
+    let conses := consesOf s dd
+    let ex := excluded.getD r []
+    let allowed := (List.range conses.length).filter (!ex.contains ·)
+    let inf := allowed.filter fun c => (conses[c]!).any fun F => F == T || infField F
+    let some c := (inf ++ allowed.filter (!inf.contains ·)).head? | continue
+    let mut fields : List (Sum Nat MVal) := []
+    let mut ok := true
+    for (F, j) in (conses[c]!).zipIdx do
+      match sels.find? fun (c', j', _) => c' == c && j' == j with
+      | some (_, _, cls) => fields := fields ++ [.inl cls]
+      | none =>
+        if F == .Int || F == .Real then
+          let mut k : Int := 0
+          let mk := fun (k : Int) => if F == .Int then MVal.int k else MVal.rat k
+          while usedArith.contains (mk k) do k := k + 1
+          usedArith := usedArith.push (mk k)
+          fields := fields ++ [.inr (mk k)]
+        else match groundValue 16 F with
+          | some v => fields := fields ++ [.inr v]
+          | none => ok := false
+    if ok then virtual := virtual.insert r (s, dd, c, fields)
   -- the values, from those of the classes without constructor terms (`fresh`)
   let rec value (fuel : Nat) (fresh : Std.HashMap Nat MVal) (r : Nat) : Option MVal :=
     match fuel with
@@ -629,6 +710,10 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
         | some (s, dd, c, cs) =>
           (cs.toList.mapM fun x => (id? x).bind (value fuel fresh)).map (MVal.mkDt s dd c)
         | none => none
+      | none =>
+      match virtual.get? r with
+      | some (s, dd, c, fields) =>
+        (fields.mapM fun (x : Sum Nat MVal) => match x with | .inl cls => value fuel fresh cls | .inr v => some v).map (MVal.mkDt s dd c)
       | none =>
         match ee.nodes[r]!.typeHint.map fun T => __eo_to_smt_type T.toEo with
         | some (.Datatype ..) => fresh.get? r
@@ -647,7 +732,7 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
   -- a fresh value for each class without a constructor term
   let mut fresh : Std.HashMap Nat MVal := {}
   for r in reps do
-    if cons.contains r then continue
+    if cons.contains r || virtual.contains r then continue
     let some (s, dd) := dtRep r | continue
     let ex := excluded.getD r []
     let allowed := (List.range (consesOf s dd).length).filter (!ex.contains ·)

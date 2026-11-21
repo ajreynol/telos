@@ -1164,8 +1164,33 @@ core is about 13k lines of C++: `theory_arith_private.cpp` (6k),
    (`declOrder`). On QF_UFLRA (`fuzz-solve.py --theory uflra`) every answer
    agrees with cvc5's, and the events of 80% of the benchmarks; the rest
    differ in the order of the monomials of applications (cvc5's node ids).
-   Not yet: the congruence manager (arithmetic's equalities to the equality
-   engine), datatypes' care graph, QF_UFLIA.
+   There is no congruence manager: with the central equality engine cvc5
+   turns on `arith-eq-solver` (`set_defaults.cpp`, also in safe mode, since
+   cvc5 sets it, not the user), which disables it (`d_cmEnabled`).
+   Arithmetic's equality literals are asserted to the central engine as well
+   as to the linear solver, and equalities that only the bounds imply (`x ≤ y`,
+   `y ≤ x`) reach the other theories by the care graph's splits, not by
+   propagation. Datatypes' care graph (`TheoryDatatypes::computeCareGraph`)
+   is UF's with the default `areCareDisequal`, over its function terms (the
+   constructor applications with arguments and the selector applications, by
+   operator and type). Its full-effort split waits while `needCheck` holds
+   (the output channel used or a lemma added in this `check`, by any
+   theory), and arithmetic's lemmas are preregistered before the next
+   theory's check. An equality that rewrites to a constant, given to
+   arithmetic as a shared (dis)equality, is ignored if true and a black-box
+   conflict if false (`constraintFromFactQueue`). Combined models follow the
+   model builder: arithmetic applications (not leaves) are evaluated from
+   their arguments before the other classes get fresh values, a datatype
+   class with selector terms but no constructor term is a constructor
+   applied to them (`getInstCons`), and integer and real fields count as
+   infinite for fresh datatype values. QF_UFLIA (`--theory uflia`) and
+   datatypes with integer fields (`--theory dtlia`): every answer agrees with
+   cvc5's, and the events of 65% and 80–85% of the benchmarks; the rest
+   differ in cvc5's node ids (the order of monomials, the orientation of
+   equalities between applications or with constants that preprocessing
+   made). cvc5's record of the literals given to the theories
+   (`markPropagation`) is keyed by the literal; telos also takes the flipped
+   equality as given, while the orientation is approximate.
 5. Later: nonlinear arithmetic (`nl-ext`).
 
 ### Port notes (cvc5's linear solver, `src/theory/arith/linear/`)
