@@ -13,5 +13,6 @@ without cvc5, as CI does: every supported case has the same events as cvc5.
 The `sat-*` cases have SAT structure, which telos's SAT solver (a port of
 cvc5's MiniSat) solves: their traces are recorded with `--sat-solver=minisat`
 added (cvc5's default SAT solver is CaDiCaL). An `unsat` of the SAT solver is
-certified by the certificate of its refutation (`sat-or-unsat`). With `--proofs`,
+certified by the certificate of its refutation (`sat-or-unsat`; `sat-dt-lemmas*`
+need the certificates of datatypes lemmas). With `--proofs`,
 the refutation of each `unsat` is also checked by Ethos.

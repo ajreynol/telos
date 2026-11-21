@@ -1083,6 +1083,131 @@ Two Lean pitfalls caused bugs here, worth knowing:
   the statement;
 - `return` inside a `match` arm's `do` returns from the enclosing function.
 
+## Stage 7: linear arithmetic (in progress)
+
+### Scope
+
+With `--safe-mode=safe --produce-proofs`, cvc5's arithmetic is the linear
+solver (`src/theory/arith/linear/`) with its defaults: the dual simplex only
+(`useFC`, `useSOI` and `useApprox` are off), bound propagation
+(`arithPropagationMode=BOTH_PROP`), the congruence manager (arithmetic's own
+equality engine: `--arith-eq-solver` is an expert option), and for integers
+the Diophantine solver, branch and bound and cuts. Static learning is
+preprocessing, already ported. Nonlinear arithmetic (`nl-ext`) comes later;
+`nl-cov` is off in safe mode.
+
+The port is faithful, as MiniSat's: the events are compared with cvc5's. The
+core is about 13k lines of C++: `theory_arith_private.cpp` (6k),
+`constraint.cpp` (2.8k), `linear_equality.cpp` (1.6k), `matrix.h` and
+`tableau.cpp` (1.3k), `partial_model.cpp` (0.8k), the simplex (0.6k),
+`theory_arith.cpp` (0.7k).
+
+### Milestones
+
+1. **QF_LRA**, the events compared with cvc5's: delta-rationals, the variable
+   map, the tableau, the partial model, the constraint database, the error
+   set, the dual simplex with cvc5's pivot rules, conflicts and propagations.
+   Conjunctions first, then with the SAT solver. A `sat` is certified by the
+   model check.
+2. **Certified `unsat` by Farkas certificates.** cvc5 explains a conflict by a
+   Farkas combination of bounds. Telos checks the combination with a small
+   checker proved sound in Lean, not by running Logos's `arith_poly_norm` at
+   run time (a statically verified algorithm). It plugs into `EqProof` and
+   `SatProof` as the datatypes rules do. The CPC proof for Ethos uses the
+   scaled sum of bounds and `arith_poly_norm`.
+3. **QF_LIA**: branch and bound, the Diophantine solver, cuts, with certified
+   lemmas (splits are valid; cuts are Farkas-like).
+4. **Combination with UF and datatypes**: the congruence manager, care graphs
+   and `combineTheories`; UFLRA, UFLIA.
+5. Later: nonlinear arithmetic (`nl-ext`).
+
+### Port notes (cvc5's linear solver, `src/theory/arith/linear/`)
+
+**Options decided by the logic** (`SetDefaults`, `set_defaults.cpp:817-861`):
+- `arithHeuristicPivots` is 0 for quantifier-free real arithmetic alone, the
+  number of variables plus one for difference logic, and 5 otherwise (QF_LIA,
+  mixed logics).
+- `arithStandardCheckVarOrderPivots` is 200 for pure quantifier-free
+  arithmetic, and -1 otherwise, which makes even standard-effort simplex run
+  to completion.
+- `arithRewriteEq` is on for pure linear quantifier-free arithmetic.
+- Other defaults: `newProp`, `arithPivotThreshold=2`, error selection
+  `MINIMUM_AMOUNT`, `arithSimplexCheckPeriod=200`, `arithPropagateMaxLength=16`,
+  `arithPropAsLemmaLength=8`, `arithUnateLemmaMode=ALL`, `dioSolverTurns=10`,
+  `rrTurns=3`.
+
+**Structure:**
+- `TheoryArith` owns `TheoryArithPrivate` through `LinearSolver`.
+- Arithmetic's own equality engine is written only by the congruence manager.
+- These persist across backtracking: the tableau's basis, the assignments, and
+  the round-robin integer variable. Events therefore depend on the whole
+  history, not only on the current context.
+- These are context dependent: the bounds (revert lists in `ArithVariables`),
+  the constraints' proofs, preregistration and assertion order (watches in the
+  constraint database), the conflicts, the disequality queue and the learned
+  bounds.
+
+**Preregistration** (`setupAtom`, `setupPolynomial`):
+- Each atom's constant-free normalized polynomial gets a variable.
+- A sum gets a slack variable and a tableau row.
+- Arith variables are numbered in order: the polynomial's variables, then the
+  slack, in preregistration order.
+- The constraint and its negation go into the variable's map, sorted by
+  delta-rational value.
+
+**`postCheck`, in order:**
+1. learned bounds;
+2. conflicts;
+3. the simplex (`dualFindModel`): the heuristic pivots, then variable-order
+   pivots;
+4. unate propagation of the bounds asserted;
+5. at full effort, disequality splits, then for integers the Diophantine
+   solver, cuts, and branch and bound.
+
+**The simplex's choices:**
+- Leaving variable: the error set's heap, smallest violation first, then
+  smallest variable.
+- Entering variable: by `minBoundAndColLength`, unless the leaving variable
+  already left twice in this `findModel` call, in which case by Bland's rule.
+- Signals are processed last in, first out.
+- Conflicts come from `minimallyWeakConflict` (`ARITH_CONF_SIMPLEX`), with
+  Farkas coefficients.
+
+**Propagation** runs after a `sat` relaxation, from the rows of updated
+bounds:
+- A row of length at most 8 that implies a bound is sent as a lemma
+  (`ARITH_ROW_IMPL`); otherwise the bound is propagated.
+- **cvc5 skips rows of length 16 or more at random** (`propagateCandidateRow`),
+  which a port cannot reproduce.
+- At presolve, `ARITH_UNATE` lemmas relate the atoms of each variable.
+
+**Order dependence:**
+- The order of variables in monomials is by node id (`VariableNodeCmp`), which
+  fixes the arith-variable numbering. With `--cvc5-pp` telos gets cvc5's
+  normalized atoms.
+- `proveOr` orders a unate lemma's disjuncts by node id.
+- The rest follows from the matrix's lists and the dense maps (ported
+  exactly).
+
+### Status
+
+`Telos/Solver/Theory/Arith/`:
+- `DeltaRational.lean`: `c + k·δ` (`delta_rational.h`);
+- `DenseMap.lean`: `DenseMap`, `DenseSet`, `DenseMultiset`
+  (`util/dense_map.h`), whose key order, which `remove` changes, decides
+  iteration orders;
+- `Matrix.lean`: the sparse matrix and the tableau (`matrix.h`,
+  `tableau.cpp`), its entries in one array with doubly linked rows and columns,
+  new entries at the heads, freed ones reused first in, first out, so that
+  traversals are in cvc5's order. `TelosTests/ArithTableau.lean` checks random
+  pivots against the original equations.
+
+`scripts/fuzz-solve.py --theory lra` generates QF_LRA benchmarks. On them,
+cvc5's events are arithmetic's asserts and checks, `ARITH_UNATE` lemmas at
+preregistration and `ARITH_CONF_SIMPLEX` conflicts; telos answers `unknown`.
+Next: the constraint database and the partial model, then preregistration
+(`setupAtom`, `setupPolynomial`) and the unate lemmas, then the dual simplex.
+
 ## Order of work (all stages)
 
 1. **Equality engine.** Port `theory/uf/equality_engine.cpp` (about 3k lines)

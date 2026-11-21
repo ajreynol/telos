@@ -237,6 +237,43 @@ def dt_literal(rng):
     return atom if rng.random() < 0.65 else f"(not {atom})"
 
 
+LRA_PRELUDE = """(set-logic QF_LRA)
+(declare-fun x () Real)
+(declare-fun y () Real)
+(declare-fun z () Real)
+(declare-fun w () Real)
+"""
+
+
+def lra_sum(rng):
+    """A linear sum of one to three variables, with small coefficients."""
+    vs = rng.sample(["x", "y", "z", "w"], rng.randint(1, 3))
+    terms = []
+    for v in vs:
+        c = rng.choice([1, 1, 1, 2, -1, 3, -2])
+        terms.append(v if c == 1 else f"(* {c} {v})" if c > 0 else f"(* (- {-c}) {v})")
+    return terms[0] if len(terms) == 1 else "(+ " + " ".join(terms) + ")"
+
+
+def lra_literal(rng):
+    rel = rng.choice(["<=", "<", ">=", ">", "<=", ">=", "="])
+    c = rng.randint(-4, 4)
+    rhs = str(c) if c >= 0 else f"(- {-c})"
+    atom = f"({rel} {lra_sum(rng)} {rhs})"
+    return atom if rel == "=" or rng.random() < 0.8 else f"(not {atom})"
+
+
+def lra_benchmark(rng, size, clauses=False):
+    out = []
+    for _ in range(rng.randint(2, size)):
+        if clauses and rng.random() < 0.5:
+            k = rng.randint(2, 3)
+            out.append("(or " + " ".join(lra_literal(rng) for _ in range(k)) + ")")
+        else:
+            out.append(lra_literal(rng))
+    return LRA_PRELUDE + "".join(f"(assert {l})\n" for l in out) + "(check-sat)\n"
+
+
 def bool_formula(rng, lit, depth):
     """A formula over literals made by `lit`, with Boolean connectives."""
     if depth == 0 or rng.random() < 0.3:
@@ -471,7 +508,7 @@ def main():
     ap.add_argument("--sat", action="store_true",
                     help="solve with telos's SAT solver (--via-sat), cvc5 with --sat-solver=minisat")
     ap.add_argument("--size", type=int, default=6, help="the most literals of a random benchmark")
-    ap.add_argument("--theory", choices=["uf", "dt"], default="uf", help="the theory of the random benchmarks")
+    ap.add_argument("--theory", choices=["uf", "dt", "lra"], default="uf", help="the theory of the random benchmarks")
     ap.add_argument("files", nargs="*")
     a = ap.parse_args()
     if not TELOS.exists():
@@ -483,10 +520,11 @@ def main():
         for i in range(a.count):
             p = tmp / f"s{i}.smt2"
             if a.bool:
-                p.write_text(bool_benchmark(DT_PRELUDE if a.theory == "dt" else UF_PRELUDE,
-                                            dt_literal if a.theory == "dt" else uf_literal, rng, a.size))
+                prelude, lit = {"dt": (DT_PRELUDE, dt_literal), "lra": (LRA_PRELUDE, lra_literal)}.get(
+                    a.theory, (UF_PRELUDE, uf_literal))
+                p.write_text(bool_benchmark(prelude, lit, rng, a.size))
             else:
-                gen = dt_benchmark if a.theory == "dt" else uf_benchmark
+                gen = {"dt": dt_benchmark, "lra": lra_benchmark}.get(a.theory, uf_benchmark)
                 p.write_text(gen(rng, a.size, a.clauses or a.replay))
             files.append(p)
     counts = collections.Counter()
