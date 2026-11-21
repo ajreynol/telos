@@ -325,7 +325,8 @@ def proveTerms (C : BuildCtx) (t₁ t₂ : Node) : BuildM EqProof := do
 
 /-- A proof of `((= a b), false)`, from the reasons of the propagated
 disequality of `a` and `b`. Only a disequality propagated by a trigger (whose
-reason is the merge of the equality with `false`) is supported. -/
+reason is the merge of the equality with `false`) is supported, in either
+orientation (by `rw`, the two having the same rewrite). -/
 def proveDiseq (C : BuildCtx) (a b : Node) : BuildM EqProof := do
   let some i := C.ee.nodeIds.get? ⟨a⟩ | throw "a term is not in the engine"
   let some j := C.ee.nodeIds.get? ⟨b⟩ | throw "a term is not in the engine"
@@ -334,7 +335,12 @@ def proveDiseq (C : BuildCtx) (a b : Node) : BuildM EqProof := do
   let (x, y) := C.ee.deducedReasons[lo]!
   if y != C.ee.falseId then throw "a disequality reason is not a merge with false"
   let some p ← proveIds C x y | throw "an empty disequality reason"
-  if C.ee.nodes[x]! == Node.eqNode a b then return p
+  let e := Node.eqNode a b
+  if C.ee.nodes[x]! == e then return p
+  -- the other orientation: the two equalities have the same rewrite
+  let e' := C.ee.nodes[x]!
+  if e' == Node.eqNode b a && Telos.rewrite e == Telos.rewrite e' then
+    return .trans (.rw e) (.trans (.symm (.rw e')) p)
   throw "a disequality reason for the other orientation"
 
 /-- A certificate that a literal `lit`, explained by `E`, and the assumption

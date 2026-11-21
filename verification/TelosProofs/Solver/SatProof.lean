@@ -9,7 +9,8 @@ its inputs. In a well-formed model that makes every input true:
 - each clause with a justification is true: the clauses of an input formula
   (`input_sat`), the definitions of connectives (`defClauses_sat`), and the
   negations of theory conflicts (`theory_sat`, from the certificates'
-  soundness, `checkConflict_sound`);
+  soundness, `checkConflict_sound`), and the clauses of theory lemmas, valid
+  by their certificates from no assumptions (`lemma_true`, from `check_sound`);
 - a clause that follows from true clauses by unit propagation is true
   (`rup_sound`), so each learned clause is, and so is the empty clause, which
   is impossible (`Cert.check_sound`).
@@ -708,6 +709,13 @@ decreasing_by
     | (have := Array.sizeOf_getElem ‹Array Node› 0 (by simp_all); simp only [Node.app.sizeOf_spec]; omega)
     | (have := Array.sizeOf_getElem ‹Array Node› 1 (by simp_all); simp only [Node.app.sizeOf_spec]; omega)
 
+/-- **A lemma proven from no assumptions is true.** -/
+theorem lemma_true {N : SmtModel} (hN : model_wf N) {F : Node} {p : EqProof}
+    (h : EqProof.check #[] p = some (F, Node.mkTrue)) : TrueIn N F.toEo := by
+  have hc := check_sound #[] (by simp) (stable_of_closed (by simp [EqProof.closedAssumptions])) p _ _ h
+  rw [toEo_true] at hc
+  exact (bool_of_condEquiv hc).2 N hN (by simp [Holds])
+
 /-- A clause with a justification that checks is true. -/
 theorem just_sat {N : SmtModel} (hN : model_wf N) {inputs : Array Node}
     (hin : ∀ f ∈ inputs.toList, TrueIn N f.toEo) {c : Clause} {j : Just} (h : j.check inputs c = true) :
@@ -729,6 +737,10 @@ theorem just_sat {N : SmtModel} (hN : model_wf N) {inputs : Array Node}
   | theory A p =>
     simp only [Just.check, Bool.and_eq_true] at h
     exact theory_sat hN h.1.1 h.1.2 h.2
+  | «lemma» F p =>
+    simp only [Just.check, Bool.and_eq_true, beq_iff_eq, List.any_eq_true] at h
+    obtain ⟨⟨hp, ht⟩, d, hd, hs⟩ := h
+    exact sat_of_subsumes (input_sat hN F false ht (by simpa using lemma_true hN hp) d hd) hs
 
 /-- The learned clauses follow, and then the empty clause: impossible if the
 clauses are true. -/

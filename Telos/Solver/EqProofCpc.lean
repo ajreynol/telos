@@ -19,7 +19,9 @@ the certificate is the CPC fact `(= a b)`:
 - `andElim i`: `true_elim`, `and_elim i`, `true_intro`;
 - `orElim k`: `true_elim`, then `resolution` with each `(not lᵢ)` (from
   `false_elim`), and `true_intro`;
-- `congAt t`: as `cong`.
+- `congAt t`: as `cong`;
+- `rw t`: the CPC proof of the rewrite (`Proof.emitChain`), which fails if
+  the rewrite has steps with no CPC proof (`Certified.semantic`).
 The last fact is `(= true false)`, and `false` follows by `symm` and
 `true_elim`. The last step states its conclusion, `false`, so that a checker
 that accepts the proof has checked a refutation.
@@ -108,6 +110,9 @@ partial def emitEq (A : Array Node) (pos : Array Nat) : EqProof → EmitM Nat
     let .app op cs := t | throw "a congruence on a non-application"
     let eqs ← emitArgs A pos cs args.toList 0
     congStep t op eqs
+  | .rw t => do
+    let r := Telos.rewriteCert t
+    closeChain t (← emitChain r.2)
 where
   emitArgs (A : Array Node) (pos : Array Nat) (cs : Array Node) :
       List (Option EqProof) → Nat → EmitM (List Nat)

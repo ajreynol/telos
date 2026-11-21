@@ -12,6 +12,7 @@ import Telos.Solver.Explain
 import Telos.Solver.Model
 import Telos.Solver.Cnf
 import Telos.Solver.SatProof
+import Telos.Solver.DtLemma
 
 /-!
 # The theory engine, on conjunctions of literals
@@ -164,8 +165,9 @@ the certificate of a refutation. -/
 inductive SatSource where
   /-- The input formula of this index. -/
   | input (i : Nat)
-  /-- A theory lemma (not certified yet). -/
-  | lemma
+  /-- A theory lemma, as given to the CNF stream, with a proof of `(F, true)`
+  (`Telos/Solver/DtLemma.lean`), if any. -/
+  | lemma (cert : Option (Node × EqProof))
   /-- The negation of a theory conflict, with its certificate, if any. -/
   | theory (cert : Option (Array Node × EqProof))
   deriving Inhabited
@@ -283,7 +285,7 @@ structure State where
   satLiterals : Array (Node × Nat) := #[]
   /-- The lemmas and conflicts (`true`, with a certificate) to give to the CNF
   stream. -/
-  satLemmaQueue : Array (Node × Bool × Option Pending) := #[]
+  satLemmaQueue : Array (Node × Bool × Option Pending × Option EqProof) := #[]
   /-- The sources of the formulas given to the CNF stream. -/
   satSources : Array SatSource := #[]
   /-- `TheoryEngine::d_outputChannelUsed` and `d_lemmasAdded`, since the last
@@ -368,7 +370,7 @@ def assertShared (T : Theory) (lit : Node) : EngineM Unit := do
     let why := "a conflict of a shared literal that rewrites to false, which is not certified yet"
     modify fun s => { s with inConflict := true, theoryConflict := true, cert := .error why }
     if (← read).satMode then
-      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lit, true, none),
+      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lit, true, none, none),
                                outputUsed := true, lemmasAdded := true }
     return
   let norm := lit
@@ -399,14 +401,14 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
         let (exp, _) ← runEE (EE.explainLit (Node.eqNode a b))
         emit (.conflict (← level) .THEORY_BUILTIN "EQ_CONSTANT_MERGE" (EE.mkAnd exp))
         if (← read).satMode then
-          modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (EE.mkAnd exp, true, some (.constants a b)),
+          modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (EE.mkAnd exp, true, some (.constants a b), none),
                                    outputUsed := true, lemmasAdded := true }
       modify fun s => { s with inConflict := true, theoryConflict := true }
     | .fact T id lit exp => emit (.fact (← level) T id lit exp)
     | .lemma T id lem =>
       emit (.lemma (← level) T id lem)
       if (← read).satMode then
-        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lem, false, none),
+        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lem, false, none, DtLemma.prove id lem),
                                  outputUsed := true, lemmasAdded := true }
       else
         modify fun s => { s with lemmaSent := true, lemmaQueue := s.lemmaQueue.push lem,
@@ -420,7 +422,7 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
       emit (.conflict (← level) T id exp)
       if (← read).satMode then
         let kind := (← get).ee.dt.conflict.map Pending.dt
-        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (exp, true, kind),
+        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (exp, true, kind, none),
                                  outputUsed := true, lemmasAdded := true }
       let why := s!"a conflict of {T.name}, which is not certified yet"
       modify fun s => { s with inConflict := true, theoryConflict := true, cert := .error why }
@@ -857,7 +859,8 @@ def newSatSource (src : SatSource) : EngineM Nat :=
 
 /-- Give a lemma (rewritten, as cvc5's `TheoryPreprocessor` does), or the
 negation of a conflict's explanation, to the CNF stream. -/
-def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) : EngineM Unit := do
+def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (proof : Option EqProof := none) :
+    EngineM Unit := do
   let c ← read
   if isConflict then
     let conf := match lem with
@@ -873,10 +876,13 @@ def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) : EngineM 
     let src ← newSatSource (.theory cert)
     withCnf (Cnf.convertAndAssert (cnfHost c) (EE.mkAnd exp) false (negated := true) src)
   else
+    let lem₀ := lem
     let lem := Telos.rewrite lem
     let ids := (← get).ee.nodeIds
     let lem := if c.cvc5Order then orientEqs ids lem else lem
-    let src ← newSatSource .lemma
+    -- the formula's proof, from the lemma's
+    let cert := proof.bind (DtLemma.forFormula lem₀ lem) |>.map (lem, ·)
+    let src ← newSatSource (.lemma cert)
     withCnf (Cnf.convertAndAssert (cnfHost c) lem false (src := src))
 
 /-- `TheoryEngine::lemma`, after the event: the lemma, preprocessed (rewritten),
@@ -886,7 +892,7 @@ def flushLemmas : EngineM Unit := do
     repeat
       let q ← modifyGet fun s => (s.satLemmaQueue, { s with satLemmaQueue := #[] })
       if q.isEmpty then break
-      for (lem, isConflict, kind) in q do satLemma lem isConflict kind
+      for (lem, isConflict, kind, proof) in q do satLemma lem isConflict kind proof
     return
   repeat
     let q ← modifyGet fun s => (s.lemmaQueue, { s with lemmaQueue := #[] })

@@ -15,6 +15,9 @@ depend on the CNF stream's variables), each with its justification:
   (`defClauses`, the Tseitin clauses of the CNF stream's `handle*`);
 - **theory**: it contains the negation of each assumption of a certificate of
   a theory conflict (`EqProof.checkConflict`), as for conjunctions of literals;
+- **lemma**: it contains a clause of the CNF translation of a theory lemma `F`
+  (as the lemma's formula is given to the CNF stream, rewritten), for an
+  `EqProof` of `(F, true)` from no assumptions, so that `F` is valid;
 
 and the clauses the SAT solver learned, each a consequence of the clauses
 before it by unit propagation (reverse unit propagation, `rup`), as is the
@@ -122,6 +125,9 @@ inductive Just where
   /-- The certificate `(A, p)` of a theory conflict: `p` proves `false` from
   the assumptions `A`, whose negations the clause contains. -/
   | theory (A : Array Node) (p : EqProof)
+  /-- A clause of the CNF translation of the lemma `F`, which `p` proves
+  (`(F, true)`) from no assumptions. -/
+  | lemma (F : Node) (p : EqProof)
   deriving Inhabited
 
 /-- A certificate of a refutation. -/
@@ -172,6 +178,8 @@ def Just.check (inputs : Array Node) (c : Clause) : Just → Bool
     | none => false
   | .defn n => isConn n && boolTree n && (defClauses n).any (subsumes · c)
   | .theory A p => EqProof.checkConflict A p && A.all isBool && A.all fun a => c.contains (negate a)
+  | .lemma F p => EqProof.check #[] p == some (F, Node.mkTrue) && boolTree F &&
+      (inputClauses F false).any (subsumes · c)
 
 /-! ## Reverse unit propagation -/
 
@@ -221,6 +229,7 @@ def Cert.why (inputs : Array Node) (cert : Cert) : String := Id.run do
         | .input i => s!"input {i}"
         | .defn n => s!"definition of {n.toSmtLib}"
         | .theory A _ => s!"theory, assumptions {A.toList.map (Node.toSmtLib ·)}"
+        | .lemma F _ => s!"lemma {F.toSmtLib}"
       return s!"the justification ({kind}) of the clause {c.toList.map (Node.toSmtLib ·)} does not check"
   let mut db := cert.clauses.map (·.1)
   for (c, i) in cert.learned.zipIdx do

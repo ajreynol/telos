@@ -862,16 +862,17 @@ And the conflicts:
   the cycle by congruence, then `dt-cycle`.
 
 The checker's soundness proof covers the new steps (`check_sound`); the
-correctness theorem is unchanged. Not certified: an instantiation of a
-constructor term (it uses a purification skolem), and anything that needs a
-lemma, which needs the SAT solver anyway.
+correctness theorem is unchanged. Not certified: an internal fact that
+instantiates a constructor term (it uses a purification skolem), and anything
+that needs a lemma, which needs the SAT solver (whose lemmas are certified, see
+Stage 6).
 
 Results: on 3,000 random conjunctions, every conflict found by the theory
 engine (59) is certified, agrees with cvc5, and its CPC proof is accepted by
 Ethos. Most `unsat`s of random conjunctions are decided by preprocessing.
 `test/solve/dt-*.smt2` has a clash, a cycle and a tester conflict.
 
-## Stage 6: the SAT solver (in progress: milestones 1, 2 and 4 done; 4 but for datatypes lemmas)
+## Stage 6: the SAT solver (in progress: milestones 1, 2 and 4 done)
 
 Without a SAT solver, telos solves conjunctions of literals and replays cvc5's
 search. Theories with lemmas (datatypes' splits and forced instantiations) need
@@ -1022,7 +1023,7 @@ Results, with `scripts/fuzz-solve.py --sat` (cvc5 with
 - On telos's own preprocessing, the remaining differences are preprocessing's,
   not the search's.
 
-**Milestone 4 (certified `unsat`) is done, but for datatypes lemmas.** An
+**Milestone 4 (certified `unsat`) is done.** An
 `unsat` of the SAT solver comes with a certificate
 (`Telos/Solver/SatProof.lean`), checked, and proved to refute the input
 (`verification/TelosProofs/Solver/SatProof.lean`, `Cert.check_sound`; the
@@ -1036,18 +1037,40 @@ certificate is a clausal proof over literals of terms, not SAT variables:
   contain the negation of each assumption of an equality proof of `false`
   (`EqProof`), built from the clause's literals only, when the clause is made
   (the engine's state is then that of the conflict);
+- **lemma clauses**: they contain a clause of the CNF translation of a theory
+  lemma `F`, as given to the CNF stream (rewritten and oriented), with an
+  `EqProof` of `(F, true)` from no assumptions (`Just.lemma`), so `F` is valid;
 - **learned clauses**, and finally the empty clause: each follows from the
   clauses before it by unit propagation (RUP).
 
 The CNF stream and MiniSat are not trusted: the checker recomputes what it
 checks. Theory propagations at level 0 that MiniSat never asked to explain are
 explained after the search (post hoc: nothing is printed), as their reasons
-still hold at level 0. On random benchmarks, every `unsat` of QF_UF is
-certified, and about 98% of QF_UFDT's: the rest need the clauses of datatypes
-lemmas (splits, instantiations, purification), which have no certificate yet
-and are left out of the certificate, so the check fails and the answer is
-`unknown`. Next: certificates of those lemmas (by the datatypes rules, through
-the lemma's rewriting), and then a CPC proof of the refutation for Ethos.
+still hold at level 0.
+
+The datatypes lemmas are proved by `Telos/Solver/DtLemma.lean`, by their CPC
+rules: `dt_split` for splits, `skolem_intro` for purification, `dt-inst` for an
+instantiation from a tester, and `skolem_intro`, congruence and
+`dt-collapse-selector` for the instantiation of a constructor term. An
+implication (an instantiation from a tester, a selector collapse sent as a
+lemma) is a CPC proof under its hypothesis, closed by `scope`, which
+`EqProof.valid` checks with Logos's checker. The SAT solver gets the lemma
+rewritten (and oriented as cvc5's node ids would): the `EqProof` step `rw t`,
+`(t, rewrite t)` for a well-typed `t`, justified by the rewriter's correctness
+(`rewrite_correct`), relates the two when they have the same rewrite. The same
+step lets a disequality be proved from the reason of the other orientation
+(`proveDiseq`).
+
+On 4,000 random QF_UFDT benchmarks with clauses (`--via-sat`, telos's own
+preprocessing), every one of the 946 `unsat`s is certified, as is every `unsat`
+of QF_UF. Some theory clauses still have no certificate and are left out, which
+these refutations did not need: about 60 conflicts whose explanation goes
+through a literal that the SAT solver got by theory propagation, which
+`explainAll` replaces by its own explanation, so it is not among the clause's
+literals ("a reason is not an assumption"), and a few disequalities with
+several reasons. Next: a CPC proof of the refutation for Ethos (`rw` is printed
+as the rewriter's CPC proof, `Proof.emitChain`, which fails on its semantic
+steps).
 
 Not yet:
 - theory combination's care graph (`combineTheories`, splits on shared terms),

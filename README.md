@@ -152,7 +152,8 @@ a theory gets a literal.
 An `unsat` answer is certified. With SAT structure, the SAT solver's
 refutation comes with a clausal certificate (`Telos/Solver/SatProof.lean`):
 its clauses justified by the CNF translation, the definitions of connectives,
-and certificates of theory conflicts, its learned clauses by unit propagation;
+certificates of theory conflicts and of theory lemmas, its learned clauses by
+unit propagation;
 the checker is proved sound. For a conjunction of literals, its conflict is
 explained by a verified
 explanation (`Telos/Solver/Explain.lean`), which computes the equality engine's

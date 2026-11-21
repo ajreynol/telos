@@ -1,6 +1,7 @@
 import Telos.Core.Tri
 import Telos.Core.Node.DecEq
 import Telos.Core.Certified
+import Telos.Rewriter.Rewrite
 
 /-!
 # Equality proofs
@@ -43,7 +44,11 @@ The rules, with the conclusion each gives:
 - `orElim k p qs`: `(lₖ, true)` from `p : ((or l₁ … lₙ), true)` and, in order,
   proofs `qs` of `(lᵢ, false)` for each `i ≠ k`;
 - `congAt t args`: `cong` for the application `t` given as such, rather than by
-  a path, when it is well typed (which is then checked).
+  a path, when it is well typed (which is then checked);
+- `rw t`: `(t, s)` for `s` the rewrite of `t` (`Telos.rewrite`), when `t` is
+  well typed. The rewriter is verified (`rewrite_correct`), so this holds in
+  every model. It relates a lemma, as a theory states it, to its rewritten form,
+  which the SAT solver gets (`Telos/Solver/DtLemma.lean`).
 -/
 
 open Eo
@@ -67,6 +72,7 @@ inductive EqProof where
   | andElim (i : Nat) (p : EqProof)
   | orElim (k : Nat) (p : EqProof) (qs : List EqProof)
   | congAt (t : Node) (args : Array (Option EqProof))
+  | rw (t : Node)
   deriving Inhabited
 
 namespace EqProof
@@ -137,6 +143,7 @@ def check (A : Array Node) : EqProof → Option (Node × Node)
     if args.size != cs.size then none
     let ds ← checkArgs A cs args.toList 0
     some (t, .app op ds.toArray)
+  | .rw t => if decide t.WellTyped then some (t, Telos.rewrite t) else none
 where
   /-- Each proof proves its literal false. -/
   checkFalses (A : Array Node) : List Node → List EqProof → Bool

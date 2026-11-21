@@ -255,7 +255,7 @@ def explainLevelZero : PropM Unit := do
       modifyThe PropState fun q => { q with base := q.base.push (out, .theory cert) }
 
 /-- **The certificate of a refutation**: the clauses as literals of terms, with
-their justifications; those with none (lemmas, not certified yet) are left
+their justifications; those with none (lemmas with no proof) are left
 out, and the check fails if the refutation needs them. -/
 def buildCert (p : PropState) : Option SatProof.Cert := do
   let toNodes (c : Array Lit) : Option SatProof.Clause := c.mapM (Cnf.getNode? p.eng.cnf)
@@ -263,6 +263,7 @@ def buildCert (p : PropState) : Option SatProof.Cert := do
     match p.eng.satSources[k]? with
     | some (.input i) => some (.input i)
     | some (.theory (some (A, q))) => some (.theory A q)
+    | some (.lemma (some (F, q))) => some (.lemma F q)
     | _ => none
   let mut clauses : Array (SatProof.Clause × SatProof.Just) := #[]
   for (c, tag) in p.base do
