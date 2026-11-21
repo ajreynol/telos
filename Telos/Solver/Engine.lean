@@ -142,6 +142,8 @@ structure Config where
   decision : Decision.Mode := .internal
   /-- The declared constants, by their order of declaration (cvc5's node ids). -/
   declOrder : Std.HashMap String Nat := {}
+  /-- cvc5's node ids, approximated (`NodeOrder`), for the rewriter. -/
+  order : NodeOrder := {}
 
 /-- A Boolean term skolem (`Env::isBooleanTermSkolem`): the purification
 skolem of a Boolean term in a term position, which term formula removal
@@ -1119,7 +1121,7 @@ def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (proof : O
     modify fun s => { s with decisionQueue := s.decisionQueue.push (Node.notNode (EE.mkAnd exp)) }
   else
     let lem₀ := lem
-    let lem := Telos.rewrite lem
+    let lem := Telos.rewrite lem (← read).order
     let ids := (← get).ee.nodeIds
     let lem := if c.cvc5Order then orientEqs ids lem c.declOrder else lem
     -- the formula's proof, from the lemma's
@@ -1158,11 +1160,12 @@ def flushLemmas : EngineM Unit := do
           continue
         let ids := (← get).ee.nodeIds
         let decl := (← read).declOrder
+        let ord := (← read).order
         let atom := match atom with
           | .app (.kind .EQUAL) #[l, r] =>
-            if l.typeHint == some .integer || l.typeHint == some .real then Telos.rewrite atom
+            if l.typeHint == some .integer || l.typeHint == some .real then Telos.rewrite atom ord
             else if EE.ageLt ids r l decl then Node.eqNode r l else atom
-          | _ => Telos.rewrite atom
+          | _ => Telos.rewrite atom ord
         preRegister atom
 
 /-- Run an operation of the equality engine, process its notes, and register
@@ -1385,14 +1388,14 @@ def combineTheories : EngineM Unit := do
     let (_, a, b) := p
     let eq := Node.eqNode a b
     let lem := Node.mkNode .OR #[eq, Node.notNode eq]
-    let r := Telos.rewrite lem
+    let r := Telos.rewrite lem c.order
     if (← get).builtinLemmas.contains ⟨r⟩ then continue
     modify fun s => { s with builtinLemmas := s.builtinLemmas.insert ⟨r⟩, outputUsed := true, lemmasAdded := true }
     emit (.lemma (← level) .THEORY_BUILTIN "COMBINATION_SPLIT" lem)
     if c.satMode then
       satLemma lem false none
       -- `ensureLiteral`, and `PropEngine::preferPhase` (no event)
-      let e := Telos.rewrite eq
+      let e := Telos.rewrite eq c.order
       let e := if c.cvc5Order then orientEqs ids e c.declOrder else e
       withCnf (Cnf.ensureLiteral (cnfHost c) e)
       withCnf (Cnf.preferPhase e true)

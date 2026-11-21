@@ -19,10 +19,10 @@ rewriter of each theory. Correctness is `Telos.rewrite_correct`
 namespace Telos
 
 /-- The rewriters of the theories other than arrays, with `strings` the strings
-rewriter. -/
-def baseTheoryRewriterWith (strings : TheoryRewriter) : TheoryId → TheoryRewriter
+rewriter and `o` the order of node ids (`NodeOrder`). -/
+def baseTheoryRewriterWith (strings : TheoryRewriter) (o : NodeOrder := {}) : TheoryId → TheoryRewriter
   | .THEORY_BOOL => .bool
-  | .THEORY_ARITH => .arith
+  | .THEORY_ARITH => .arith o
   | .THEORY_UF => .uf
   | .THEORY_BV => .bv
   | .THEORY_STRINGS => strings
@@ -43,33 +43,37 @@ def stringsDepth : Nat := 3
 /-- The rewriter of each theory, with the strings rewriter at depth `k`. The
 arrays rewriter rewrites equalities of indices (cvc5's `mkEqNode`) with the
 rewriters of the other theories: indices are not arrays here. -/
-def theoryRewriterAt : Nat → TheoryId → TheoryRewriter
+def theoryRewriterAt (o : NodeOrder := {}) : Nat → TheoryId → TheoryRewriter
   | 0 => fun t => match t with
-    | .THEORY_ARRAYS => .arrays (rewriteWith (baseTheoryRewriterWith (.strings Rw.id)) indexFuel)
-    | .THEORY_QUANTIFIERS => .quantifiers (rewriteWith (baseTheoryRewriterWith (.strings Rw.id)) indexFuel)
-    | t => baseTheoryRewriterWith (.strings Rw.id) t
+    | .THEORY_ARRAYS => .arrays (rewriteWith (baseTheoryRewriterWith (.strings Rw.id) o) indexFuel)
+    | .THEORY_QUANTIFIERS => .quantifiers (rewriteWith (baseTheoryRewriterWith (.strings Rw.id) o) indexFuel)
+    | t => baseTheoryRewriterWith (.strings Rw.id) o t
   | k + 1 =>
-    let strings := TheoryRewriter.strings (rewriteWith (theoryRewriterAt k) indexFuel)
+    let strings := TheoryRewriter.strings (rewriteWith (theoryRewriterAt o k) indexFuel)
     fun t => match t with
-    | .THEORY_ARRAYS => .arrays (rewriteWith (baseTheoryRewriterWith strings) indexFuel)
-    | .THEORY_QUANTIFIERS => .quantifiers (rewriteWith (baseTheoryRewriterWith strings) indexFuel)
-    | t => baseTheoryRewriterWith strings t
+    | .THEORY_ARRAYS => .arrays (rewriteWith (baseTheoryRewriterWith strings o) indexFuel)
+    | .THEORY_QUANTIFIERS => .quantifiers (rewriteWith (baseTheoryRewriterWith strings o) indexFuel)
+    | t => baseTheoryRewriterWith strings o t
 
-/-- The rewriter of each theory. Theories not ported yet leave nodes unchanged. -/
-def theoryRewriter : TheoryId → TheoryRewriter := theoryRewriterAt stringsDepth
+/-- The rewriter of each theory, with the order of node ids `o`. Theories not
+ported yet leave nodes unchanged. -/
+def theoryRewriterOf (o : NodeOrder) : TheoryId → TheoryRewriter := theoryRewriterAt o stringsDepth
+
+/-- The rewriter of each theory, with the structural order. -/
+def theoryRewriter : TheoryId → TheoryRewriter := theoryRewriterOf {}
 
 /-- The fuel `rewrite` uses. It bounds the recursion depth of the driver. -/
 def defaultFuel : Nat := 10000
 
 /-- Rewrite a node to its normal form, with the certificate of the rewrite. -/
-def rewriteCert (t : Node) : Rw t := rewriteWith theoryRewriter defaultFuel t
+def rewriteCert (t : Node) (o : NodeOrder := {}) : Rw t := rewriteWith (theoryRewriterOf o) defaultFuel t
 
 /-- `rewriteCert` with a rewrite cache kept between calls, as cvc5's rewriter
 keeps its cache: the rewrite, and the cache after it. -/
-def rewriteCertCached (c : Cache) (t : Node) : Rw t × Cache :=
-  (rewriteWithM theoryRewriter defaultFuel t).run c
+def rewriteCertCached (c : Cache) (t : Node) (o : NodeOrder := {}) : Rw t × Cache :=
+  (rewriteWithM (theoryRewriterOf o) defaultFuel t).run c
 
 /-- cvc5's `Rewriter::rewrite`: rewrite a node to its normal form. -/
-def rewrite (t : Node) : Node := (rewriteCert t).1
+def rewrite (t : Node) (o : NodeOrder := {}) : Node := (rewriteCert t o).1
 
 end Telos

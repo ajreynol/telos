@@ -102,7 +102,7 @@ def normalAtom (atom : Node) : Node :=
 inference manager's cache of the rewritten lemmas, `cacheLemma`); whether it
 did. -/
 def sendLemma (id : String) (lem : Node) (cert : Option LinCert := none) : ArithM Bool := do
-  let r := Telos.rewrite lem
+  let r := Telos.rewrite lem (← get).opts.order
   if (← get).lemmasSent.contains ⟨r⟩ then return false
   modify fun s => { s with lemmasSent := s.lemmasSent.insert ⟨r⟩, outputs := s.outputs.push (.lemma id lem cert) }
   return true
@@ -111,7 +111,7 @@ def sendLemma (id : String) (lem : Node) (cert : Option LinCert := none) : Arith
 def setupAtom (atom : Node) : ArithM Unit := do
   let natom := normalAtom atom
   let some cmp := Comparison.parse? natom | unsupported s!"an atom not in normal form: {atom.toSmtLib}"
-  let nvp := cmp.normalizedVariablePart
+  let nvp := cmp.normalizedVariablePart (← get).opts.order
   if !(← isSetup nvp.node) then setupPolynomial nvp
   if (← get).unsupported.isSome then return
   let _ ← ageOf atom
@@ -218,7 +218,7 @@ def presolve : ArithM Unit := do
   let mut lemmas := #[]
   for x in [0:n] do lemmas := lemmas ++ (← unateInequalityLemmas x)
   for x in [0:n] do lemmas := lemmas ++ (← unateEqualityLemmas x)
-  for l in lemmas do let _ ← sendLemma "ARITH_UNATE" l (orCert (Telos.rewrite l))
+  for l in lemmas do let _ ← sendLemma "ARITH_UNATE" l (orCert (Telos.rewrite l (← get).opts.order))
 
 /-! ## Explanations -/
 
@@ -446,7 +446,7 @@ def assertDisequality (c : Nat) : ArithM Bool := do
   let k := s.constraint c
   if !k.split && k.value == s.assignment k.var then
     let lem ← split c
-    let _ ← sendLemma "ARITH_SPLIT_DEQ" lem (orCert (Telos.rewrite lem))
+    let _ ← sendLemma "ARITH_SPLIT_DEQ" lem (orCert (Telos.rewrite lem (← get).opts.order))
     return false
   if s.cmpToLowerBound k.var k.value < 0 || s.cmpToUpperBound k.var k.value > 0 then return false
   if !k.split then modify fun s => { s with diseqQueue := s.diseqQueue.push c, deltaIsSafe := false }
@@ -494,7 +494,7 @@ def constraintFromFactQueue (fact : Node) : ArithM (Option Nat) := do
       let (isDistinct, eq) := match fact with
         | .app (.kind .NOT) #[a] => (true, a)
         | a => (false, a)
-      let reEq := Telos.rewrite eq
+      let reEq := Telos.rewrite eq (← get).opts.order
       if reEq == Node.mkTrue || reEq == Node.mkFalse then
         -- a false one (`(not true)`, or `false`) is a conflict by itself
         -- (`raiseBlackBoxConflict`), refuted by its Farkas combination; a true
@@ -649,7 +649,7 @@ def splitDisequalities : ArithM Bool := do
     if k.split then continue
     if s.assignment k.var == k.value then
       let lem ← split front
-      let _ ← sendLemma "ARITH_SPLIT_DEQ" lem (orCert (Telos.rewrite lem))
+      let _ ← sendLemma "ARITH_SPLIT_DEQ" lem (orCert (Telos.rewrite lem (← get).opts.order))
       split_ := true
     else if s.cmpToLowerBound k.var k.value < 0 || s.cmpToUpperBound k.var k.value > 0 then pure ()
     else save := save.push front
@@ -701,11 +701,11 @@ def intNode (i : Int) : Node := .const (.integer i)
 /-- `PreprocessRewriteEq::ppRewriteEq` of an arithmetic equality: with
 `arithRewriteEq`, `(and (<= a b) (>= a b))`; otherwise its normal form
 (`rewriteEqualityExt`). -/
-def ppRewriteEq (rewriteEq : Bool) (eq : Node) : Node :=
+def ppRewriteEq (rewriteEq : Bool) (eq : Node) (o : NodeOrder := {}) : Node :=
   match eq with
   | .app (.kind .EQUAL) #[a, b] =>
     if rewriteEq then Node.mkNode .AND #[Node.mkNode .LEQ #[a, b], Node.mkNode .GEQ #[a, b]]
-    else ((Telos.Arith.normalizeEquality eq).map (·.1)).getD eq
+    else ((Telos.Arith.normalizeEquality eq o).map (·.1)).getD eq
   | _ => eq
 
 /-- `BranchAndBound::branchIntegerVariable`, with `--arith-brab`: round the
@@ -719,15 +719,15 @@ def branchIntegerVariable (x : Nat) : ArithM Node := do
   let fl := r.floor
   let ce := r.ceil
   let nearest := if ce - r > r - fl then fl else ce
-  let ub := Telos.rewrite (Node.mkNode .LEQ #[var, intNode (nearest - 1)])
-  let lb := Telos.rewrite (Node.mkNode .GEQ #[var, intNode (nearest + 1)])
+  let ub := Telos.rewrite (Node.mkNode .LEQ #[var, intNode (nearest - 1)]) (← get).opts.order
+  let lb := Telos.rewrite (Node.mkNode .GEQ #[var, intNode (nearest + 1)]) (← get).opts.order
   let right := Node.mkNode .OR #[ub, lb]
-  let eq := Telos.rewrite (Node.mkNode .EQUAL #[var, intNode nearest])
+  let eq := Telos.rewrite (Node.mkNode .EQUAL #[var, intNode nearest]) (← get).opts.order
   let eq := match eq with
-    | .app (.kind .EQUAL) _ => ppRewriteEq s.opts.rewriteEq eq
+    | .app (.kind .EQUAL) _ => ppRewriteEq s.opts.rewriteEq eq s.opts.order
     | _ => eq
   -- `ensureLiteral` preprocesses (rewrites) it
-  let lit := Telos.rewrite eq
+  let lit := Telos.rewrite eq (← get).opts.order
   modify fun s => { s with outputs := s.outputs.push (.ensureLiteral lit) |>.push (.phase lit true) }
   return Node.mkNode .OR #[lit, right]
 
@@ -763,7 +763,7 @@ def boundsAreEqual (s : State) (x : Nat) : Bool :=
 equal (with the explanations of the bounds), then a conflict of the solver,
 if any. -/
 def callDioSolver : ArithM (Option (Node × Option LinCert)) := do
-  modify fun s => { s with dio := { s.dio with ages := s.age } }
+  modify fun s => { s with dio := { s.dio with ages := s.age, order := s.opts.order } }
   while (← get).constantIntegersHead < (← get).constantIntegers.size do
     let s ← get
     let v := s.constantIntegers[s.constantIntegersHead]!
@@ -790,7 +790,7 @@ def callDioSolver : ArithM (Option (Node × Option LinCert)) := do
 cvc5's order (`toSumPair`), and its constant. -/
 def dioPolyNode (d : Dio) (f : LForm Int) : Node × Int :=
   let monos := (f.terms.map fun (v, c) => ((c : Rat), d.varNodes[v]!)).toList.mergeSort
-    fun a b => !Telos.Arith.monoLt [b.2] [a.2]
+    fun a b => !Telos.Arith.monoLt [b.2] [a.2] d.order
   ((Poly.mk monos.toArray).node, f.const)
 
 /-- `dioCutting`: with the speculative equations of the integer variables at
@@ -798,7 +798,7 @@ a bound (their bounds not equal), in a scope that is then popped, the cut of a
 plane `p + k = 0` of the solver: `(or (<= p (- k)) (>= p (- k)))`, rewritten
 (its gcd does not divide `k`). -/
 def dioCutting : ArithM (Option Node) := do
-  modify fun s => { s with dio := { s.dio with ages := s.age } }
+  modify fun s => { s with dio := { s.dio with ages := s.age, order := s.opts.order } }
   let s ← get
   let saved := s.dio.mark
   for v in [0:s.numVars] do
@@ -813,7 +813,7 @@ def dioCutting : ArithM (Option Node) := do
   if f.isConstant then return none
   let (p, k) := dioPolyNode d f
   let c := intNode (-k)
-  return some (Telos.rewrite (Node.mkNode .OR #[Node.mkNode .LEQ #[p, c], Node.mkNode .GEQ #[p, c]]))
+  return some (Telos.rewrite (Node.mkNode .OR #[Node.mkNode .LEQ #[p, c], Node.mkNode .GEQ #[p, c]]) (← get).opts.order)
 
 /-- `roundRobinBranch`: the lemmas of the next integer violation. -/
 def roundRobinBranch : ArithM (Array Node) := do
@@ -888,7 +888,7 @@ def postCheck (full : Bool) : ArithM Bool := do
         if tried.contains ⟨lem⟩ then continue
         tried := tried.insert ⟨lem⟩
         tryNew := true
-        if ← sendLemma "ARITH_BB_LEMMA" lem (orCert (Telos.rewrite lem)) then emitted := true
+        if ← sendLemma "ARITH_BB_LEMMA" lem (orCert (Telos.rewrite lem (← get).opts.order)) then emitted := true
       if !emitted then
         let n := (← get).numVars
         modify fun s => { s with nextIntegerCheckVar := if s.nextIntegerCheckVar + 1 == n then 0 else s.nextIntegerCheckVar + 1 }

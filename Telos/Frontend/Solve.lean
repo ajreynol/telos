@@ -65,17 +65,19 @@ def conjLiterals (n : Node) : Option (List Node) :=
 with the options `opts` unless `preprocess` is false. The preprocessed ones are
 the conjuncts of the pipeline but its last, the definitions slot
 (`Pipeline.assertions`). -/
-def engineAssertions (as : List Node) (opts : Preprocess.PPOptions) (preprocess : Bool) : List Node :=
+def engineAssertions (as : List Node) (opts : Preprocess.PPOptions) (preprocess : Bool)
+    (o : NodeOrder := {}) : List Node :=
   if as.isEmpty || !preprocess then as else
-    match (Preprocess.preprocessCert as opts).1 with
+    match (Preprocess.preprocessCert as opts o).1 with
     | .app (.kind .AND) cs => if 2 ≤ cs.size then cs.toList.dropLast else [.app (.kind .AND) cs]
     | n => [n]
 
 /-- The definitions of the variables that preprocessing solved (`x := t`), from
 the pipeline's definitions slot. -/
-def engineDefs (as : List Node) (opts : Preprocess.PPOptions) (preprocess : Bool) : List (Node × Node) :=
+def engineDefs (as : List Node) (opts : Preprocess.PPOptions) (preprocess : Bool)
+    (o : NodeOrder := {}) : List (Node × Node) :=
   if as.isEmpty || !preprocess then [] else
-    let p := Preprocess.preprocessCert as opts
+    let p := Preprocess.preprocessCert as opts o
     (Preprocess.Pipeline.defs p).filterMap fun
       | .app (.kind .EQUAL) #[x@(.var ..), t] => some (x, t)
       | _ => none
@@ -126,6 +128,11 @@ def useSat (cfg : Solver.Config) (out : List Node) (viaSat : Bool) : Bool :=
   cfg.satSupported && !hasDistinctAtom out &&
     (viaSat || cfg.arithSolver || (literalsOf out matches .error _))
 
+/-- cvc5's node ids, approximated, for the rewriter (`inputOrder`) when
+imitating cvc5's order; else the structural order. -/
+def orderFor (cvc5Order : Bool) (sc : Script) (as : List Node) : NodeOrder :=
+  if cvc5Order then inputOrder sc as else {}
+
 /-- Solve the assertions of `sc`: the assertions given to the engine, and the
 engine's result. A conjunction of literals goes to the engine alone
 (`Solver.run`), and to the SAT solver too if a theory sends a lemma; anything
@@ -137,11 +144,13 @@ def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Boo
     Except String (List Node × Solver.Result) := do
   let theories ← enabledTheories (sc.logic.getD "ALL")
   let (opts, as) ← ppInput sc u
-  let out := engineAssertions as opts preprocess
+  let order := orderFor cvc5Order sc as
+  let out := engineAssertions as opts preprocess order
   let named (n : Node) : String :=
     (substSkolems ((namedSkolems sc.dtNames out).map fun (k, v, _) => (k, v)) n).toSmtLibLet sc.dtNames
   let cfg : Solver.Config := { theories, termBased := opts.termBased, eeEvents, wantProof, cvc5Order,
-                                arith := Solver.arithOptionsOf (sc.logic.getD "ALL"),
+                                arith := { Solver.arithOptionsOf (sc.logic.getD "ALL") with order },
+                                order,
                                 decision := Solver.decisionModeOf (sc.logic.getD "ALL") (u.decision <|> sc.decision),
                                 declOrder := (sc.symbols.flatMap (·.names)).zipIdx.foldl
                                   (fun m (x, i) => m.insert x i) {} }
@@ -153,7 +162,7 @@ def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Boo
     pure (if r.answer == .unknown && r.uncertified.isNone && cfg.ufSolver then Solver.runSat cfg out else r)
   -- a `sat` stands only if its model satisfies the input assertions
   let r := if r.answer != .sat then r else
-    let M := buildModel r.ee (relevantTerms r.asserted) (freeConsts as) (engineDefs as opts preprocess) as
+    let M := buildModel r.ee (relevantTerms r.asserted) (freeConsts as) (engineDefs as opts preprocess order) as
       r.arithModel
     if M.satisfies as then { r with model := some M }
     else { r with answer := .unknown, uncertified := some "the model does not satisfy the input" }

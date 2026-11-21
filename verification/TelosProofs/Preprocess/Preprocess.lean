@@ -22,8 +22,8 @@ open Preprocess
 /-- **Correctness of the preprocessor**, given the Logos theorems it uses
 (`LogosFacts`). -/
 theorem preprocess_correct_of_logos [LogosFacts] (as : List Node)
-    (h : (inputNode as).WellTyped) (opts : PPOptions := {}) :
-    (inputNode as).Equiv (preprocessCert as opts).1 :=
-  Certified.equiv (preprocessCert as opts).2 h
+    (h : (inputNode as).WellTyped) (opts : PPOptions := {}) (o : NodeOrder := {}) :
+    (inputNode as).Equiv (preprocessCert as opts o).1 :=
+  Certified.equiv (preprocessCert as opts o).2 h
 
 end Telos

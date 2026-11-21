@@ -12,7 +12,7 @@ namespace Telos
 
 variable [LogosFacts] in
 theorem StaticProc.provesEq : ∀ (p : StaticProc) (n m : Node), p.Ok n m → ProvesEq (p.cmds n m) n m
-  | .arithNorm, n, _, ⟨rfl, h⟩ => arithNorm_provesEq h
+  | .arithNorm _, n, _, ⟨rfl, h⟩ => arithNorm_provesEq h
   | .arithRel _ _, _, _, h => arithRel_provesEq h
 
 end Telos

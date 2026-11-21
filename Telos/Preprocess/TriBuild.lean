@@ -41,6 +41,8 @@ structure TriB where
   reflIdx : Std.HashMap Key Nat := {}
   /-- The rewriter's cache, kept between the rewrites of a pass. -/
   rwCache : Cache := {}
+  /-- The order of node ids of the rewriter (`NodeOrder`). -/
+  order : NodeOrder := {}
 
 abbrev TriM := StateT TriB (Except String)
 
@@ -140,7 +142,7 @@ def applyRwJ (σ : TSubst) (n : Node) : SubstM (Node × Array ChainStep) := do
   let some j ← substJ σ n | return (n, #[])
   let n₁ := (← liftM (TriM.just j)).b
   let r ← liftM (modifyGet fun s : TriB =>
-    let (r, c) := rewriteCertCached s.rwCache n₁
+    let (r, c) := rewriteCertCached s.rwCache n₁ s.order
     (r, { s with rwCache := c }) : TriM (Rw n₁))
   if r.1 == n then return (n, #[])
   if r.1 == n₁ then return (n₁, #[.subst j])

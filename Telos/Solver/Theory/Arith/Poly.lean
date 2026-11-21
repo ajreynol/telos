@@ -77,14 +77,14 @@ def isIntegral (p : Poly) : Bool := p.terms.all fun (c, m) => (m == one || monoI
 
 /-- `p - q` (`Polynomial::operator-`), the monomials sorted as cvc5's sums
 are (`Telos.Arith.Poly.sorted`). -/
-def sub (p q : Poly) : Poly :=
+def sub (p q : Poly) (o : NodeOrder := {}) : Poly :=
   let toPN (p : Poly) : Telos.Arith.Poly :=
     p.terms.foldl (fun acc (c, m) =>
       acc.addMono (if m == one then [] else match m with
         | .app (.kind .MULT) cs => cs.toList
         | m => [m]) c) []
   let d := (toPN p).add ((toPN q).scale (-1))
-  ⟨d.sorted.toArray.map fun (mono, c) => (c, Telos.Arith.monoKey mono)⟩
+  ⟨(d.sorted o).toArray.map fun (mono, c) => (c, Telos.Arith.monoKey mono)⟩
 
 /-- The node of a polynomial with no constant, in cvc5's normal form: a
 monomial `m` with coefficient 1 is `m`, another is `(* c m)`; several are a
@@ -138,7 +138,7 @@ def constraintType (c : Comparison) : CType :=
   | .distinct => .disequality
 
 /-- `normalizedVariablePart`. -/
-def normalizedVariablePart (c : Comparison) : Poly :=
+def normalizedVariablePart (c : Comparison) (o : NodeOrder := {}) : Poly :=
   match c.kind with
   | .lt | .leq | .gt | .geq =>
     let p := Poly.parse c.left
@@ -148,11 +148,11 @@ def normalizedVariablePart (c : Comparison) : Poly :=
     let right := Poly.parse c.right
     if right.isConstant then left
     else
-      let diff := left.sub right.noConstant
+      let diff := left.sub right.noConstant o
       if diff.leadingCoefficientIsPositive then diff else diff.neg
 
 /-- `normalizedDeltaRational`. -/
-def normalizedDeltaRational (c : Comparison) : DeltaRational :=
+def normalizedDeltaRational (c : Comparison) (o : NodeOrder := {}) : DeltaRational :=
   let delta : Rat := (deltaCoeff c.kind : Rat)
   match c.kind with
   | .lt | .leq | .gt | .geq =>
@@ -166,7 +166,7 @@ def normalizedDeltaRational (c : Comparison) : DeltaRational :=
         let left := Poly.parse c.left
         if !left.allIntegralVariables then ⟨q, 0⟩
         else
-          let diff := if right.terms.size == 1 then left else left.sub right.noConstant
+          let diff := if right.terms.size == 1 then left else left.sub right.noConstant o
           if diff.leadingCoefficientIsPositive then ⟨q, 0⟩ else ⟨-q, 0⟩
       else 0
     | none => 0

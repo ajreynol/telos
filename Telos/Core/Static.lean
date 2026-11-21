@@ -26,15 +26,16 @@ namespace Telos
 
 /-- The statically justified procedures. -/
 inductive StaticProc where
-  /-- `n` to its arithmetic normal form `arithNorm n`, by `arith_poly_norm`. -/
-  | arithNorm
+  /-- `n` to its arithmetic normal form `arithNorm n o`, by `arith_poly_norm`,
+  with its monomials in the order `o`. -/
+  | arithNorm (o : NodeOrder)
   /-- `n` to `m` by `arith_poly_norm_rel`, from the premise `(= a b)`, itself an
   `arith_poly_norm` step. -/
   | arithRel (a b : Node)
 
-/-- `[arith_poly_norm (= n (arithNorm n))]`. -/
-def StaticProc.arithNormCmds (n : Node) : CCmdList :=
-  .cons (.step .arith_poly_norm (.cons (eqFormula n (Arith.arithNorm n)) .nil) .nil) .nil
+/-- `[arith_poly_norm (= n (arithNorm n o))]`. -/
+def StaticProc.arithNormCmds (n : Node) (o : NodeOrder := {}) : CCmdList :=
+  .cons (.step .arith_poly_norm (.cons (eqFormula n (Arith.arithNorm n o)) .nil) .nil) .nil
 
 /-- `[arith_poly_norm (= a b), arith_poly_norm_rel (= n m) from it]`. -/
 def StaticProc.arithRelCmds (n m a b : Node) : CCmdList :=
@@ -43,12 +44,12 @@ def StaticProc.arithRelCmds (n m a b : Node) : CCmdList :=
 
 /-- The side condition of a step from `n` to `m`. -/
 def StaticProc.Ok : StaticProc → Node → Node → Prop
-  | .arithNorm, n, m => m = Arith.arithNorm n ∧ Arith.ArithNormOk n (Arith.polyOf n) (Arith.arithNorm n)
+  | .arithNorm o, n, m => m = Arith.arithNorm n o ∧ Arith.ArithNormOk n (Arith.polyOf n) (Arith.arithNorm n o)
   | .arithRel a b, n, m => Arith.ArithRelOk n m a b
 
 /-- The CPC commands a step from `n` to `m` stands for. -/
 def StaticProc.cmds : StaticProc → Node → Node → CCmdList
-  | .arithNorm, n, _ => StaticProc.arithNormCmds n
+  | .arithNorm o, n, _ => StaticProc.arithNormCmds n o
   | .arithRel a b, n, m => StaticProc.arithRelCmds n m a b
 
 end Telos

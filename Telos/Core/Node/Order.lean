@@ -10,6 +10,10 @@ reproduce, so it uses this fixed structural order instead: constants, then nulla
 constructors, then free variables, then bound variables, then applications; within each, by payload,
 name and type, or by operator and then children, lexicographically.
 
+Where cvc5's ids matter for fidelity, `NodeOrder` (`Telos/Core/Node/NodeOrder.lean`)
+approximates them by the order of first occurrence in the input, and falls back
+to this order for the terms created later.
+
 Untrusted: the order only decides which certified rewrite to try.
 -/
 

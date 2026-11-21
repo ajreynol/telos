@@ -1,4 +1,5 @@
 import Telos.Core.Node.Key
+import Telos.Core.Node.NodeOrder
 import Telos.Solver.Theory.Arith.DeltaRational
 
 /-!
@@ -156,6 +157,8 @@ structure Options where
   varOrderPivots : Int := 200
   /-- `arithRewriteEq`: for pure linear quantifier-free arithmetic. -/
   rewriteEq : Bool := true
+  /-- The order of node ids of the rewriter (`NodeOrder`). -/
+  order : NodeOrder := {}
   deriving Inhabited, Repr
 
 /-- The options of a logic: pure (arithmetic and no other theory),

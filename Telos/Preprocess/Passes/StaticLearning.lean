@@ -390,18 +390,18 @@ def diamondLemmaE (L : Node) : EmitM Nat := do
 
 /-- A lemma as a certified rewrite of `true`, from its proof, then rewritten
 (cvc5 adds static learning lemmas rewritten). -/
-def lemmaOf (L : Node) (prf : EmitM Nat) : Option (Rw mkTrue) := do
+def lemmaOf (L : Node) (prf : EmitM Nat) (o : NodeOrder := {}) : Option (Rw mkTrue) := do
   let r ← runE mkTrue (do
     let p ← prf
     let e ← stepE .true_intro [] [p]
     stepE .symm [] [e])
   if r.1 != L then none
-  return r.trans (rewriteCert r.1)
+  return r.trans (rewriteCert r.1 o)
 
 /-- The `static-learning` pass, with the bounds that non-clausal simplification's
 `ppAssert` saw. -/
 def Pipeline.staticLearning {input : Node} (p : Pipeline input) (opts : PPOptions)
-    (bounds : Array Node) : Pipeline input :=
+    (bounds : Array Node) (o : NodeOrder := {}) : Pipeline input :=
   if Pipeline.inConflict p then p
   else
     let s₀ : SLState := bounds.foldl SLState.addBound {}
@@ -415,7 +415,7 @@ def Pipeline.staticLearning {input : Node} (p : Pipeline input) (opts : PPOption
     let lems := s.lemmas.toList.filterMap fun L =>
       let prf := if L.getKind == .IMPLIES && (L.getChildren[0]?.map (·.getKind == .OR)).getD false
         then diamondLemmaE L else iteLemmaE L
-      match lemmaOf L prf with
+      match lemmaOf L prf o with
       | some r => some r
       | none => Profile.time "static-learning" (fun _ => s!"unproven: {L.toSmtLib}") fun _ => none
     Pipeline.pushLemmas p (lems.flatMap splitLemma)

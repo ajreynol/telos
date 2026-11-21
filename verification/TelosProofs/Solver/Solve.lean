@@ -224,8 +224,8 @@ theorem good_true (M : SmtModel) : Good M Node.mkTrue := by
 
 /-- **The assertions given to the engine hold** in every model of the input. -/
 theorem engineAssertions_sound {M : SmtModel} (hM : model_wf M) (as : List Node)
-    (opts : PPOptions) (pp : Bool) (hb : ∀ a ∈ as, HasBoolType a.toEo)
-    (hv : TrueIn M (inputNode as).toEo) : ∀ a ∈ engineAssertions as opts pp, Good M a := by
+    (opts : PPOptions) (pp : Bool) (o : NodeOrder) (hb : ∀ a ∈ as, HasBoolType a.toEo)
+    (hv : TrueIn M (inputNode as).toEo) : ∀ a ∈ engineAssertions as opts pp o, Good M a := by
   have hsize : 2 ≤ (as ++ [Node.mkTrue, Node.mkTrue]).toArray.size := by simp
   have hgood : Good M (inputNode as) := by
     refine ⟨?_, hv⟩
@@ -249,24 +249,24 @@ theorem engineAssertions_sound {M : SmtModel} (hM : model_wf M) (as : List Node)
   · exact hin
   · -- the pipeline's conjunction holds
     have hwt : (inputNode as).WellTyped := Solver.wellTyped_of_bool hgood.1
-    have heq := preprocess_correct_of_logos as hwt opts
+    have heq := preprocess_correct_of_logos as hwt opts o
     obtain ⟨_, hty, hval⟩ := (Node.equiv_iff _ _).1 heq
-    have hP : Good M (preprocessCert as opts).1 := by
-      have hbP : HasBoolType (preprocessCert as opts).1.toEo := by
+    have hP : Good M (preprocessCert as opts o).1 := by
+      have hbP : HasBoolType (preprocessCert as opts o).1.toEo := by
         have := hgood.1
         unfold HasBoolType at this ⊢
-        have hty' : __smtx_typeof (inputNode as).toSmt = __smtx_typeof (preprocessCert as opts).1.toSmt :=
+        have hty' : __smtx_typeof (inputNode as).toSmt = __smtx_typeof (preprocessCert as opts o).1.toSmt :=
           hty
         exact hty' ▸ this
       refine ⟨hbP, ?_⟩
       have hrel := hval M hM
       obtain ⟨c, hc⟩ := LogosFacts.eval_bool M _ hM hbP
       have hv' : __smtx_model_eval M (inputNode as).toSmt = SmtValue.Boolean true := hv
-      have hc' : __smtx_model_eval M (preprocessCert as opts).1.toSmt = SmtValue.Boolean c := hc
+      have hc' : __smtx_model_eval M (preprocessCert as opts o).1.toSmt = SmtValue.Boolean c := hc
       rw [hv', hc'] at hrel
       have := valueRel_bool hrel
       unfold TrueIn
-      show __smtx_model_eval M (preprocessCert as opts).1.toSmt = _
+      show __smtx_model_eval M (preprocessCert as opts o).1.toSmt = _
       rw [hc', ← this]
     split
     · rename_i cs hcs

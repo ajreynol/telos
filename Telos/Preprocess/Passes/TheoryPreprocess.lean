@@ -58,6 +58,8 @@ structure TppState where
   lemmas : Array (Rw mkTrue) := #[]
   /-- The lemmas of the assertions processed so far, in order. -/
   allLemmas : Array (Rw mkTrue) := #[]
+  /-- The order of node ids of the rewriter (`NodeOrder`). -/
+  order : NodeOrder := {}
 
 abbrev TppM := StateM TppState
 
@@ -132,7 +134,7 @@ def preprocessWithProof (n : Node) : TppM (Rw n) := do
   match ppRewrite n with
   | some (r, lem) =>
     addLemma lem
-    return r.trans (rewriteCert r.1)
+    return r.trans (rewriteCert r.1 (← get).order)
   | none => return Rw.id n
 
 /-- The cached result for `n` in context `val`. -/
@@ -144,6 +146,7 @@ def findCache (n : Node) (val : Nat) : TppM (Option (Rw n)) := do
 /-- `TheoryPreprocessor::theoryPreprocess`, for `n` in context `val`. -/
 partial def theoryPreprocess (n : Node) (val : Nat) : TppM (Rw n) := do
   if let some r ← findCache n val then return r
+  let o := (← get).order
   let res ← do
     if let some r ← removeTermFormulas n (2 ≤ val) then pure r
     else
@@ -156,7 +159,7 @@ partial def theoryPreprocess (n : Node) (val : Nat) : TppM (Rw n) := do
       -- cvc5 rewrites `ret` here, a cache hit when the children did not change
       -- (`n` is then a subterm of a rewritten term); telos's rewriter has no
       -- cache across calls, so it rewrites only a changed node.
-      let r₂ : Rw ret := if traverse && ret != n then Profile.time "tpp" (fun _ => "rewrite") fun _ => rewriteCert ret else Rw.id ret
+      let r₂ : Rw ret := if traverse && ret != n then Profile.time "tpp" (fun _ => "rewrite") fun _ => rewriteCert ret o else Rw.id ret
       let r₂ ← if r₂.1 == ret then preprocessWithProof ret else pure r₂
       if r₂.1 == ret then pure r₁
       else
@@ -168,7 +171,7 @@ partial def theoryPreprocess (n : Node) (val : Nat) : TppM (Rw n) := do
 
 /-- `TheoryPreprocessor::preprocessInternal`: rewrite, then traverse. -/
 def preprocessInternal (n : Node) : TppM (Rw n) := do
-  let ir := rewriteCert n
+  let ir := rewriteCert n (← get).order
   return ir.trans (← theoryPreprocess ir.1 0)
 
 /-- `TheoryPreprocessor::preprocess`: the assertion `a` preprocessed; its
@@ -191,14 +194,15 @@ def preprocessAssertion (a : Node) : TppM (Rw a) := do
 
 /-- The `theory-preprocess` pass: each assertion replaced by its preprocessed
 form, then the lemmas added. -/
-def Pipeline.theoryPreprocess {input : Node} (p : Pipeline input) : Pipeline input :=
+def Pipeline.theoryPreprocess {input : Node} (p : Pipeline input) (o : NodeOrder := {}) :
+    Pipeline input :=
   if Pipeline.inConflict p then p
   else
     -- the assertions in order (not the definitions slot), with the state threaded
     let as := (Pipeline.assertions p).toList
     let (rs, st) := (as.mapM fun a => do
       let r ← preprocessAssertion a
-      pure (⟨a, r⟩ : (c : Node) × Rw c)).run {}
+      pure (⟨a, r⟩ : (c : Node) × Rw c)).run { order := o }
     let rs := rs.toArray
     let q := Pipeline.mapConjuncts p fun i c =>
       match rs[i]? with

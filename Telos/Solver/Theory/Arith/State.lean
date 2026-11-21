@@ -420,8 +420,8 @@ def addLiteral (s : State) (lit nlit : Node) : State × Nat :=
   let negNode := Node.notNode atom
   let posCmp := (Comparison.parse? nAtom).get!
   let posType := posCmp.constraintType
-  let x := (s.asArithVar? posCmp.normalizedVariablePart.node).get!
-  let posDR := posCmp.normalizedDeltaRational
+  let x := (s.asArithVar? (posCmp.normalizedVariablePart s.opts.order).node).get!
+  let posDR := posCmp.normalizedDeltaRational s.opts.order
   match (s.scmAt x posDR).bind (·.get posType) with
   | some hit =>
     let s := s.setLiteral hit atom
@@ -429,7 +429,7 @@ def addLiteral (s : State) (lit nlit : Node) : State × Nat :=
     (s, if isNot then (s.constraint hit).negation else hit)
   | none =>
     let negCmp := (Comparison.parse? (Node.notNode nAtom)).get!
-    let (s, c) := newPair s x posType posDR negCmp.constraintType negCmp.normalizedDeltaRational
+    let (s, c) := newPair s x posType posDR negCmp.constraintType (negCmp.normalizedDeltaRational s.opts.order)
     let s := (s.setLiteral c atom).setLiteral (c + 1) negNode
     (s, if isNot then c + 1 else c)
 

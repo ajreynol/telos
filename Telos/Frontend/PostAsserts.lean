@@ -127,6 +127,12 @@ def ppInput (sc : Script) (u : Preprocess.UserOptions) :
     | .error e => throw s!"{e}: {a.source}"
   return (opts, as)
 
+/-- cvc5's node ids for the script `sc` with the assertions `as`,
+approximated (`NodeOrder`): the declared symbols, then the terms of the
+assertions in the order cvc5's parser creates them. -/
+def inputOrder (sc : Script) (as : List Node) : NodeOrder :=
+  NodeOrder.ofInput (sc.symbols.flatMap (·.names)) as
+
 /-- Print the preprocessed assertions `out` and definitions `defs` as cvc5's
 `-o post-asserts` does. -/
 def printPostAsserts (sc : Script) (out : Array Node) (defs : List Node) : String :=
@@ -183,7 +189,7 @@ def postAssertsFull (sc : Script) (u : Preprocess.UserOptions := {}) (withProof 
   | .ok (opts, as) =>
     if as.isEmpty then { output := .ok (printPostAsserts sc #[] []) }
     else
-      let p := Preprocess.preprocessCert as opts
+      let p := Preprocess.preprocessCert as opts (inputOrder sc as)
       { output := .ok (printPostAsserts sc (Preprocess.Pipeline.assertions p) (Preprocess.Pipeline.defs p))
         proof := if withProof then some (ppProof sc as p check) else none }
 

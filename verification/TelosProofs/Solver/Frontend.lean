@@ -57,7 +57,7 @@ theorem solveScript_unsat (sc : Script) (u : UserOptions) (ee pp wp co vs : Bool
     (hin : ppInput sc u = .ok (opts, as)) (hb : ∀ a ∈ as, HasBoolType a.toEo) :
     ∀ M, model_wf M → ¬ TrueIn M (inputNode as).toEo := by
   intro M hM hv
-  have hout := engineAssertions_sound hM as opts pp hb hv
+  have hout := engineAssertions_sound hM as opts pp (orderFor co sc as) hb hv
   simp only [solveScript, hin, bind, Except.bind, pure, Except.pure] at h
   split at h
   · simp at h

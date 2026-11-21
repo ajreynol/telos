@@ -203,6 +203,8 @@ structure Dio where
   /-- The approximation of node ids (the arithmetic solver's `age`), which
   orders skolems as cvc5 does, by their creation. -/
   ages : Std.HashMap Key Nat := {}
+  /-- The order of node ids of the rewriter (`NodeOrder`). -/
+  order : NodeOrder := {}
   deriving Inhabited
 
 namespace Dio
@@ -239,8 +241,8 @@ def varLt (d : Dio) (a b : Nat) : Bool :=
   | .skolem .., .skolem .. =>
     match d.ages.get? ⟨na⟩, d.ages.get? ⟨nb⟩ with
     | some i, some j => i < j
-    | _, _ => Telos.Arith.monoLt [na] [nb]
-  | _, _ => Telos.Arith.monoLt [na] [nb]
+    | _, _ => Telos.Arith.monoLt [na] [nb] d.order
+  | _, _ => Telos.Arith.monoLt [na] [nb] d.order
 
 /-- `minimalTerm`: the term of least absolute coefficient, ties going to the
 least variable in cvc5's order. -/

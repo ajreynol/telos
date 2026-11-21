@@ -26,29 +26,32 @@ the conjunction `inputNode as` of the input assertions and `true`
 
 namespace Telos.Preprocess
 
-/-- cvc5's `ProcessAssertions::apply`, on the assertions `as`. -/
-def preprocessCert (as : List Node) (opts : PPOptions := {}) : Pipeline (inputNode as) :=
+/-- cvc5's `ProcessAssertions::apply`, on the assertions `as`, with `o` the
+order of node ids of the rewriter (`NodeOrder`). -/
+def preprocessCert (as : List Node) (opts : PPOptions := {}) (o : NodeOrder := {}) :
+    Pipeline (inputNode as) :=
   let pass {α : Type} (name : String) (f : Unit → α) : α := Profile.time "pass" (fun _ => name) f
   let p := pass "init" fun _ => Pipeline.init as
-  let p := pass "rewrite" fun _ => Pipeline.rewrite p
+  let p := pass "rewrite" fun _ => Pipeline.rewrite p o
   -- `simplifyAssertions`: non-clausal simplification, twice with `repeat-simp`
   let simplifyAssertions (p : Pipeline (inputNode as)) : Pipeline (inputNode as) × Array Node :=
     if !opts.simplification then (p, #[]) else
-    let (p, lits) := pass "non-clausal-simp" fun _ => Pipeline.nonClausalSimpB p opts.termBased
+    let (p, lits) := pass "non-clausal-simp" fun _ => Pipeline.nonClausalSimpB p opts.termBased o
     if !opts.repeatSimp then (p, lits) else
-    let (p, lits') := pass "non-clausal-simp" fun _ => Pipeline.nonClausalSimpB p opts.termBased
+    let (p, lits') := pass "non-clausal-simp" fun _ => Pipeline.nonClausalSimpB p opts.termBased o
     (p, lits ++ lits')
   let (p, lits) := simplifyAssertions p
   let p := if opts.staticLearning then
-      pass "static-learning" fun _ => Pipeline.staticLearning p opts lits else p
+      pass "static-learning" fun _ => Pipeline.staticLearning p opts lits o else p
   let p := if opts.repeatSimp then (simplifyAssertions p).1 else p
-  let p := pass "rewrite (2)" fun _ => Pipeline.rewrite p
-  let p := pass "static-rewrite" fun _ => Pipeline.staticRewrite p opts
-  pass "theory-preprocess" fun _ => Pipeline.theoryPreprocess p
+  let p := pass "rewrite (2)" fun _ => Pipeline.rewrite p o
+  let p := pass "static-rewrite" fun _ => Pipeline.staticRewrite p opts o
+  pass "theory-preprocess" fun _ => Pipeline.theoryPreprocess p o
 
 /-- The preprocessed assertions, and the definitions of the solved variables. -/
-def preprocess (as : List Node) (opts : PPOptions := {}) : Array Node × List Node :=
-  let p := preprocessCert as opts
+def preprocess (as : List Node) (opts : PPOptions := {}) (o : NodeOrder := {}) :
+    Array Node × List Node :=
+  let p := preprocessCert as opts o
   (Pipeline.assertions p, Pipeline.defs p)
 
 end Telos.Preprocess

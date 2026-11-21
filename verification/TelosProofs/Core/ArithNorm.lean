@@ -21,8 +21,8 @@ open Arith
 
 variable [LogosFacts]
 
-theorem arithNorm_provesEq {n : Node} (h : ArithNormOk n (polyOf n) (arithNorm n)) :
-    ProvesEq (StaticProc.arithNormCmds n) n (arithNorm n) := by
+theorem arithNorm_provesEq {n : Node} {o : NodeOrder} (h : ArithNormOk n (polyOf n) (arithNorm n o)) :
+    ProvesEq (StaticProc.arithNormCmds n o) n (arithNorm n o) := by
   apply PolyNorm.arithNorm_provesEq_of_typeof h
   exact LogosFacts.eo_typeof_bool _ h.2.1
 

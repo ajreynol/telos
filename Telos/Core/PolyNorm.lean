@@ -2,6 +2,7 @@ import Cpc.Logos
 import Telos.Core.Node.ToEo
 import Telos.Core.Node.FastType
 import Telos.Core.Node.Order
+import Telos.Core.Node.NodeOrder
 import Telos.Core.Node.DecEq
 import Telos.Core.Profile
 
@@ -57,8 +58,9 @@ def monoKey : Mono → Node
   | [x] => x
   | xs => mkNode .MULT xs.toArray
 
-/-- cvc5's `LeafNodeComparator` on monomial keys: the constant monomial first. -/
-def monoLt (a b : Mono) : Bool :=
+/-- cvc5's `LeafNodeComparator` on monomial keys: the constant monomial first,
+then by node id (`o`, see `NodeOrder`). -/
+def monoLt (a b : Mono) (o : NodeOrder := {}) : Bool :=
   match a, b with
   | [], [] => false
   | [], _ => true
@@ -71,7 +73,7 @@ def monoLt (a b : Mono) : Bool :=
     if ka == kb then false
     else if ia != ib then !ia
     else if ka.isVar != kb.isVar then ka.isVar
-    else Node.lt ka kb
+    else o.lt ka kb
 
 /-- A sum of monomials with rational coefficients, none zero. -/
 abbrev Poly := List (Mono × Rat)
@@ -104,10 +106,10 @@ def constant (p : Poly) : Rat := ((p.find? (·.1 == [])).map (·.2)).getD 0
 
 def removeConstant (p : Poly) : Poly := p.filter (·.1 != [])
 
-def sorted (p : Poly) : Poly := p.mergeSort fun a b => !monoLt b.1 a.1
+def sorted (p : Poly) (o : NodeOrder := {}) : Poly := p.mergeSort fun a b => !monoLt b.1 a.1 o
 
 /-- The leading (first non-constant) coefficient, in cvc5's order. -/
-def leadingCoeff? (p : Poly) : Option Rat := ((p.sorted.find? (·.1 != [])).map (·.2))
+def leadingCoeff? (p : Poly) (o : NodeOrder := {}) : Option Rat := (((p.sorted o).find? (·.1 != [])).map (·.2))
 
 /-- Whether every leaf is an integer (cvc5's `isIntegral`). -/
 def isIntegral (p : Poly) : Bool := p.all fun (m, _) => m.all isInt
@@ -172,18 +174,19 @@ def sumNode (real : Bool) : List Node → Node
 
 /-- The node of a polynomial in cvc5's normal form (`collectSum`, `mkMultTerm`),
 of type `Real` when `real`. -/
-def Poly.toNodeAt (real : Bool) (p : Poly) : Node := sumNode real (p.sorted.map (termNode real))
+def Poly.toNodeAt (real : Bool) (p : Poly) (o : NodeOrder := {}) : Node :=
+  sumNode real ((p.sorted o).map (termNode real))
 
 /-- The node of a polynomial in cvc5's normal form. A real sum of integer leaves
 with integral coefficients is an integer sum for cvc5 (`maybeEnsureReal`), so it
 is `(to_real (+ (- 3) x))`. -/
-def Poly.toNode (real : Bool) (p : Poly) : Node :=
+def Poly.toNode (real : Bool) (p : Poly) (o : NodeOrder := {}) : Node :=
   if real && p.isIntegral && p.all (·.2.isInt) && p.any (·.1 != []) then
-    mkNode .TO_REAL #[p.toNodeAt false]
-  else p.toNodeAt real
+    mkNode .TO_REAL #[p.toNodeAt false o]
+  else p.toNodeAt real o
 
 /-- The normal form of an arithmetic term. -/
-def arithNorm (n : Node) : Node := (polyOf n).toNode (isReal n)
+def arithNorm (n : Node) (o : NodeOrder := {}) : Node := (polyOf n).toNode (isReal n) o
 
 /-- The conditions under which `(= n m)`, for `m = arithNorm n` and `p = polyOf n`,
 is statically known to be an `arith_poly_norm` step, all cheap to decide: `n`

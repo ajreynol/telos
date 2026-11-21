@@ -56,11 +56,11 @@ def arithEqSplit (n : Node) : Option (Rw n) := do
   return r.trans (← checkBy .aci_norm r.1 target)
 
 /-- The theory's `ppStaticRewrite` of a node. -/
-def ppStaticRewrite (opts : PPOptions) (n : Node) : Option (Rw n) :=
+def ppStaticRewrite (opts : PPOptions) (n : Node) (o : NodeOrder := {}) : Option (Rw n) :=
   match n.getKind with
   | .EQUAL =>
     match ppTheoryOf opts.termBased n with
-    | .THEORY_ARITH => if opts.arithRewriteEq then arithEqSplit n else Arith.normalizeEquality n
+    | .THEORY_ARITH => if opts.arithRewriteEq then arithEqSplit n else Arith.normalizeEquality n o
     | .THEORY_DATATYPES => DatatypesRewriter.consEq n
     | .THEORY_BV => bvStaticRewrite n
     | .THEORY_STRINGS => if n.getChildren[0]?.bind (·.typeHint) == some .string then strEqualityExt n else none
@@ -70,17 +70,17 @@ def ppStaticRewrite (opts : PPOptions) (n : Node) : Option (Rw n) :=
 
 /-- `StaticRewrite::rewriteAssertion`: the children first, then the node, whose
 static rewrite is traversed again (`fuel` bounds the repetitions). -/
-def staticRewriteWith (opts : PPOptions) : Nat → (n : Node) → Rw n
+def staticRewriteWith (opts : PPOptions) (o : NodeOrder := {}) : Nat → (n : Node) → Rw n
   | 0, n => Rw.id n
   | fuel + 1, n =>
-    let r := rewriteChildren (m := Id) (fun c => staticRewriteWith opts fuel c) n
-    match ppStaticRewrite opts r.1 with
-    | some s => if s.1 == r.1 then r else (r.trans s).trans (staticRewriteWith opts fuel s.1)
+    let r := rewriteChildren (m := Id) (fun c => staticRewriteWith opts o fuel c) n
+    match ppStaticRewrite opts r.1 o with
+    | some s => if s.1 == r.1 then r else (r.trans s).trans (staticRewriteWith opts o fuel s.1)
     | none => r
 
 /-- The `static-rewrite` pass. -/
-def Pipeline.staticRewrite {input : Node} (p : Pipeline input) (opts : PPOptions := {}) :
-    Pipeline input :=
-  Pipeline.mapAssertions p (staticRewriteWith opts 1000)
+def Pipeline.staticRewrite {input : Node} (p : Pipeline input) (opts : PPOptions := {})
+    (o : NodeOrder := {}) : Pipeline input :=
+  Pipeline.mapAssertions p (staticRewriteWith opts o 1000)
 
 end Telos.Preprocess

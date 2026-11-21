@@ -1158,14 +1158,14 @@ theorem solveScript_sat (sc : Script) (u : UserOptions) (ee pp wp co vs : Bool)
   · simp at h
   · -- whichever solved it, the answer is `sat` only if the model satisfies the
     -- input
-    have key : ∀ r0 : Solver.Result, (if r0.answer != .sat then r0 else
+    have key : ∀ (o : NodeOrder) (r0 : Solver.Result), (if r0.answer != .sat then r0 else
         if (Solver.buildModel r0.ee (Solver.relevantTerms r0.asserted) (Solver.freeConsts as)
-            (engineDefs as opts pp) as r0.arithModel).satisfies as then
+            (engineDefs as opts pp o) as r0.arithModel).satisfies as then
           { r0 with model := some (Solver.buildModel r0.ee (Solver.relevantTerms r0.asserted)
-            (Solver.freeConsts as) (engineDefs as opts pp) as r0.arithModel) }
+            (Solver.freeConsts as) (engineDefs as opts pp o) as r0.arithModel) }
         else { r0 with answer := .unknown, uncertified := some "the model does not satisfy the input" }).answer = .sat →
         ∃ M, model_wf M ∧ TrueIn M (inputNode as).toEo := by
-      intro r0 hs
+      intro _ r0 hs
       split at hs
       · rename_i hne
         simp [hs] at hne
@@ -1176,11 +1176,11 @@ theorem solveScript_sat (sc : Script) (u : UserOptions) (ee pp wp co vs : Bool)
     split at h
     · try simp only [Except.ok.injEq, Prod.mk.injEq] at h
       obtain ⟨rfl, rfl⟩ := h
-      exact key _ hs
+      exact key _ _ hs
     · split at h
       · simp at h
       · try simp only [Except.ok.injEq, Prod.mk.injEq] at h
         obtain ⟨rfl, rfl⟩ := h
-        exact key _ hs
+        exact key _ _ hs
 
 end Telos.Frontend

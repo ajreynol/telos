@@ -111,9 +111,9 @@ def boolPpAssert (l : Node) : Option Solved :=
 
 /-- `TheoryArithPrivate::ppAssert`: the equality normalized, solved for its head
 if it is a variable (coefficient 1), the other side with at most 2 terms. -/
-def arithPpAssert (l : Node) : Option Solved := do
+def arithPpAssert (l : Node) (o : NodeOrder := {}) : Option Solved := do
   if l.getKind != .EQUAL then none
-  let r : Rw l := (Arith.normalizeEquality l).getD (Rw.id l)
+  let r : Rw l := (Arith.normalizeEquality l o).getD (Rw.id l)
   -- `(= (to_real x) c)` for an integer variable `x` and an integral constant
   -- `c`: solved as `x := c` (cvc5 strips the cast, then makes `c` an integer),
   -- `(= x c)` by `arith_poly_norm_rel`
@@ -181,13 +181,13 @@ def bvPpAssert (l : Node) : Option Solved :=
     (bvExtractSolve l).map fun (x, t, r) => (x, t, fun p => do eqResolveE p (← rwFact r))
 
 /-- `TheoryEngine::solve`: the `ppAssert` of the theory of the literal's atom. -/
-def solveLit (termBased : Bool) (l : Node) : Option Solved :=
+def solveLit (termBased : Bool) (l : Node) (o : NodeOrder := {}) : Option Solved :=
   let atom := match l with
     | .app (.kind .NOT) #[a] => a
     | a => a
   match ppTheoryOf termBased atom with
   | .THEORY_BOOL => boolPpAssert l
-  | .THEORY_ARITH => arithPpAssert l
+  | .THEORY_ARITH => arithPpAssert l o
   | .THEORY_BV => bvPpAssert l
   | _ => defaultPpAssert l
 
@@ -198,22 +198,22 @@ def factsOf (es : Array (Node × Nat × Node)) : SubstFacts :=
 
 /-- `applyTrusted(n, rw)` of a substitution: its application to `n`, then the
 rewrite, with the fact `(= n result)`; unchanged when the result is `n`. -/
-def applyRwE (σ : SubstFacts) (n : Node) : EmitM (Node × Option Nat) := do
+def applyRwE (σ : SubstFacts) (n : Node) (o : NodeOrder := {}) : EmitM (Node × Option Nat) := do
   let (n₁, e₁) ← substFact σ substFuel n
   if e₁.isNone then return (n, none)
-  let r := rewriteCert n₁
+  let r := rewriteCert n₁ o
   if r.1 == n then return (n, none)
   return (r.1, ← transOpt e₁ (← rwFact r))
 
 /-- `processLearnedLit` (and the simplification of an assertion): the
 substitutions, then the constant propagations to a fixed point, each followed by
 the rewriter; the result and the fact `(= n result)`. -/
-def simplifyE (σn σc : SubstFacts) (n : Node) : EmitM (Node × Option Nat) := do
-  let (n₁, e₁) ← applyRwE σn n
+def simplifyE (σn σc : SubstFacts) (n : Node) (o : NodeOrder := {}) : EmitM (Node × Option Nat) := do
+  let (n₁, e₁) ← applyRwE σn n o
   let mut cur := n₁
   let mut e := e₁
   for _ in [0:1000] do
-    let (n₂, e₂) ← applyRwE σc cur
+    let (n₂, e₂) ← applyRwE σc cur o
     if e₂.isNone then break
     e ← transOpt e e₂
     cur := n₂
@@ -239,7 +239,7 @@ def conflictE (p : Nat) : EmitM Nat := do falseOfE (← scopeE p)
 definitions slot `true`); its last fact, and the literals given to `solveLit`
 (`TheoryEngine::solve`, whose arithmetic `ppAssert` records bounds for static
 learning). -/
-def ncsProof (termBased : Bool) (C : Node) : EmitM (Nat × Array Node) := do
+def ncsProof (termBased : Bool) (C : Node) (o : NodeOrder := {}) : EmitM (Nat × Array Node) := do
   let .app (.kind .AND) cs := C | throw "not a conjunction"
   -- Forward: assume C.
   let pC ← assumeE C
@@ -256,12 +256,12 @@ def ncsProof (termBased : Bool) (C : Node) : EmitM (Nat × Array Node) := do
   let mut kept : Array (Node × Nat) := #[]
   let mut solvedLits : Array Node := #[]
   for (l, pl) in cp.learned do
-    let (l', e) ← simplifyE (factsOf nss) (factsOf cps) l
+    let (l', e) ← simplifyE (factsOf nss) (factsOf cps) l o
     let pl' ← eqResolveE pl e
     if l' == mkTrue then continue
     if l' == mkFalse then return (← conflictE pl', solvedLits)
     solvedLits := solvedLits.push l'
-    match solveLit termBased l' with
+    match solveLit termBased l' o with
     | some (x, t, der) => nss := nss.push (x, ← der pl', t)
     | none =>
       match constProp? l' with
@@ -273,18 +273,18 @@ def ncsProof (termBased : Bool) (C : Node) : EmitM (Nat × Array Node) := do
   let mut newA : Array (Node × Nat) := #[]
   let mut seen : Std.HashSet Key := {}
   for (a, p) in asserts do
-    let (a', e) ← simplifyE σn σc a
+    let (a', e) ← simplifyE σn σc a o
     newA := newA.push (a', ← eqResolveE p e)
     seen := seen.insert ⟨a'⟩
   -- 4. the learned literals and constant propagations to conjoin
   let mut extra : Array (Node × Nat) := #[]
   for (l, pl) in kept do
-    let (l', e) ← simplifyE σn σc l
+    let (l', e) ← simplifyE σn σc l o
     if seen.contains ⟨l'⟩ then continue
     seen := seen.insert ⟨l'⟩
     extra := extra.push (l', ← eqResolveE pl e)
   for (t, pc, c) in cps do
-    let (l', e) ← simplifyE σn (fun _ => none) (eqNode t c)
+    let (l', e) ← simplifyE σn (fun _ => none) (eqNode t c) o
     if seen.contains ⟨l'⟩ then continue
     seen := seen.insert ⟨l'⟩
     extra := extra.push (l', ← eqResolveE pc e)
@@ -311,7 +311,7 @@ def ncsProof (termBased : Bool) (C : Node) : EmitM (Nat × Array Node) := do
   -- the constant propagations, from their conjuncts
   let mut cpsB : Array (Node × Nat × Node) := #[]
   for (t, _, c) in cps do
-    let (l', e) ← simplifyE σF (fun _ => none) (eqNode t c)
+    let (l', e) ← simplifyE σF (fun _ => none) (eqNode t c) o
     let some p := byNode.get? ⟨l'⟩ | throw "constant propagation not found"
     cpsB := cpsB.push (t, ← eqResolveE p (← symmOpt e), c)
   let σcB := factsOf cpsB
@@ -319,7 +319,7 @@ def ncsProof (termBased : Bool) (C : Node) : EmitM (Nat × Array Node) := do
   let mut olds : Array Nat := #[]
   for h : i in [0:asserts.length] do
     let (a, _) := asserts[i]
-    let (a', e) ← simplifyE σF σcB a
+    let (a', e) ← simplifyE σF σcB a o
     let some (b, p) := conj'[i]? | throw "missing conjunct"
     if b != a' then throw "assertion mismatch"
     olds := olds.push (← eqResolveE p (← symmOpt e))
@@ -357,7 +357,7 @@ If a step cannot be built, or its check fails, the pass falls back to
 `ncsProof`, or, in a later run, does nothing. -/
 
 /-- The equation `(= x t)` of a solved literal `l`, by a certified rewrite. -/
-def solvedEq (l x t : Node) : Option (Rw l) :=
+def solvedEq (l x t : Node) (o : NodeOrder := {}) : Option (Rw l) :=
   let goal := eqNode x t
   let r : Option (Rw l) :=
     if l == goal then some (Rw.id l)
@@ -377,7 +377,7 @@ def solvedEq (l x t : Node) : Option (Rw l) :=
           let r₂ ← byRuleWithPremises .eq_symm [notNode a, b] [] r₁.1
           some (r₁.trans r₂)
         else none
-      | none => (Arith.normalizeEquality l).orElse fun _ => (bvExtractSolve l).map (·.2.2)
+      | none => (Arith.normalizeEquality l o).orElse fun _ => (bvExtractSolve l).map (·.2.2)
   r.bind fun r => if r.1 == goal then some r else none
 
 /-- The data of `SemProc.learn` from the propagator's state, for the conjuncts
@@ -464,7 +464,7 @@ inductive LitClass where
 def runTri {α : Type} (m : TriM α) (B : TriB) : Except String (α × TriB) := m.run B
 
 /-- The steps of the pass, without a CPC proof (steps 1 to 5 above). -/
-def ncsSteps {input : Node} (termBased : Bool) (p : Pipeline input) :
+def ncsSteps {input : Node} (termBased : Bool) (p : Pipeline input) (o : NodeOrder := {}) :
     Except String (Pipeline input × Array Node) := do
   let .app (.kind .AND) cs := p.1 | throw "not a conjunction"
   let asserts := cs.pop
@@ -486,7 +486,7 @@ def ncsSteps {input : Node} (termBased : Bool) (p : Pipeline input) :
     | throw "learn: check failed"
   -- 2. the learned literals, then the assertions
   let litPos (h : Nat) : Nat := nA + 1 + (K - 1 - h)
-  let mut B : TriB := {}
+  let mut B : TriB := { order := o }
   let mut σn : TSubst := {}
   let mut σc : TSubst := {}
   let mut cls : Array LitClass := #[]
@@ -505,9 +505,9 @@ def ncsSteps {input : Node} (termBased : Bool) (p : Pipeline input) :
       cls := cls.push .conflict; fin₁ := fin₁.push (l', steps); conflict := true
     else
       solvedLits := solvedLits.push l'
-      match solveLit termBased l' with
+      match solveLit termBased l' o with
         | some (x, t, _) =>
-          let some r := solvedEq l' x t | throw "solve: no equation"
+          let some r := solvedEq l' x t o | throw "solve: no equation"
           let eq := eqNode x t
           let (steps', B') ← runTri (do
               let st ← if r.1 == l' then pure #[] else pure #[← TriM.rw r]
@@ -561,7 +561,7 @@ def ncsSteps {input : Node} (termBased : Bool) (p : Pipeline input) :
   let posK := nA
   let posC := posK + kept.length
   let posD := posC + cprops.length
-  let mut B₂ : TriB := { rwCache := B.rwCache }
+  let mut B₂ : TriB := { rwCache := B.rwCache, order := o }
   let mut σD : TSubst := {}
   let mut defs : Array (Node × Node × Array ChainStep) := #[]
   for ((x, t), i) in solved.zipIdx.reverse do
@@ -624,11 +624,12 @@ def ncsSteps {input : Node} (termBased : Bool) (p : Pipeline input) :
   return (p₅, solvedLits)
 
 /-- The `non-clausal-simp` pass, and the literals given to `solveLit`. -/
-def Pipeline.nonClausalSimpB {input : Node} (p : Pipeline input) (termBased : Bool := false) :
+def Pipeline.nonClausalSimpB {input : Node} (p : Pipeline input) (termBased : Bool := false)
+    (o : NodeOrder := {}) :
     Pipeline input × Array Node :=
   if Pipeline.inConflict p then (p, #[])
   else
-    let fast := match ncsSteps termBased p with
+    let fast := match ncsSteps termBased p o with
       | .ok q => some q
       | .error e => Profile.time "ncs" (fun _ => s!"fallback: {e}") fun _ => none
     match fast with
@@ -636,7 +637,7 @@ def Pipeline.nonClausalSimpB {input : Node} (p : Pipeline input) (termBased : Bo
     | none =>
       -- `ncsProof` assumes no earlier definitions: a later run is skipped
       if Pipeline.slot p != mkTrue then (p, #[]) else
-      match (ncsProof termBased p.1).run {} with
+      match (ncsProof termBased p.1 o).run {} with
       | .ok ((_, lits), st) =>
         match applyCmds (cmdList (toCmds st.steps)) p.1 with
         | some r => (Pipeline.conflictFrom? p (p.trans r), lits)

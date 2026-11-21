@@ -21,8 +21,10 @@ Differences from cvc5:
 * cvc5 builds mixed Int/Real sums, such as `(+ r x)` with `x : Int`; Logos's typing
   rejects them, so an integer leaf of a real sum keeps its `to_real`
   (`(+ r (to_real x))`, which is also how cvc5 prints that sum).
-* Monomials are ordered by telos's structural term order where cvc5 uses node ids
-  (`LeafNodeComparator`'s last case).
+* Monomials are ordered by node ids (`LeafNodeComparator`'s last case) as
+  `NodeOrder` approximates them: the order of first occurrence in the input,
+  then telos's structural term order for the terms created later. The products
+  of a nonlinear monomial are in the structural order (`sortLeaves`).
 * The sides of a division are made real only when both are integers
   (`(/ x y)` is `(/ (to_real x) (to_real y))`), and `to_real` is removed from
   them, for a constant denominator, only when both have it.
@@ -44,13 +46,13 @@ def isArithTerm (n : Node) : Bool :=
 /-- The normal form of an arithmetic term. When `ArithNormOk` holds, the step is
 justified statically (`StaticProc.arithNorm`); otherwise it is checked by
 `arith_poly_norm`. -/
-def normalizeTerm (n : Node) : Option (Rw n) :=
+def normalizeTerm (n : Node) (o : NodeOrder := {}) : Option (Rw n) :=
   let p := Profile.time "strategy: arith normal form" (fun _ => "term") fun _ => polyOf n
-  let m := p.toNode (isReal n)
+  let m := p.toNode (isReal n) o
   if m == n then none
   else if h : Profile.time "static: side conditions" (fun _ => "arith_poly_norm")
       (fun _ => decide (ArithNormOk n p m)) = true then
-    some ⟨m, .static .arithNorm ⟨rfl, of_decide_eq_true h⟩ (.refl m)⟩
+    some ⟨m, .static (.arithNorm o) ⟨rfl, of_decide_eq_true h⟩ (.refl m)⟩
   else checkBy .arith_poly_norm n m
 
 /-- `(to_real c)` for a constant `c`: the real constant, by `evaluate`. -/
@@ -194,7 +196,7 @@ def negTail (s : Node) (c : Rat) (t : Node) : Option (Rw t) := do
 
 /-- Rewrite `(>= a b)` to cvc5's normal form (`buildIntegerInequality`,
 `buildRealInequality`). -/
-def normalizeGeq (n : Node) (a b : Node) : Option (Rw n) := do
+def normalizeGeq (n : Node) (a b : Node) (o : NodeOrder := {}) : Option (Rw n) := do
   let sum := Profile.time "strategy: arith normal form" (fun _ => "inequality") fun _ =>
     (polyOf a).add ((polyOf b).scale (-1))
   let terms := sum.removeConstant
@@ -210,14 +212,14 @@ def normalizeGeq (n : Node) (a b : Node) : Option (Rw n) := do
     r.next? byEvaluate
   else if sum.isIntegral then
     -- cvc5's normalizeGCDLCM, following the sign of the leading coefficient.
-    let lc ← sum.leadingCoeff?
+    let lc ← sum.leadingCoeff? o
     let den : Nat := terms.foldl (fun acc (_, c) => Nat.lcm acc c.den) 1
     let num : Nat := terms.foldl (fun acc (_, c) => Nat.gcd acc c.num.natAbs) 0
     let μ : Rat := (den : Rat) / (num : Rat)
     let negate := lc < 0
     let μ := if negate then -μ else μ
     let scaled := sum.scale μ
-    let s := scaled.removeConstant.toNode false
+    let s := scaled.removeConstant.toNode false o
     let c := -scaled.constant
     let x := mkNode .SUB #[a, b]
     if !negate then
@@ -244,7 +246,7 @@ def normalizeGeq (n : Node) (a b : Node) : Option (Rw n) := do
       else
         -- (>= a b) = (>= (to_real (- s)) (- c)) = (>= (- s) ⌈- c⌉) = (>= ⌊c⌋ s),
         -- then `negTail`
-        let ns := (scaled.removeConstant.scale (-1)).toNode false
+        let ns := (scaled.removeConstant.scale (-1)).toNode false o
         let nsR := mkNode .TO_REAL #[ns]
         let nc := constNode true (-c)
         let r ← polyNormRel n μ.num μ.den (toReal x) (mkNode .SUB #[nsR, nc]) (mkNode .GEQ #[nsR, nc])
@@ -257,10 +259,10 @@ def normalizeGeq (n : Node) (a b : Node) : Option (Rw n) := do
   else
     -- cvc5's normalizeLCoeffAbsOne: divide by the absolute value of the leading
     -- coefficient.
-    let lc := (sum.leadingCoeff?).getD 1
+    let lc := (sum.leadingCoeff? o).getD 1
     let l := if lc < 0 then -lc else lc
     let scaled := sum.scale (1 / l)
-    let s := scaled.removeConstant.toNode true
+    let s := scaled.removeConstant.toNode true o
     let c := -scaled.constant
     let cN := constNode true c
     polyNormRel n l.den l.num (mkNode .SUB #[toReal a, toReal b]) (mkNode .SUB #[s, cN])
@@ -268,13 +270,13 @@ def normalizeGeq (n : Node) (a b : Node) : Option (Rw n) := do
 
 /-- cvc5's `postRewriteAtom` for an equality of arithmetic terms: `true` for
 equal sides, and the value of an equality of constants. -/
-def rewriteEq (n : Node) : Option (Rw n) :=
+def rewriteEq (n : Node) (o : NodeOrder := {}) : Option (Rw n) :=
   match n.getChildren with
   | #[a, b] =>
     if !(isInt a || isReal a) then none
     else if a == b then byRule "eq-refl" n
     else if a.isConst && b.isConst then byEvaluate n
-    else normalizeEq n a b
+    else normalizeEq n a b o
   | _ => none
 where
   /-- cvc5's `normalizeEquality`, of which the arithmetic rewriter keeps only a
@@ -283,7 +285,7 @@ where
   rewriting preserves the terms of an equality (for theory combination). The
   full normalization (solving for a term) is cvc5's `ppStaticRewrite` and
   extended rewriter, not its rewriter. -/
-  normalizeEq (n a b : Node) : Option (Rw n) := do
+  normalizeEq (n a b : Node) (o : NodeOrder) : Option (Rw n) := do
     let sum := Profile.time "strategy: arith normal form" (fun _ => "equality") fun _ =>
       (polyOf a).add ((polyOf b).scale (-1))
     let terms := sum.removeConstant
@@ -303,7 +305,7 @@ where
       let c := -scaled.constant
       if !c.isInt then
         -- No integer solution: (= a b) = (= (to_real s) c) = false.
-        let s := scaled.removeConstant.toNode false
+        let s := scaled.removeConstant.toNode false o
         let sR := mkNode .TO_REAL #[s]
         let cN := constNode true c
         let r ← polyNormRel n μ.num μ.den (toReal x) (mkNode .SUB #[sR, cN]) (mkNode .EQUAL #[sR, cN])
@@ -312,7 +314,7 @@ where
           [stepCmd .evaluate [eqNode (mkNode .TO_REAL #[toIntC]) cN]])
       else
         -- Orient by the sign of the coefficient of least absolute value.
-        let m := scaled.removeConstant.sorted.foldl (fun best (mono, d) =>
+        let m := (scaled.removeConstant.sorted o).foldl (fun best (mono, d) =>
           match best with
           | some (_, e) => if (if d < 0 then -d else d) < (if e < 0 then -e else e)
               then some (mono, d) else best
@@ -320,7 +322,7 @@ where
         if (m.map (fun (_, d) => decide (d < 0))).getD false then byRule "eq-symm" n else none
     else
       -- Orient by the sign of the leading coefficient.
-      if ((sum.leadingCoeff?).map (fun d => decide (d < 0))).getD false then byRule "eq-symm" n
+      if ((sum.leadingCoeff? o).map (fun d => decide (d < 0))).getD false then byRule "eq-symm" n
       else none
 
 /-- cvc5's `ensureReal`: an integer term as a real one (a constant as a real
@@ -338,14 +340,14 @@ least absolute coefficient, after making the coefficients coprime integers
 `1` (`buildRealEquality`). Both sides are made real when the equality is between
 reals. Certified by `arith_poly_norm_rel`, and by `rewriteEq` when the result is
 a constant. -/
-def normalizeEquality (n : Node) : Option (Rw n) := do
+def normalizeEquality (n : Node) (o : NodeOrder := {}) : Option (Rw n) := do
   let #[a, b] := n.getChildren | none
   if n.getKind != .EQUAL || !(isInt a || isReal a) then none
   let sum := (polyOf a).add ((polyOf b).scale (-1))
-  let terms := sum.removeConstant.sorted
+  let terms := sum.removeConstant.sorted o
   let real := isReal a
   let x := mkNode .SUB #[a, b]
-  if a == b || (a.isConst && b.isConst) || terms.isEmpty then return ← rewriteEq n
+  if a == b || (a.isConst && b.isConst) || terms.isEmpty then return ← rewriteEq n o
   let target? : Option (Node × Rat × Rat) :=
     if sum.isIntegral then
       let den : Nat := terms.foldl (fun acc (_, c) => Nat.lcm acc c.den) 1
@@ -355,24 +357,24 @@ def normalizeEquality (n : Node) : Option (Rw n) := do
       if !(scaled.constant).isInt then none  -- no integer solution: `rewriteEq`
       else
         let abs (d : Rat) : Rat := if d < 0 then -d else d
-        let m? := scaled.removeConstant.sorted.foldl (fun best (mono, d) =>
+        let m? := (scaled.removeConstant.sorted o).foldl (fun best (mono, d) =>
           match best with
           | some (_, e) => if abs d < abs e then some (mono, d) else best
           | none => some (mono, d)) none
         m?.map fun (m, c) =>
           let rest : Poly := scaled.filter (·.1 != m)
           -- `c m + rest = μ (a - b)`: `-c m = rest` for `c < 0`, else `c m = -rest`
-          let (l, r, cx) := if c < 0 then (termNode false (m, -c), rest.toNode false, -(den : Rat))
-            else (termNode false (m, c), (Poly.scale rest (-1)).toNode false, (den : Rat))
+          let (l, r, cx) := if c < 0 then (termNode false (m, -c), rest.toNode false o, -(den : Rat))
+            else (termNode false (m, c), (Poly.scale rest (-1)).toNode false o, (den : Rat))
           let (l, r) := if real then (ensureReal l, ensureReal r) else (l, r)
           (mkNode .EQUAL #[l, r], cx, (num : Rat))
     else
       (terms.head?).map fun (m, c) =>
         -- `c m + rest = a - b`: `m = -rest / c`
         let rest : Poly := Poly.scale (sum.filter (·.1 != m)) (-1 / c)
-        (mkNode .EQUAL #[termNode true (m, 1), rest.toNode true], 1, c)
+        (mkNode .EQUAL #[termNode true (m, 1), rest.toNode true o], 1, c)
   match target? with
-  | none => rewriteEq n
+  | none => rewriteEq n o
   | some (t, cx, cy) =>
     if t == n then none
     else
@@ -380,13 +382,13 @@ def normalizeEquality (n : Node) : Option (Rw n) := do
       polyNormRel n cx cy x (mkNode .SUB #[l, r]) t
 
 /-- cvc5's `postRewriteAtom` for `>=` and `<=`. -/
-def rewriteIneq (n : Node) : Option (Rw n) :=
+def rewriteIneq (n : Node) (o : NodeOrder := {}) : Option (Rw n) :=
   match n.getKind, n.getChildren with
-  | .GEQ, #[a, b] => finish (normalizeGeq n a b)
+  | .GEQ, #[a, b] => finish (normalizeGeq n a b o)
   | .LEQ, #[_, _] =>
     (byRule "arith-elim-leq" n).bind fun r => (r.next? fun t =>
       match t.getChildren with
-      | #[a, b] => normalizeGeq t a b
+      | #[a, b] => normalizeGeq t a b o
       | _ => none) |> finish
   | _, _ => none
 where
@@ -417,18 +419,18 @@ def preRewrite (n : Node) : RewriteResponse n :=
   | some ⟨m, h⟩ => ⟨.REWRITE_DONE, m, h⟩
   | none => .done n
 
-def postRewrite (n : Node) : RewriteResponse n :=
+def postRewrite (n : Node) (o : NodeOrder := {}) : RewriteResponse n :=
   -- Rewrites to other operators are rewritten again from the start, as cvc5's
   -- `returnRewrite` does (`REWRITE_AGAIN_FULL`).
   let r : Option (RewriteStatus × Rw n) :=
     if isArithTerm n then
       match (.REWRITE_AGAIN_FULL, ·) <$> (if n.getKind == .DIVISION then rewriteDivToReal n else none) with
       | some r => some r
-      | none => (.REWRITE_DONE, ·) <$> normalizeTerm n
+      | none => (.REWRITE_DONE, ·) <$> normalizeTerm n o
     else match n.getKind with
       | .TO_REAL => (.REWRITE_DONE, ·) <$> rewriteToReal n
-      | .GEQ | .LEQ => (.REWRITE_DONE, ·) <$> rewriteIneq n
-      | .EQUAL => (.REWRITE_DONE, ·) <$> rewriteEq n
+      | .GEQ | .LEQ => (.REWRITE_DONE, ·) <$> rewriteIneq n o
+      | .EQUAL => (.REWRITE_DONE, ·) <$> rewriteEq n o
       | .INTS_DIVISION | .INTS_MODULUS => (.REWRITE_AGAIN_FULL, ·) <$> rewriteIntsDivMod n
       | .INTS_DIVISION_TOTAL | .INTS_MODULUS_TOTAL =>
         (.REWRITE_AGAIN_FULL, ·) <$> rewriteIntsDivModTotal n
@@ -443,9 +445,10 @@ end Telos.Arith
 
 namespace Telos
 
-/-- The arithmetic rewriter. -/
-def TheoryRewriter.arith : TheoryRewriter where
+/-- The arithmetic rewriter, with the monomials of sums in the order `o`
+(cvc5's node ids, `NodeOrder`). -/
+def TheoryRewriter.arith (o : NodeOrder := {}) : TheoryRewriter where
   preRewrite := Arith.preRewrite
-  postRewrite := Arith.postRewrite
+  postRewrite := fun n => Arith.postRewrite n o
 
 end Telos

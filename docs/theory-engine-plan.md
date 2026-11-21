@@ -811,7 +811,31 @@ cvc5 makes some choices by node id, which telos cannot reproduce:
 - `TheoryEngine::getExplanation` collects the explanation in a
   `std::set<TNode>`;
 - the rewriter orients equalities by id (telos approximates "newer on the
-  right" by the order in which the equality engine met the terms).
+  right" by the order in which the equality engine met the terms);
+- the arithmetic rewriter orders the monomials of a sum by id
+  (`LeafNodeComparator`), which also decides the sign of a normalized
+  inequality (its leading coefficient) and the variable an equality is solved
+  for.
+
+**`NodeOrder`** (`Telos/Core/Node/NodeOrder.lean`) approximates the ids as
+cvc5's parser creates them: the declared constants in order of declaration,
+then the subterms of the input assertions in order of first occurrence
+(children first, left to right); a term created later comes after them, and
+two such terms are in the structural order (`Node.lt`). Built once from the
+input (`Frontend.inputOrder`), it is passed to the rewriter (the arithmetic
+rewriter's `monoLt`), so to every preprocessing pass that rewrites, to the
+engine's rewriting of lemmas and atoms, and to the linear solver
+(`normalizedVariablePart`, the Diophantine solver's order). It is untrusted:
+`StaticProc.arithNorm` carries the order, and its proof
+(`arithNorm_provesEq`) holds for every order, since sorting is a
+permutation. The certificates' own rewrites (`EqProof.rw`) keep the
+structural order: they relate two terms through a common normal form. It
+costs one pass over the input and a hash lookup per comparison (within the
+noise on 2,500-assertion inputs). On the fuzz sets it raised the agreement of
+the events from 166 to 196 of 200 (uflra), 164 to 195 and 165 to 190 (uflia,
+seeds 1 and 9), 186 to 196 and 184 to 189 (dtlia), and left uf, dt, lra and
+lia unchanged (their sums have only declared constants, whose order of
+declaration is also their structural order there).
 
 `cvc5-deterministic-order.patch` makes the first two follow the order of the
 equality engine and of discovery. It is no slower: a vector instead of a
@@ -1162,8 +1186,7 @@ core is about 13k lines of C++: `theory_arith_private.cpp` (6k),
    class has the value of a numeral or term in it, or a fresh one). cvc5's
    node ids for the declared constants are their order of declaration
    (`declOrder`). On QF_UFLRA (`fuzz-solve.py --theory uflra`) every answer
-   agrees with cvc5's, and the events of 80% of the benchmarks; the rest
-   differ in the order of the monomials of applications (cvc5's node ids).
+   agrees with cvc5's, and the events of 98% of the benchmarks.
    There is no congruence manager: with the central equality engine cvc5
    turns on `arith-eq-solver` (`set_defaults.cpp`, also in safe mode, since
    cvc5 sets it, not the user), which disables it (`d_cmEnabled`).
@@ -1184,11 +1207,13 @@ core is about 13k lines of C++: `theory_arith_private.cpp` (6k),
    class with selector terms but no constructor term is a constructor
    applied to them (`getInstCons`), and integer and real fields count as
    infinite for fresh datatype values. QF_UFLIA (`--theory uflia`) and
-   datatypes with integer fields (`--theory dtlia`): every answer agrees with
-   cvc5's, and the events of 65% and 80–85% of the benchmarks; the rest
-   differ in cvc5's node ids (the order of monomials, the orientation of
-   equalities between applications or with constants that preprocessing
-   made). cvc5's record of the literals given to the theories
+   datatypes with integer fields (`--theory dtlia`): with cvc5's node ids
+   approximated (`NodeOrder`, "Node order" in Stage 5), the events of 95–98%
+   of the benchmarks agree; the rest are the order of unate lemmas' disjuncts,
+   explanations, and the orientation of equalities with constants that
+   preprocessing made. Two dtlia benchmarks (seed 1, s137; seed 9, size 8,
+   s85) answer `unknown` because the combined model does not satisfy the
+   input (with or without `NodeOrder`). cvc5's record of the literals given to the theories
    (`markPropagation`) is keyed by the literal; telos also takes the flipped
    equality as given, while the orientation is approximate.
 5. Later: nonlinear arithmetic (`nl-ext`).

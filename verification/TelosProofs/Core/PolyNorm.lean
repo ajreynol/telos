@@ -1751,8 +1751,8 @@ theorem V_sumNode {real : Bool} {ts : List Node} (h : NS (sumNode real ts).toEo)
 theorem embedT_perm {p q : Poly} (h : List.Perm p q) : embedT p = embedT q := by
   unfold embedT; exact (h.map _).sum_eq
 
-theorem V_toNodeAt {real : Bool} {p : Poly} (hc : real = true ∨ p.all (·.2.isInt) = true)
-    (h : NS (p.toNodeAt real).toEo) : V (p.toNodeAt real).toEo = embedT p := by
+theorem V_toNodeAt {real : Bool} {p : Poly} {o : NodeOrder} (hc : real = true ∨ p.all (·.2.isInt) = true)
+    (h : NS (p.toNodeAt real o).toEo) : V (p.toNodeAt real o).toEo = embedT p := by
   unfold Poly.toNodeAt at *
   obtain ⟨hns, e⟩ := V_sumNode h
   rw [e, ← embedT_perm (List.mergeSort_perm p _), embedT, List.map_map]
@@ -1766,8 +1766,8 @@ theorem V_toNodeAt {real : Bool} {p : Poly} (hc : real = true ∨ p.all (·.2.is
     · exact Or.inr (by simpa using List.all_eq_true.1 hc t hmem)
   exact V_termNode hc' (hns _ (List.mem_map_of_mem ht))
 
-theorem V_toNode {real : Bool} {p : Poly} (hc : real = true ∨ p.all (·.2.isInt) = true)
-    (h : NS (p.toNode real).toEo) : V (p.toNode real).toEo = embedT p := by
+theorem V_toNode {real : Bool} {p : Poly} {o : NodeOrder} (hc : real = true ∨ p.all (·.2.isInt) = true)
+    (h : NS (p.toNode real o).toEo) : V (p.toNode real o).toEo = embedT p := by
   unfold Poly.toNode at *
   split
   · rename_i hcond; simp only [hcond, Bool.false_eq_true, ↓reduceIte] at h
@@ -1799,20 +1799,20 @@ theorem eq_types {T U : SmtType} (h : __smtx_typeof_eq T U = .Bool) : T = U := b
 /-- **telos's arithmetic normal form is accepted by `arith_poly_norm`**: under
 `ArithNormOk`, `n` and `arithNorm n` have the same Logos normal form, which is
 not stuck. -/
-theorem arithNorm_get_norm {n : Node} (h : ArithNormOk n (polyOf n) (arithNorm n)) :
+theorem arithNorm_get_norm {n : Node} {o : NodeOrder} (h : ArithNormOk n (polyOf n) (arithNorm n o)) :
     __get_arith_poly_norm n.toEo ≠ .Stuck ∧
-      __get_arith_poly_norm n.toEo = __get_arith_poly_norm (arithNorm n).toEo := by
+      __get_arith_poly_norm n.toEo = __get_arith_poly_norm (arithNorm n o).toEo := by
   obtain ⟨hty, heq, hint⟩ := h
   have hn : ArithTy (smtty n.toEo) := hty
-  have hmn : smtty n.toEo = smtty (arithNorm n).toEo := by
-    have : smtty (eqFormula n (arithNorm n)) = .Bool := heq
+  have hmn : smtty n.toEo = smtty (arithNorm n o).toEo := by
+    have : smtty (eqFormula n (arithNorm n o)) = .Bool := heq
     rw [eqFormula, eoApp2, smtty_eq] at this
     exact eq_types this
-  have hm : ArithTy (smtty (arithNorm n).toEo) := hmn ▸ hn
+  have hm : ArithTy (smtty (arithNorm n o).toEo) := hmn ▸ hn
   have ns_n := get_norm_ne_stuck _ hn
   have ns_m := get_norm_ne_stuck _ hm
   refine ⟨ns_n, get_norm_eq_of_polyVal_eq ns_n ns_m ?_⟩
-  show V n.toEo = V (arithNorm n).toEo
+  show V n.toEo = V (arithNorm n o).toEo
   rw [(polyOf_val n ns_n).2]
   exact (V_toNode hint ns_m).symm
 
@@ -1822,36 +1822,36 @@ namespace Telos.PolyNorm
 open Telos.TermOrder Smtm Telos.Arith Telos.Node
 
 /-- **The static step is a CPC step**: under `ArithNormOk`, Logos's checker,
-run on `[arith_poly_norm (= n (arithNorm n))]` from the empty state, proves
-`(= n (arithNorm n))`. The Eunoia type of the equation is assumed here
+run on `[arith_poly_norm (= n (arithNorm n o))]` from the empty state, proves
+`(= n (arithNorm n o))`. The Eunoia type of the equation is assumed here
 (`hty`) and derived from its SMT type in `ArithNorm.lean`. -/
-theorem arithNorm_provesEq_of_typeof {n : Node} (h : ArithNormOk n (polyOf n) (arithNorm n))
-    (hty : __eo_typeof (eqFormula n (arithNorm n)) = .Bool) :
-    ProvesEq (StaticProc.arithNormCmds n) n (arithNorm n) := by
+theorem arithNorm_provesEq_of_typeof {n : Node} {o : NodeOrder} (h : ArithNormOk n (polyOf n) (arithNorm n o))
+    (hty : __eo_typeof (eqFormula n (arithNorm n o)) = .Bool) :
+    ProvesEq (StaticProc.arithNormCmds n o) n (arithNorm n o) := by
   obtain ⟨hns, hgn⟩ := arithNorm_get_norm h
-  have hF : __eo_prog_arith_poly_norm (eqFormula n (arithNorm n)) = eqFormula n (arithNorm n) := by
+  have hF : __eo_prog_arith_poly_norm (eqFormula n (arithNorm n o)) = eqFormula n (arithNorm n o) := by
     simp only [eqFormula, eoApp2, __eo_prog_arith_poly_norm, __eo_requires, native_ite, native_teq,
       native_not, hgn]
     simp [← hgn, hns]
-  have hbool : __eo_is_bool_type (eqFormula n (arithNorm n)) = .Boolean true := by
-    have hne : eqFormula n (arithNorm n) ≠ .Stuck := by simp [eqFormula, eoApp2]
+  have hbool : __eo_is_bool_type (eqFormula n (arithNorm n o)) = .Boolean true := by
+    have hne : eqFormula n (arithNorm n o) ≠ .Stuck := by simp [eqFormula, eoApp2]
     unfold __eo_is_bool_type
     split
     · next he => exact absurd he hne
     · rw [hty]; simp [__eo_eq, native_teq]
-  have hrun : runFromEmpty (StaticProc.arithNormCmds n) =
-      CState.cons (CStateObj.proven (eqFormula n (arithNorm n))) CState.nil := by
+  have hrun : runFromEmpty (StaticProc.arithNormCmds n o) =
+      CState.cons (CStateObj.proven (eqFormula n (arithNorm n o))) CState.nil := by
     show __eo_invoke_cmd_list CState.nil
-      (.cons (.step .arith_poly_norm (.cons (eqFormula n (arithNorm n)) .nil) .nil) .nil) = _
+      (.cons (.step .arith_poly_norm (.cons (eqFormula n (arithNorm n o)) .nil) .nil) .nil) = _
     rw [__eo_invoke_cmd_list, __eo_invoke_cmd_list, __eo_invoke_cmd] <;> try simp
-    rw [show __eo_cmd_step_proven CState.nil CRule.arith_poly_norm (.cons (eqFormula n (arithNorm n)) .nil) .nil =
-      __eo_prog_arith_poly_norm (eqFormula n (arithNorm n)) from rfl, hF]
+    rw [show __eo_cmd_step_proven CState.nil CRule.arith_poly_norm (.cons (eqFormula n (arithNorm n o)) .nil) .nil =
+      __eo_prog_arith_poly_norm (eqFormula n (arithNorm n o)) from rfl, hF]
     rw [__eo_push_proven, hbool, __eo_push_proven_check]
   refine ⟨?_, ?_, ?_⟩
   · refine CmdListTranslationOk.cons _ _ ?_ CmdListTranslationOk.nil
-    show cArgListTranslationOk (.cons (eqFormula n (arithNorm n)) .nil)
+    show cArgListTranslationOk (.cons (eqFormula n (arithNorm n o)) .nil)
     refine ⟨?_, trivial⟩
-    show __smtx_typeof (__eo_to_smt (eqFormula n (arithNorm n))) ≠ .None
+    show __smtx_typeof (__eo_to_smt (eqFormula n (arithNorm n o))) ≠ .None
     rw [h.2.1]; simp
   · rw [hrun]; rfl
   · rw [hrun]; rfl
