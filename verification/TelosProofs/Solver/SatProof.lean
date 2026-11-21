@@ -527,12 +527,41 @@ theorem push_true {N : SmtModel} {A : Array Node} (hA : ∀ a ∈ A.toList, True
   · exact hA a ha
   · exact hl
 
+omit [LogosFacts] in
+/-- The parts of a negated conjunction. -/
+theorem notAndParts_spec {l : Node} {cs : Array Node} (h : notAndParts l = some cs) :
+    ∃ cs0 : Array Node, ∃ h1 : cs0.size = 1, l = .app (.kind .NOT) cs0 ∧
+      cs0[0] = .app (.kind .AND) cs ∧ 2 ≤ cs.size := by
+  unfold notAndParts at h
+  split at h
+  · rename_i k cs0
+    split at h
+    · rename_i hk
+      have hk : k = .NOT := by simpa using hk
+      subst hk
+      split at h
+      · rename_i h1
+        split at h
+        · rename_i k' ds he
+          split at h
+          · rename_i hk'
+            simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at hk'
+            obtain ⟨rfl, h2⟩ := hk'
+            simp only [Option.some.injEq] at h
+            subst h
+            exact ⟨cs0, h1, rfl, he, h2⟩
+          · simp at h
+        · simp at h
+      · simp at h
+    · simp at h
+  · simp at h
+
 /-- **A certificate of linear arithmetic refutes its literals**: Farkas
-combinations (`checkFarkas_sound`), splits of disequalities (`split_sem`), and
-cuts. -/
+combinations (`checkFarkas_sound`), splits of disequalities (`split_sem`),
+cuts, and cases on a negated conjunction. -/
 theorem linCert_sound {N : SmtModel} (hN : model_wf N) : ∀ (p : LinCert) (A : Array Node),
     p.check A = true → (∀ a ∈ A.toList, TrueIn N a.toEo) → False
-  | .farkas cs, A, h, hA => LinCertProof.checkFarkas_sound h N hN hA
+  | .farkas cs, A, h, hA => LinCertProof.checkFarkas_sound (by simpa [LinCert.check] using h) N hN hA
   | .split l lt gt, A, h, hA => by
     simp only [LinCert.check] at h
     split at h
@@ -553,6 +582,53 @@ theorem linCert_sound {N : SmtModel} (hN : model_wf N) : ∀ (p : LinCert) (A : 
     rcases lit_or_negate hbv with h1 | h1
     · exact linCert_sound hN pos _ hpos (push_true hA h1)
     · exact linCert_sound hN neg _ hneg (push_true hA h1)
+  | .cases l subs, A, h, hA => by
+    simp only [LinCert.check] at h
+    split at h
+    · rename_i cs hcs
+      simp only [Bool.and_eq_true] at h
+      obtain ⟨⟨hm, hall⟩, hsub⟩ := h
+      have hl := hA l (Array.mem_toList_iff.2 (Array.contains_iff_mem.1 hm))
+      obtain ⟨cs0, h1, rfl, he, h2⟩ := notAndParts_spec hcs
+      -- each conjunct has an entry
+      have hentry : ∀ c ∈ cs.toList, ∃ e ∈ subs.toList, e.1 = c := by
+        intro c hc
+        have := (Array.all_eq_true_iff_forall_mem.1 hall) c (Array.mem_toList_iff.1 hc)
+        obtain ⟨e, he, hec⟩ := Array.any_eq_true'.1 this
+        exact ⟨e, Array.mem_toList_iff.2 he, by simpa using hec⟩
+      have hsub' : ∀ e ∈ subs.toList, __smtx_typeof e.1.toSmt = SmtType.Bool ∧ e.2.check (A.push (negate e.1)) = true := by
+        intro e he
+        have := (Array.all_eq_true_iff_forall_mem.1 hsub) ⟨e, Array.mem_toList_iff.1 he⟩ (by simp)
+        simpa using this
+      have hbool : ∀ c ∈ cs.toList, BoolVal N c := by
+        intro c hc
+        obtain ⟨e, he, rfl⟩ := hentry c hc
+        exact boolVal_of_isBool hN (by unfold isBool; simpa using (hsub' e he).1)
+      obtain ⟨hband, hiff⟩ := and_sem hbool h2
+      -- the conjunction is false
+      have hfalse : ¬ TrueIn N (Node.app (.kind .AND) cs).toEo := by
+        intro ht
+        have := (LinCertProof.not_true_iff h1).1 hl
+        rw [he] at this
+        unfold TrueIn at ht
+        rw [show __eo_to_smt (Node.app (.kind .AND) cs).toEo = (Node.app (.kind .AND) cs).toSmt from rfl, this] at ht
+        simp at ht
+      have : ∃ c ∈ cs.toList, ¬ TrueIn N c.toEo := by
+        by_contra hc
+        push Not at hc
+        exact hfalse (hiff.2 hc)
+      obtain ⟨c, hc, hcf⟩ := this
+      obtain ⟨e, hem, rfl⟩ := hentry c hc
+      have hneg := (negate_sem (hbool e.1 hc)).2.2 hcf
+      have := Array.sizeOf_lt_of_mem (Array.mem_toList_iff.1 hem)
+      exact linCert_sound hN e.2 _ (hsub' e hem).2 (push_true hA hneg)
+    · cases h
+termination_by p => sizeOf p
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (rcases e with ⟨c', p'⟩; simp at this ⊢; omega)
 
 /-- **A clause of linear arithmetic is true**: it has the negations of literals
 that its certificate refutes. -/

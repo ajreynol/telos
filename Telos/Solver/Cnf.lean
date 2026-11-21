@@ -41,6 +41,9 @@ inductive SatOp where
   | newVar (isTheoryAtom : Bool)
   /-- A clause, removable or not. -/
   | clause (lits : Array Lit) (removable : Bool) (tag : ClauseTag)
+  /-- Prefer a phase for the variable of the literal, its sign
+  (`preferPhase`: MiniSat's `freezePolarity`). -/
+  | phase (lit : Lit)
   deriving Inhabited
 
 structure State where
@@ -294,6 +297,25 @@ partial def convertAndAssertRec (node : Node) (negated : Bool) : m Unit := do
 def convertAndAssert (node : Node) (removable : Bool) (negated : Bool := false) (src : Nat := 0) : m Unit := do
   modifyThe State fun s => { s with removable, src }
   convertAndAssertRec H node negated
+
+/-- `ensureLiteral`: a node gets a literal, unless it has one; a connective is
+translated (its definition clauses are not removable), an atom announced. -/
+def ensureLiteral (n : Node) : m Unit := do
+  let n := match n with
+    | .app (.kind .NOT) #[a] => a
+    | _ => n
+  if ← hasLiteral n then return
+  if isConnective n then
+    modifyThe State fun s => { s with removable := false }
+    let _ ← toCNF H n false
+  else
+    let _ ← convertAtom H n
+
+/-- `PropEngine::preferPhase`: the SAT solver is to prefer `n` with the phase
+`pol` (it has a literal). -/
+def preferPhase (n : Node) (pol : Bool) : m Unit := do
+  if let some l := getLiteral? (← cnf) n then
+    modifyThe State fun s => { s with ops := s.ops.push (.phase (if pol then l else l.neg)) }
 
 end
 

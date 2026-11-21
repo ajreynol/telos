@@ -24,8 +24,13 @@ the fact, from the solver's proofs of its constraints, which are cvc5's
 - `cut l pos neg`: `l` is true or false, so `pos` refutes `A` with `l`, and
   `neg` refutes it with the negation of `l`. Cuts introduce the constraints
   that the solver derived.
+- `cases l subs`: `l` is a negated conjunction `(not (and c₁ … cₙ))` of `A`, so
+  some `cᵢ` is false: each `cᵢ` has an entry `(cᵢ, p)` of `subs`, where `p`
+  refutes `A` with the negation of `cᵢ`.
 
-The sides of the literals are real terms; integers are not supported yet.
+The sides of a literal are real terms, or integer terms, whose difference is
+made real (`to_real`): an integer bound `d > 0` is `d - 1 ≥ 0`, which is how
+integer reasoning (tightening, branches, cuts) is certified.
 -/
 
 open Eo Smtm SmtEval
@@ -84,19 +89,35 @@ def diseqParts : Node → Option (Node × Node)
 /-- A term of type `Real`. -/
 def isRealTerm (t : Node) : Bool := __smtx_typeof t.toSmt == SmtType.Real
 
+/-- A term of type `Int`. -/
+def isIntTerm (t : Node) : Bool := __smtx_typeof t.toSmt == SmtType.Int
+
 /-- A rational constant. -/
 def ratNode (q : Rat) : Node := .const (.rational q)
 
 /-- The term `(* q (- a b))`. -/
 def linTerm (q : Rat) (a b : Node) : Node := Node.mkNode .MULT #[ratNode q, Node.mkNode .SUB #[a, b]]
 
+/-- The real difference of integers `(to_real (- a b))`, less `1` if `strict`
+(an integer `d > 0` is `≥ 1`). -/
+def intDiff (a b : Node) (strict : Bool) : Node :=
+  let d := Node.mkNode .TO_REAL #[Node.mkNode .SUB #[a, b]]
+  if strict then Node.mkNode .SUB #[d, ratNode 1] else d
+
+/-- The term `(* q d)` of an integer difference. -/
+def intLinTerm (q : Rat) (a b : Node) (strict : Bool) : Node :=
+  Node.mkNode .MULT #[ratNode q, intDiff a b strict]
+
 /-- An entry of a Farkas combination: its term, and whether its bound is strict
 (with a positive coefficient). -/
 def farkasEntry (A : Array Node) (e : Node × Rat) : Option (Node × Bool) :=
   match linParts e.1 with
   | some (a, b, r) =>
-    if A.contains e.1 && isRealTerm a && isRealTerm b && (r == .eq || decide (0 ≤ e.2)) then
-      some (linTerm e.2 a b, r == .gt && decide (0 < e.2))
+    if A.contains e.1 && (r == .eq || decide (0 ≤ e.2)) then
+      if isRealTerm a && isRealTerm b then some (linTerm e.2 a b, r == .gt && decide (0 < e.2))
+      -- integers: a strict bound is strengthened, and is not strict any more
+      else if isIntTerm a && isIntTerm b then some (intLinTerm e.2 a b (r == .gt), false)
+      else none
     else none
   | none => none
 
@@ -119,7 +140,20 @@ inductive LinCert where
   | farkas (cs : Array (Node × Rat))
   | split (l : Node) (lt gt : LinCert)
   | cut (l : Node) (pos neg : LinCert)
+  | cases (l : Node) (subs : Array (Node × LinCert))
   deriving Inhabited
+
+/-- The conjuncts of a negated conjunction `(not (and c₁ … cₙ))`. -/
+def notAndParts : Node → Option (Array Node)
+  | .app (.kind k) cs =>
+    if k == .NOT then
+      if h : cs.size = 1 then
+        match cs[0] with
+        | .app (.kind k') ds => if k' == .AND && 2 ≤ ds.size then some ds else none
+        | _ => none
+      else none
+    else none
+  | _ => none
 
 /-- **The certificate refutes `A`.** -/
 def LinCert.check (A : Array Node) : LinCert → Bool
@@ -132,11 +166,18 @@ def LinCert.check (A : Array Node) : LinCert → Bool
     | none => false
   | .cut l pos neg =>
     __smtx_typeof l.toSmt == SmtType.Bool && pos.check (A.push l) && neg.check (A.push (negate l))
-
-/-- The number of Farkas combinations (for statistics). -/
-def LinCert.size : LinCert → Nat
-  | .farkas _ => 1
-  | .split _ a b => a.size + b.size
-  | .cut _ a b => a.size + b.size
+  | .cases l subs =>
+    match notAndParts l with
+    | some cs =>
+      A.contains l && (cs.all fun c => subs.any fun e => decide (e.1 = c)) &&
+        subs.attach.all fun ⟨(c, p), _⟩ =>
+          __smtx_typeof c.toSmt == SmtType.Bool && p.check (A.push (negate c))
+    | none => false
+termination_by p => sizeOf p
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := Array.sizeOf_lt_of_mem ‹_›; simp_all; omega)
 
 end Telos.Solver

@@ -322,6 +322,11 @@ def cancelUntil (lvl : Nat) : m Unit := do
                     trail := tr.take lim, trailLim := s.trailLim.take lvl }
   TheoryProxy.notifyBacktrack
 
+/-- `freezePolarity`: the decision heuristic always uses the literal's sign
+for its variable (`MinisatSatSolver::preferPhase`). -/
+def freezePolarity (s : Solver) (l : Lit) : Solver :=
+  { s with polarity := s.polarity.set! l.var ((if l.sign then 1 else 0) ||| 2) }
+
 /-- `varBumpActivity`. -/
 def varBumpActivity (s : Solver) (v : Var) : Solver := Id.run do
   let act := s.activity

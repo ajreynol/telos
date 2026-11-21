@@ -45,6 +45,8 @@ structure Logic where
   reals : Bool := false
   /-- Linear (or difference) arithmetic. -/
   linear : Bool := true
+  /-- Difference logic (`IDL`, `RDL`, `IRDL`). -/
+  difference : Bool := false
   bv : Bool := false
   arrays : Bool := false
   datatypes : Bool := false
@@ -96,7 +98,8 @@ private partial def parseTheories (s : String) (l : Logic) (arithSeen : Bool) :
     let rest := dropS s n.length
     -- `NRAT`, `NIRAT`: transcendentals, outside the scope
     let (rest, o) := if !lin && rest.startsWith "T" then (dropS rest 1, 1) else (rest, 0)
-    let l' : Logic := { l with arith := true, integers := i, reals := r, linear := lin }
+    let l' : Logic := { l with arith := true, integers := i, reals := r, linear := lin,
+                               difference := n.endsWith "DL" }
     parseTheories rest { l' with others := l.others + o } true
   | none => throw s!"cannot parse the logic {s}"
 

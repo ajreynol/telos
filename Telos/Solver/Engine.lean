@@ -78,6 +78,12 @@ def enabledTheories (logic : String) : Except String (List Theory) := do
     | .THEORY_QUANTIFIERS => l.quantified
   return Theory.all.filter on
 
+/-- The linear solver's options of a logic (`SetDefaults`). -/
+def arithOptionsOf (logic : String) : Arith.Options :=
+  match Preprocess.Logic.parse logic with
+  | .ok l => let l := l.widen; Arith.Options.ofLogic l.pureArith l.quantified l.linear l.integers l.difference
+  | .error _ => Arith.Options.ofLogic false true false true false
+
 /-- The configuration of the engine. -/
 structure Config where
   /-- The enabled theories, in cvc5's order. -/
@@ -105,6 +111,8 @@ structure Config where
   their SAT literals from the CNF stream, which preregisters them; lemmas and
   conflicts become clauses. -/
   satMode : Bool := false
+  /-- The linear solver's options that the logic decides. -/
+  arith : Arith.Options := {}
 
 /-- A Boolean term skolem (`Env::isBooleanTermSkolem`): the purification
 skolem of a Boolean term in a term position, which term formula removal
@@ -312,6 +320,8 @@ structure State where
   satLemmaQueue : Array (Node × Bool × Option Pending × Option EqProof) := #[]
   /-- The sources of the formulas given to the CNF stream. -/
   satSources : Array SatSource := #[]
+  /-- The outputs of the linear solver left to `flushArithDeferred`. -/
+  arithDeferred : Array Arith.Output := #[]
   /-- `TheoryEngine::d_outputChannelUsed` and `d_lemmasAdded`, since the last
   check. -/
   outputUsed : Bool := false
@@ -460,37 +470,50 @@ def withEE (x : EE.EEM α) : EngineM α := do
   processNotes notes
   return a
 
-/-- Run an operation of the arithmetic solver, and send its outputs: its
-lemmas (`TheoryInferenceManager::trustedLemma`) go to the CNF stream, as the
-other theories' do. -/
+/-- What the engine does with an output of the linear solver, but for the
+literals it ensures (`flushArithDeferred`). -/
+def arithOutput (o : Arith.Output) : EngineM Unit := do
+  match o with
+  | .lemma id lem cert =>
+    emit (.lemma (← level) .THEORY_ARITH id lem)
+    if (← read).satMode then
+      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lem, false, cert.map .arith, none),
+                               outputUsed := true, lemmasAdded := true }
+    else
+      modify fun s => { s with lemmaSent := true, lemmaQueue := s.lemmaQueue.push lem, lemmasAdded := true }
+  | .conflict id exp cert =>
+    -- `TheoryEngine::conflict`: each conflict is printed and is a clause
+    emit (.conflict (← level) .THEORY_ARITH id exp)
+    if (← read).satMode then
+      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (exp, true, cert.map .arith, none),
+                               outputUsed := true, lemmasAdded := true }
+    let why := s!"a conflict of THEORY_ARITH, which is not certified yet"
+    modify fun s => { s with inConflict := true, theoryConflict := true, cert := .error why }
+  | .propagate lit => propagate .THEORY_ARITH lit
+  | .scopePop => emit (.pop (← level))
+  | .phase .. | .ensureLiteral _ => pure ()  -- (`flushArithDeferred`)
+
+/-- Run an operation of the linear solver, and act on its outputs in order:
+its lemmas (`TheoryInferenceManager::trustedLemma`) go to the CNF stream, as
+the other theories' do. From a literal it
+ensures (`Valuation::ensureLiteral`, which needs the CNF stream) on, they are
+left to `flushArithDeferred`, which the caller (`theoryCheck`) runs next. -/
 def withArith (x : Arith.ArithM α) : EngineM α := do
   let st ← modifyGet fun s => (s.arith, { s with arith := {} })
+  let st := { st with opts := (← read).arith }
   let (a, st) := x.run st
   let outs := st.outputs
   modify fun s => { s with arith := { st with outputs := #[] } }
   for o in outs do
-    match o with
-    | .lemma id lem cert =>
-      emit (.lemma (← level) .THEORY_ARITH id lem)
-      if (← read).satMode then
-        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lem, false, cert.map .arith, none),
-                                 outputUsed := true, lemmasAdded := true }
-      else
-        modify fun s => { s with lemmaSent := true, lemmaQueue := s.lemmaQueue.push lem, lemmasAdded := true }
-    | .conflict id exp cert =>
-      -- `TheoryEngine::conflict`: each conflict is printed and is a clause
-      emit (.conflict (← level) .THEORY_ARITH id exp)
-      if (← read).satMode then
-        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (exp, true, cert.map .arith, none),
-                                 outputUsed := true, lemmasAdded := true }
-      let why := s!"a conflict of THEORY_ARITH, which is not certified yet"
-      modify fun s => { s with inConflict := true, theoryConflict := true, cert := .error why }
-    | .propagate lit => propagate .THEORY_ARITH lit
+    let deferring := !(← get).arithDeferred.isEmpty || match o with
+      | .ensureLiteral _ => true
+      | _ => false
+    if deferring then modify fun s => { s with arithDeferred := s.arithDeferred.push o }
+    else arithOutput o
   if let some why := st.unsupported then
     modify fun s => { s with satError := s.satError <|> some s!"arithmetic: {why}" }
   return a
 
-/-- `Theory::preRegisterTerm` of theory `T`. -/
 def theoryPreRegister (T : Theory) (t : Node) : EngineM Unit := do
   if T == .THEORY_ARITH && (← read).arithSolver then withArith (Arith.preRegisterTerm t)
   if T == .THEORY_UF && (← read).ufSolver then withEE (UF.preRegisterTerm t)
@@ -919,6 +942,20 @@ partial def orientEqs (ids : Std.HashMap Key Nat) (n : Node) : Node :=
     if Cnf.isConnective n || k == .NOT then .app (.kind k) (cs.map (orientEqs ids)) else n
   | _ => n
 
+/-- The outputs of the linear solver from a literal it ensures on: the
+literal gets its SAT literal (the CNF stream preregisters its atoms), a phase
+is preferred (`OutputChannel::preferPhase`), and the rest as usual. -/
+def flushArithDeferred : EngineM Unit := do
+  let outs ← modifyGet fun s => (s.arithDeferred, { s with arithDeferred := #[] })
+  let c ← read
+  for o in outs do
+    match o with
+    | .ensureLiteral n => if c.satMode then withCnf (Cnf.ensureLiteral (cnfHost c) n)
+    | .phase n pol =>
+      emit (.phase (← level) n pol)
+      if c.satMode then withCnf (Cnf.preferPhase n pol)
+    | o => arithOutput o
+
 /-- A new source of clauses, by index. -/
 def newSatSource (src : SatSource) : EngineM Nat :=
   modifyGet fun s => (s.satSources.size, { s with satSources := s.satSources.push src })
@@ -1042,6 +1079,7 @@ def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
       modify fun s => { s with arithHead := s.arithHead + 1 }
       withArith (Arith.assertFact fact)
     let _ ← withArith (Arith.postCheck (e == .full))
+    flushArithDeferred
   if T == .THEORY_UF && (← read).ufSolver then
     repeat
       let s ← get

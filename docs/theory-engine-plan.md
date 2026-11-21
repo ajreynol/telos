@@ -1083,7 +1083,7 @@ Two Lean pitfalls caused bugs here, worth knowing:
   the statement;
 - `return` inside a `match` arm's `do` returns from the enclosing function.
 
-## Stage 7: linear arithmetic (in progress: milestones 1 and 2 done)
+## Stage 7: linear arithmetic (in progress: milestones 1, 2 and 3 done)
 
 ### Scope
 
@@ -1282,6 +1282,54 @@ yet: they come with the logics that combine arithmetic with other theories
 (milestone 4). The certificates of propagations are, by rows longer than
 `arithPropAsLemmaLength`, but those are rare in the random benchmarks.
 
+**QF_LIA** (milestone 3). The options that the logic decides are cvc5's
+(`Arith.Options.ofLogic`, from `SetDefaults`): for QF_LIA, 5 heuristic pivots;
+200 variable-order pivots for pure quantifier-free arithmetic;
+`arithRewriteEq`. At full effort, when an integer input variable has a value
+that is not integral (`hasIntegerModel`, round robin from
+`d_nextIntegerCheckVar`):
+- the **Diophantine solver** (`Telos/Solver/Theory/Arith/Dio.lean`, a port of
+  `dio_solver.cpp` and its `DioLinearForm`s, with GMP's `mpz_gcdext` choice of
+  Bézout coefficients, which the cuts depend on) gets the equations of the
+  integer variables whose bounds became equal (`callDioSolver`), and a
+  conflict is a black-box conflict (`ARITH_BLACK_BOX`); then, if there was
+  work since the last cut and the round robin of resources allows
+  (`getDioCuttingResource`: 10 turns of cuts, 3 of branches), the equations
+  of the variables at a bound are added in a speculative scope
+  (`dioCutting`), whose pop cvc5 prints, and a plane is a cut
+  (`ARITH_DIO_CUT`);
+- otherwise **branch and bound** (`branchIntegerVariable` with `--arith-brab`):
+  `(or (= x n) (or (<= x (- n 1)) (>= x (+ n 1))))` for the nearest integer
+  `n`, its equality preprocessed (`ppRewriteEq`) and given a SAT literal at
+  once (`ensureLiteral`, which preregisters its atoms) with the preferred phase
+  `true` (`preferPhase`, MiniSat's `freezePolarity`, and the `phase` event).
+  The arithmetic's lemmas go through the inference manager's cache of sent
+  lemmas (`cacheLemma`), so a branch already sent moves the round robin on.
+
+The engine runs the outputs from an ensured literal on after the check
+(`flushArithDeferred`), since the CNF stream is defined after the theories.
+
+Their certificates: `LinCert` reads an integer literal's difference through
+`to_real`, and strengthens a strict integer bound `d > 0` to `d - 1 ≥ 0`
+(which certifies tightening, `intTighten`, and the branches); a branch's
+equality is a conjunction, refuted by cases (`LinCert.cases`); a conflict of
+the Diophantine solver combines the input equations with the solver's proof
+coefficients into `g Q + k = 0`, with `g` not dividing `k`, and is refuted by
+a cut on `Q ≥ ⌈-k/g⌉` (`dioConflictCert`).
+
+Results (`--theory lia --sat`, 300 benchmarks each): the events and the
+answer agree on 264 of 300 conjunctions, 240 and 258 of larger ones, 175 and
+152 with clauses; with `--cvc5-pp`, 245 and 244, and 198 with clauses. Every
+answer agrees (over 500 certified `unsat`s, the rest certified `sat`s). The
+differences are the order of the disjuncts of unate lemmas, which is more
+frequent than in QF_LRA: an integer atom is normalized (tightened) into a new
+node, whose id cvc5 gives in the order its preprocessing makes them (an
+equality's `(>= s k)` before its `(>= s (+ k 1))`, say), which telos's order
+of first occurrence does not follow. One benchmark of branch and bound that
+does not converge in cvc5 either (655,000 events in 29 seconds) times out.
+`test/solve/sat-lia-*.smt2` cover branches, cuts and the Diophantine
+solver's conflicts.
+
 Not yet:
 - at a conflict at decision level 0, cvc5's MiniSat finalizes its proof
   (`SatProofManager::finalizeProof`), which explains the theory propagations
@@ -1289,10 +1337,12 @@ Not yet:
   fact, silently (`explainLevelZero`). An arithmetic propagation of a long
   row that a level-0 refutation uses shows the difference;
 - the congruence manager (equalities of variables, arithmetic's own equality
-  engine), the random skipping of long rows in propagation, integers
-  (milestone 3), sharing (milestone 4);
-- `arithHeuristicPivots` and `arithStandardCheckVarOrderPivots` are QF_LRA's
-  (0 and 200).
+  engine), the random skipping of long rows in propagation, sharing
+  (milestone 4);
+- the order of unate lemmas' disjuncts where cvc5's node ids differ from the
+  order of first occurrence (above);
+- the Diophantine solver's decomposition lemmas (`exportDioDecompositions` is
+  off) and restarts after `maxCutsInContext` (65535) cuts.
 
 ## Order of work (all stages)
 

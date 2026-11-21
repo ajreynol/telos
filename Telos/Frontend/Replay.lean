@@ -174,7 +174,8 @@ def replayScript (input trace : String) (eeEvents : Bool := false) : Except Stri
     | .pop k => return Input.pop k
     | .explain k t => return Input.explain k (← node t)
   let (events, unverified) := Profile.time "replay" (fun _ => "engine") fun _ =>
-    replay { theories, termBased := opts.termBased, eeEvents } inputs
+    replay { theories, termBased := opts.termBased, eeEvents,
+             arith := arithOptionsOf (sc.logic.getD "ALL") } inputs
   let text := Profile.time "replay" (fun _ => "print events") fun _ =>
     String.join (events.toList.map fun e => (e.map (substSkolems names)).print sc.dtNames ++ "\n")
   return (text, unverified)

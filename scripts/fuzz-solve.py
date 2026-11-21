@@ -265,7 +265,10 @@ def lra_literal(rng):
     return atom if rel == "=" or rng.random() < 0.8 else f"(not {atom})"
 
 
-def lra_benchmark(rng, size, clauses=False):
+LIA_PRELUDE = LRA_PRELUDE.replace("QF_LRA", "QF_LIA").replace("Real", "Int")
+
+
+def lra_benchmark(rng, size, clauses=False, prelude=LRA_PRELUDE):
     out = []
     for _ in range(rng.randint(2, size)):
         if clauses and rng.random() < 0.5:
@@ -273,7 +276,12 @@ def lra_benchmark(rng, size, clauses=False):
             out.append("(or " + " ".join(lra_literal(rng) for _ in range(k)) + ")")
         else:
             out.append(lra_literal(rng))
-    return LRA_PRELUDE + "".join(f"(assert {l})\n" for l in out) + "(check-sat)\n"
+    return prelude + "".join(f"(assert {l})\n" for l in out) + "(check-sat)\n"
+
+
+def lia_benchmark(rng, size, clauses=False):
+    """The literals of `lra_benchmark`, over integers."""
+    return lra_benchmark(rng, size, clauses, LIA_PRELUDE)
 
 
 def bool_formula(rng, lit, depth):
@@ -528,7 +536,7 @@ def main():
     ap.add_argument("--sat", action="store_true",
                     help="solve with telos's SAT solver (--via-sat), cvc5 with --sat-solver=minisat")
     ap.add_argument("--size", type=int, default=6, help="the most literals of a random benchmark")
-    ap.add_argument("--theory", choices=["uf", "dt", "lra"], default="uf", help="the theory of the random benchmarks")
+    ap.add_argument("--theory", choices=["uf", "dt", "lra", "lia"], default="uf", help="the theory of the random benchmarks")
     ap.add_argument("files", nargs="*")
     a = ap.parse_args()
     if not TELOS.exists():
@@ -540,11 +548,12 @@ def main():
         for i in range(a.count):
             p = tmp / f"s{i}.smt2"
             if a.bool:
-                prelude, lit = {"dt": (DT_PRELUDE, dt_literal), "lra": (LRA_PRELUDE, lra_literal)}.get(
+                prelude, lit = {"dt": (DT_PRELUDE, dt_literal), "lra": (LRA_PRELUDE, lra_literal),
+                                  "lia": (LIA_PRELUDE, lra_literal)}.get(
                     a.theory, (UF_PRELUDE, uf_literal))
                 p.write_text(bool_benchmark(prelude, lit, rng, a.size))
             else:
-                gen = {"dt": dt_benchmark, "lra": lra_benchmark}.get(a.theory, uf_benchmark)
+                gen = {"dt": dt_benchmark, "lra": lra_benchmark, "lia": lia_benchmark}.get(a.theory, uf_benchmark)
                 p.write_text(gen(rng, a.size, a.clauses or a.replay))
             files.append(p)
     counts = collections.Counter()
@@ -607,7 +616,7 @@ def main():
             # telos does not port yet: MiniSat's own decisions are compared
             theirs, cerr = run([a.cvc5, *CVC5_OPTS] + (["-o", "theory-events-ee"] if a.ee else []) +
                                (["--sat-solver=minisat"] if a.sat else []) +
-                               (["--decision=internal"] if a.sat and a.theory == "lra" else []), path)
+                               (["--decision=internal"] if a.sat and a.theory in ("lra", "lia") else []), path)
         if theirs is None or "(error" in theirs:
             failures.append((path, cerr or theirs))
             continue

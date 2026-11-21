@@ -150,6 +150,7 @@ def flushOps : PropM Unit := do
   for op in ops do
     match op with
     | .newVar isT => modifyThe Sat.Solver fun s => (Sat.Solver.addVar s true true isT).2
+    | .phase l => modifyThe Sat.Solver (·.freezePolarity l)
     | .clause lits removable tag =>
       modifyThe PropState fun p => { p with base := p.base.push (lits, .cnf tag) }
       modifyThe Sat.Solver fun s =>
@@ -209,6 +210,7 @@ def flushOpsTop : PropM Unit := do
   for op in ops do
     match op with
     | .newVar isT => let _ ← Sat.Solver.newVar true true isT
+    | .phase l => modifyThe Sat.Solver (·.freezePolarity l)
     | .clause lits removable tag =>
       modifyThe PropState fun p => { p with base := p.base.push (lits, .cnf tag) }
       let _ ← Sat.Solver.addClause lits removable

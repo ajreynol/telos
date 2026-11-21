@@ -34,7 +34,7 @@ theorem eo_interprets_true_iff (M : SmtModel) (t : Term) :
   constructor
   · intro h
     cases h with
-    | intro_true _ _ hTy hEval => exact ⟨hTy, hEval⟩
+    | intro_true hTy hEval => exact ⟨hTy, hEval⟩
   · intro ⟨hTy, hEval⟩
     exact smt_interprets.intro_true M _ hTy hEval
 
@@ -72,7 +72,7 @@ theorem congTrueSpine_foldl (M : SmtModel) (hM : model_wf M) :
 instance logosFacts : LogosFacts where
   checker_sound cs P hT hC hP := (valid_iff P).2 (proven_from_empty_valid cs P hT hC hP)
   cong_spine head xs ys ht h :=
-    (valid_iff _).2 (CongSupport.cong_spine_valid head xs ys ht (h.imp fun h => (valid_iff _).1 h))
+    (valid_iff _).2 (CongSupport.cong_spine_valid head xs ys ht (h.imp fun _ _ h => (valid_iff _).1 h))
   eq_valid_iff a b := (valid_iff _).trans (RuleProofs.eq_valid_iff a b)
   value_rel_refl := RuleProofs.smt_value_rel_refl
   value_rel_symm := RuleProofs.smt_value_rel_symm
@@ -98,6 +98,10 @@ instance logosFacts : LogosFacts where
     have hP := type_preservation M hM t (by unfold term_has_non_none_type; rw [h]; simp)
     rw [h] at hP
     exact real_value_canonical hP
+  eval_int M t hM h := by
+    have hP := type_preservation M hM t (by unfold term_has_non_none_type; rw [h]; simp)
+    rw [h] at hP
+    exact int_value_canonical hP
   cong_spine_model M hM head xs ys hq hb h :=
     ((eo_interprets_true_iff M _).1 (CongSupport.congTrueSpine_eq_true M hM _ _ ⟨hq.1, hq.2⟩ hb
       (congTrueSpine_foldl M hM (CongSupport.CongTrueSpine.refl head) h))).2

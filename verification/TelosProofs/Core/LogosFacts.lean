@@ -132,6 +132,10 @@ class LogosFacts : Prop where
   term of SMT type `Real` evaluates to a real. -/
   eval_real : ∀ (M : SmtModel) (t : SmtTerm), model_wf M →
     __smtx_typeof t = SmtType.Real → ∃ r, __smtx_model_eval M t = SmtValue.Real r
+  /-- `type_preservation` and `int_value_canonical`: in a well-formed model, a
+  term of SMT type `Int` evaluates to an integer. -/
+  eval_int : ∀ (M : SmtModel) (t : SmtTerm), model_wf M →
+    __smtx_typeof t = SmtType.Int → ∃ i, __smtx_model_eval M t = SmtValue.Numeral i
   /-- `CongSupport.congTrueSpine_eq_true`: congruence of an application spine in
   one model, for a spine that is not a quantifier, from argument equalities that
   are true in every model agreeing with it on the globals. -/

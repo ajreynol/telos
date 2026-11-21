@@ -374,7 +374,7 @@ def searchForFeasibleSolution (n : Nat) : ArithM Bool := do
     let s ← get
     let some xi := topFocusVariable s | return false
     remaining := remaining - 1
-    let useVarOrder := s.pivotsInRound.count xi ≥ 2  -- `arithPivotThreshold`
+    let useVarOrder := s.pivotsInRound.count xi ≥ s.opts.pivotThreshold
     if !useVarOrder then modify fun s => { s with pivotsInRound := s.pivotsInRound.add xi }
     let pref := if useVarOrder then Pref.minVarOrder else .minBoundAndColLength
     let s ← get
@@ -398,9 +398,11 @@ def dualFindModel (exact : Bool) : ArithM Status := do
     return .unsat
   if (← get).errInfo.isEmpty then return .sat
   let mut result := Status.unknown
-  let limit := (← get).varOrderPivotLimit
+  let limit := (← get).opts.varOrderPivots
   let exact := exact || limit < 0
-  let nDiff := (← get).heuristicPivots
+  let h := (← get).opts.heuristicPivots
+  let nVars := (← get).vars.size
+  let nDiff := if h < 0 then nVars + 1 else h.toNat
   if nDiff > 0 then
     setSelectionRule .minimumAmount
     if ← searchForFeasibleSolution nDiff then result := .unsat

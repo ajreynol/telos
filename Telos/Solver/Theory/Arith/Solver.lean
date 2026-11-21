@@ -86,6 +86,16 @@ def normalAtom (atom : Node) : Node :=
   | .app (.kind .EQUAL) _ => ((Telos.Arith.normalizeEquality atom).map (·.1)).getD atom
   | _ => atom
 
+
+/-- `outputTrustedLemma`: a lemma goes out unless it was sent before (the
+inference manager's cache of the rewritten lemmas, `cacheLemma`); whether it
+did. -/
+def sendLemma (id : String) (lem : Node) (cert : Option LinCert := none) : ArithM Bool := do
+  let r := Telos.rewrite lem
+  if (← get).lemmasSent.contains ⟨r⟩ then return false
+  modify fun s => { s with lemmasSent := s.lemmasSent.insert ⟨r⟩, outputs := s.outputs.push (.lemma id lem cert) }
+  return true
+
 /-- `setupAtom`. -/
 def setupAtom (atom : Node) : ArithM Unit := do
   let natom := normalAtom atom
@@ -99,7 +109,7 @@ def setupAtom (atom : Node) : ArithM Unit := do
   markSetup atom
   let lit := ((← get).constraint c).literal.get!
   if lit != atom then
-    modify fun s => { s with outputs := s.outputs.push (.lemma "ARITH_EQUIV_ATOM" (Node.eqNode lit atom)) }
+    let _ ← sendLemma "ARITH_EQUIV_ATOM" (Node.eqNode lit atom)
 
 /-- `isRelationOperator`. -/
 def isRelation : Node → Bool
@@ -197,7 +207,7 @@ def presolve : ArithM Unit := do
   let mut lemmas := #[]
   for x in [0:n] do lemmas := lemmas ++ (← unateInequalityLemmas x)
   for x in [0:n] do lemmas := lemmas ++ (← unateEqualityLemmas x)
-  modify fun s => { s with outputs := s.outputs ++ lemmas.map fun l => .lemma "ARITH_UNATE" l (orCert l) }
+  for l in lemmas do let _ ← sendLemma "ARITH_UNATE" l (orCert l)
 
 /-! ## Explanations -/
 
@@ -250,7 +260,7 @@ def explainCert (lit : Node) : ArithM (Option LinCert) := do
 /-! ## Asserting facts -/
 
 /-- `anyConflict`. -/
-def anyConflict : ArithM Bool := return !(← get).conflicts.isEmpty
+def anyConflict : ArithM Bool := return !(← get).conflicts.isEmpty || (← get).blackBox.isSome
 
 def isTrueC (c : Nat) : ArithM Bool := return (← get).isTrue c
 def negationOfC (c : Nat) : ArithM Nat := return ((← get).constraint c).negation
@@ -279,6 +289,11 @@ def afterBound (x : Nat) (violates : State → Bool) (c : DeltaRational) : Arith
     if violates s then update x c
   else signalVariable x
 
+/-- An integer variable whose bounds are now equal, for the Diophantine solver
+(`d_constantIntegerVariables`). -/
+def pushConstantInteger (x : Nat) : ArithM Unit := do
+  if (← get).isInteger x then modify fun s => { s with constantIntegers := s.constantIntegers.push x }
+
 /-- `AssertLower`. -/
 def assertLower (c : Nat) : ArithM Bool := do
   let s ← get
@@ -291,6 +306,7 @@ def assertLower (c : Nat) : ArithM Bool := do
     raiseConflict c "ARITH_CONF_LOWER"
     return true
   else if cmpToUB == 0 then
+    pushConstantInteger x
     let ub := (s.var x).ub.get!
     let vc ← vcOf c
     if let some eq := vc.eq then
@@ -335,6 +351,7 @@ def assertUpper (c : Nat) : ArithM Bool := do
     raiseConflict c "ARITH_CONF_UPPER"
     return true
   else if cmpToLB == 0 then
+    pushConstantInteger x
     let lb := (s.var x).lb.get!
     let vc ← vcOf c
     if let some diseq := vc.diseq then
@@ -380,6 +397,7 @@ def assertEquality (c : Nat) : ArithM Bool := do
     impliedByUnate k.negation cb
     raiseConflict c "ARITH_CONF_EQ"
     return true
+  pushConstantInteger x
   pushPropList (some c)
   pushPropList (s.var x).lb
   pushPropList (s.var x).ub
@@ -417,7 +435,7 @@ def assertDisequality (c : Nat) : ArithM Bool := do
   let k := s.constraint c
   if !k.split && k.value == s.assignment k.var then
     let lem ← split c
-    modify fun s => { s with outputs := s.outputs.push (.lemma "ARITH_SPLIT_DEQ" lem (orCert lem)) }
+    let _ ← sendLemma "ARITH_SPLIT_DEQ" lem (orCert lem)
     return false
   if s.cmpToLowerBound k.var k.value < 0 || s.cmpToUpperBound k.var k.value > 0 then return false
   if !k.split then modify fun s => { s with diseqQueue := s.diseqQueue.push c, deltaIsSafe := false }
@@ -491,7 +509,8 @@ def assertFact (fact : Node) : ArithM Unit := do
 /-- `preCheck`. -/
 def preCheck (newFacts : Bool) : ArithM Unit :=
   modify fun s => { s with newFacts, previousStatus := s.qflraStatus,
-                           qflraStatus := if newFacts then .unknown else s.qflraStatus }
+                           qflraStatus := if newFacts then .unknown else s.qflraStatus,
+                           hasDoneWorkSinceCut := s.hasDoneWorkSinceCut || newFacts }
 
 /-! ## `postCheck` -/
 
@@ -505,6 +524,8 @@ def outputConflicts : ArithM Unit := do
   let s ← get
   for (c, id) in s.conflicts do
     modify fun s => { s with outputs := s.outputs.push (.conflict id (explainConflict s c) (conflictCert s c)) }
+  if let some (bb, cert) := s.blackBox then
+    modify fun s => { s with outputs := s.outputs.push (.conflict "ARITH_BLACK_BOX" bb cert) }
 
 /-- `handleUnateProp`. -/
 def handleUnateProp (ant cons : Nat) : ArithM Bool := do
@@ -612,12 +633,174 @@ def splitDisequalities : ArithM Bool := do
     if k.split then continue
     if s.assignment k.var == k.value then
       let lem ← split front
-      modify fun s => { s with outputs := s.outputs.push (.lemma "ARITH_SPLIT_DEQ" lem (orCert lem)) }
+      let _ ← sendLemma "ARITH_SPLIT_DEQ" lem (orCert lem)
       split_ := true
     else if s.cmpToLowerBound k.var k.value < 0 || s.cmpToUpperBound k.var k.value > 0 then pure ()
     else save := save.push front
   modify fun s => { s with diseqQueue := s.diseqQueue ++ save }
   return split_
+
+/-! ## Integers -/
+
+/-- `isIntegerInput`: an integer variable of the input (not a slack). -/
+def isIntegerInput (s : State) (x : Nat) : Bool := s.isInteger x && !s.isAuxiliary x
+
+/-- `nextIntegerViolation`: round robin from `nextIntegerCheckVar`, an integer
+input variable whose value is not integral (and within its bounds, unless
+`assumeBounds`). -/
+def nextIntegerViolation (s : State) (assumeBounds : Bool) : Option Nat := Id.run do
+  let n := s.numVars
+  if n == 0 then return none
+  let start := s.nextIntegerCheckVar
+  let mut v := start
+  repeat
+    if isIntegerInput s v && !(s.assignment v).isIntegral && (assumeBounds || s.assignmentIsConsistent v) then
+      return some v
+    v := if v + 1 == n then 0 else v + 1
+    if v == start then break
+  return none
+
+/-- `hasIntegerModel`: no integer violation; otherwise the round robin moves
+to the first. -/
+def hasIntegerModel : ArithM Bool := do
+  match nextIntegerViolation (← get) true with
+  | some v =>
+    modify fun s => { s with nextIntegerCheckVar := v }
+    return false
+  | none => return true
+
+/-- `getDioCuttingResource`: `dioSolverTurns` (10) turns of cutting, then
+`rrTurns` (3) of branching. -/
+def getDioCuttingResource : ArithM Bool := do
+  let r := (← get).dioSolveResources
+  if r > 0 then
+    modify fun s => { s with dioSolveResources := if r - 1 == 0 then -3 else r - 1 }
+    return true
+  else
+    modify fun s => { s with dioSolveResources := if r + 1 ≥ 0 then 10 else r + 1 }
+    return false
+
+def intNode (i : Int) : Node := .const (.integer i)
+
+/-- `PreprocessRewriteEq::ppRewriteEq` of an arithmetic equality: with
+`arithRewriteEq`, `(and (<= a b) (>= a b))`; otherwise its normal form
+(`rewriteEqualityExt`). -/
+def ppRewriteEq (rewriteEq : Bool) (eq : Node) : Node :=
+  match eq with
+  | .app (.kind .EQUAL) #[a, b] =>
+    if rewriteEq then Node.mkNode .AND #[Node.mkNode .LEQ #[a, b], Node.mkNode .GEQ #[a, b]]
+    else ((Telos.Arith.normalizeEquality eq).map (·.1)).getD eq
+  | _ => eq
+
+/-- `BranchAndBound::branchIntegerVariable`, with `--arith-brab`: round the
+value to the nearest integer `n` first, `(or (= x n) (or (<= x (- n 1)) (>= x
+(+ n 1))))`, the equality (preprocessed) getting a literal and the preferred
+phase `true`. -/
+def branchIntegerVariable (x : Nat) : ArithM Node := do
+  let s ← get
+  let r := (s.assignment x).c
+  let var := (s.var x).node
+  let fl := r.floor
+  let ce := r.ceil
+  let nearest := if ce - r > r - fl then fl else ce
+  let ub := Telos.rewrite (Node.mkNode .LEQ #[var, intNode (nearest - 1)])
+  let lb := Telos.rewrite (Node.mkNode .GEQ #[var, intNode (nearest + 1)])
+  let right := Node.mkNode .OR #[ub, lb]
+  let eq := Telos.rewrite (Node.mkNode .EQUAL #[var, intNode nearest])
+  let eq := match eq with
+    | .app (.kind .EQUAL) _ => ppRewriteEq s.opts.rewriteEq eq
+    | _ => eq
+  -- `ensureLiteral` preprocesses (rewrites) it
+  let lit := Telos.rewrite eq
+  modify fun s => { s with outputs := s.outputs.push (.ensureLiteral lit) |>.push (.phase lit true) }
+  return Node.mkNode .OR #[lit, right]
+
+/-! ### The Diophantine solver -/
+
+/-- `mkIntegerEqualityFromAssignment`: `x = β` for the integral value `β` of
+`x`, as the Diophantine solver reads it (`Comparison::mkIntEquality`, then
+`toSumPair`): the monomials and the constant of the sum that is `0`, with
+coprime integer coefficients and its term of least absolute coefficient
+positive; `none` if it has no integer solution. -/
+def integerEqualityOf (s : State) (x : Nat) : Option (Array (Int × Node) × Int) := do
+  let p := Poly.parse (s.var x).node
+  let beta : Rat := (s.assignment x).c.floor
+  let lcm := p.terms.foldl (fun (l : Nat) (c, _) => Nat.lcm l c.den) 1
+  let g := p.terms.foldl (fun (g : Nat) (c, _) => Nat.gcd g c.num.natAbs) 0
+  let mult : Rat := (lcm : Rat) / (g : Rat)
+  let constMult := -beta * mult
+  if constMult.den != 1 then none
+  let terms := p.terms.map fun (c, m) => (c * mult, m)
+  -- `selectAbsMinimum`: the first of least absolute coefficient
+  let m := terms.foldl (fun (best : Option (Rat × Node)) t => match best with
+    | none => some t
+    | some b => if t.1.abs < b.1.abs then some t else best) none
+  let sgn : Rat := if (m.map (·.1)).getD 1 > 0 then 1 else -1
+  return (terms.map fun (c, m) => ((c * sgn).num, m), (constMult * sgn).num)
+
+def boundsAreEqual (s : State) (x : Nat) : Bool :=
+  match (s.var x).lb, (s.var x).ub with
+  | some l, some u => (s.constraint l).value == (s.constraint u).value
+  | _, _ => false
+
+/-- `callDioSolver`: the equations of the integer variables whose bounds became
+equal (with the explanations of the bounds), then a conflict of the solver,
+if any. -/
+def callDioSolver : ArithM (Option (Node × Option LinCert)) := do
+  while (← get).constantIntegersHead < (← get).constantIntegers.size do
+    let s ← get
+    let v := s.constantIntegers[s.constantIntegersHead]!
+    modify fun s => { s with constantIntegersHead := s.constantIntegersHead + 1 }
+    let lb := (s.var v).lb.get!
+    let ub := (s.var v).ub.get!
+    let (orig, cons) :=
+      if (s.constraint lb).isEquality then (mkAndOf (explainInto s lb none #[]), #[lb])
+      else if (s.constraint ub).isEquality then (mkAndOf (explainInto s ub none #[]), #[ub])
+      else (.app (.kind .AND) (explainInto s lb none (explainInto s ub none #[])), #[ub, lb])
+    match integerEqualityOf s v with
+    | none =>
+      -- `x = β` has no integer solution
+      let P := Telos.Arith.Poly.add (Telos.Arith.polyOf (s.var v).node) (Telos.Arith.Poly.const (-(s.assignment v).c))
+      return some (orig, dioConflictCert s #[(cons, P, 1)])
+    | some (monos, k) =>
+      modify fun s => { s with dio := ((Dio.pushInputConstraint monos k orig cons).run s.dio).2 }
+  let (r, d) := Dio.processEquationsForConflict.run (← get).dio
+  modify fun s => { s with dio := d }
+  let s ← get
+  return r.map fun exp => (mkAndOf exp, dioConflictCert s (d.proofInputs d.conflictIndex.get!))
+
+/-- The node of a form of the Diophantine solver: its monomials sorted in
+cvc5's order (`toSumPair`), and its constant. -/
+def dioPolyNode (d : Dio) (f : LForm Int) : Node × Int :=
+  let monos := (f.terms.map fun (v, c) => ((c : Rat), d.varNodes[v]!)).toList.mergeSort
+    fun a b => !Telos.Arith.monoLt [b.2] [a.2]
+  ((Poly.mk monos.toArray).node, f.const)
+
+/-- `dioCutting`: with the speculative equations of the integer variables at
+a bound (their bounds not equal), in a scope that is then popped, the cut of a
+plane `p + k = 0` of the solver: `(or (<= p (- k)) (>= p (- k)))`, rewritten
+(its gcd does not divide `k`). -/
+def dioCutting : ArithM (Option Node) := do
+  let s ← get
+  let saved := s.dio.mark
+  for v in [0:s.numVars] do
+    if s.isInteger v && ((s.var v).cmpAssignmentUB == 0 || (s.var v).cmpAssignmentLB == 0) &&
+        !boundsAreEqual s v then
+      if let some (monos, k) := integerEqualityOf s v then
+        modify fun s => { s with dio := ((Dio.pushInputConstraint monos k Node.mkTrue).run s.dio).2 }
+  let (plane, d) := Dio.processEquationsForCut.run (← get).dio
+  -- (the scope's pop prints its event)
+  modify fun s => { s with dio := d.restore saved, outputs := s.outputs.push .scopePop }
+  let some f := plane | return none
+  if f.isConstant then return none
+  let (p, k) := dioPolyNode d f
+  let c := intNode (-k)
+  return some (Telos.rewrite (Node.mkNode .OR #[Node.mkNode .LEQ #[p, c], Node.mkNode .GEQ #[p, c]]))
+
+/-- `roundRobinBranch`: the lemmas of the next integer violation. -/
+def roundRobinBranch : ArithM (Array Node) := do
+  if ← hasIntegerModel then return #[]
+  return #[← branchIntegerVariable (← get).nextIntegerCheckVar]
 
 /-- `TheoryArithPrivate::postCheck`: whether a conflict or a lemma was sent. -/
 def postCheck (full : Bool) : ArithM Bool := do
@@ -662,11 +845,36 @@ def postCheck (full : Bool) : ArithM Bool := do
       emitted := true
   modify fun s => { s with propList := #[], propListHead := 0 }
   if !emitted && full then emitted ← splitDisequalities
-  if !emitted && full then
-    -- integers: branch and bound and the rest are not ported yet
-    let s ← get
-    if (List.range s.numVars).any fun x => s.isInteger x && !s.isAuxiliary x && !(s.assignment x).isIntegral then
-      unsupported "an integer variable with a non-integral value (branch and bound is not ported yet)"
+  -- (`hasIntegerModel` moves the round robin: only called then)
+  let intViolation ← if !emitted && full then (do let h ← hasIntegerModel; pure !h) else pure false
+  if intViolation then
+    -- the Diophantine solver (`callDioSolver`, `dioCutting`)
+    if let some (conflict, cert) ← callDioSolver then
+      revertOutOfConflict
+      modify fun s => { s with blackBox := s.blackBox <|> some (conflict, cert) }
+      outputConflicts
+      emitted := true
+    if !emitted && (← get).hasDoneWorkSinceCut then
+      if ← getDioCuttingResource then
+        if let some lem ← dioCutting then
+          modify fun s => { s with hasDoneWorkSinceCut := false }
+          if ← sendLemma "ARITH_DIO_CUT" lem (orCert lem) then emitted := true
+    -- branch and bound (`roundRobinBranch`), until a lemma that was not sent
+    -- before
+    let mut tried : Std.HashSet Key := {}
+    repeat
+      if emitted then break
+      let mut tryNew := false
+      let lems ← roundRobinBranch
+      for lem in lems do
+        if tried.contains ⟨lem⟩ then continue
+        tried := tried.insert ⟨lem⟩
+        tryNew := true
+        if ← sendLemma "ARITH_BB_LEMMA" lem (orCert (Telos.rewrite lem)) then emitted := true
+      if !emitted then
+        let n := (← get).numVars
+        modify fun s => { s with nextIntegerCheckVar := if s.nextIntegerCheckVar + 1 == n then 0 else s.nextIntegerCheckVar + 1 }
+      if emitted || !tryNew then break
   return emitted
 
 /-! ## Row bound propagation (`propagateCandidatesNew`) -/
@@ -759,7 +967,7 @@ def rowImplicationCanBeApplied (r : Nat) (rowUp : Bool) (implied : Nat) : ArithM
     let b := k.literal.get!
     let clause := flattenImplication ants b
     let cert := farkasCert s none implied (negate b) explain farkas
-    modify fun s => { s with outputs := s.outputs.push (.lemma "ARITH_ROW_IMPL" clause cert) }
+    let _ ← sendLemma "ARITH_ROW_IMPL" clause cert
   else
     impliedByFarkas implied explain farkas
     modify fun s => s.tryToPropagate implied

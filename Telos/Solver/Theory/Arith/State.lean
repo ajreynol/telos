@@ -3,6 +3,7 @@ import Std.Data.HashSet
 import Telos.Solver.Theory.Arith.Matrix
 import Telos.Solver.Theory.Arith.Poly
 import Telos.Solver.LinCert
+import Telos.Solver.Theory.Arith.Dio
 
 /-!
 # The state of the linear arithmetic solver
@@ -43,6 +44,9 @@ structure Mark where
   conflicts : Nat
   learnedBounds : Nat
   diseqQueue : Nat
+  constantIntegers : Nat
+  dio : DioMark
+  blackBox : Option (Node × Option LinCert)
   deriving Inhabited
 
 /-- `ErrorInformation`: a variable that violates a bound. -/
@@ -72,6 +76,13 @@ inductive Output where
   /-- A conflict, with its certificate, if any. -/
   | conflict (id : String) (exp : Node) (cert : Option LinCert := none)
   | propagate (lit : Node)
+  /-- `Valuation::ensureLiteral`: the node gets a SAT literal now. -/
+  | ensureLiteral (n : Node)
+  /-- `preferPhase`: the SAT solver is to prefer the literal with a phase. -/
+  | phase (n : Node) (pol : Bool)
+  /-- The pop of a speculative scope (`context::Context::ScopedPush`), which
+  prints a `pop` event. -/
+  | scopePop
   deriving Inhabited
 
 structure State where
@@ -124,11 +135,8 @@ structure State where
   pivotsInRound : DenseMultiset := {}
   conflictVariables : DenseSet := {}
   pivots : Nat := 0
-  /-- The heuristic pivots (`arithHeuristicPivots`), and the variable-order
-  pivot limit at standard effort (`arithStandardCheckVarOrderPivots`), by
-  logic (`SetDefaults`). -/
-  heuristicPivots : Nat := 0
-  varOrderPivotLimit : Int := 200
+  /-- The options that the logic decides. -/
+  opts : Options := {}
   -- `TheoryArithPrivate`
   qflraStatus : Status := .unknown
   previousStatus : Status := .unknown
@@ -139,6 +147,23 @@ structure State where
   /-- `d_learnedBounds` (a context-dependent queue). -/
   learnedBounds : Array Nat := #[]
   learnedBoundsHead : Nat := 0
+  /-- `d_constantIntegerVariables` (a context-dependent queue): the integer
+  variables whose bounds became equal, for the Diophantine solver. -/
+  constantIntegers : Array Nat := #[]
+  constantIntegersHead : Nat := 0
+  /-- `d_nextIntegerCheckVar`: where the round robin of branch and bound is. -/
+  nextIntegerCheckVar : Nat := 0
+  /-- `d_hasDoneWorkSinceCut` and `d_dioSolveResources`. -/
+  hasDoneWorkSinceCut : Bool := false
+  dioSolveResources : Int := 0
+  /-- The Diophantine solver (`d_diosolver`). -/
+  dio : Dio := {}
+  /-- `d_blackBoxConflict` (context dependent): a conflict that is not a
+  constraint's (the Diophantine solver's). -/
+  blackBox : Option (Node × Option LinCert) := none
+  /-- The lemmas sent, rewritten (the inference manager's `d_lemmasSent`, user
+  context dependent). -/
+  lemmasSent : Std.HashSet Key := {}
   /-- `d_diseqQueue` (a context-dependent queue). -/
   diseqQueue : Array Nat := #[]
   diseqQueueHead : Nat := 0
@@ -483,7 +508,8 @@ def getStrictlyWeakerUpperBound (s : State) (c : Nat) (hasLiteral asserted : Boo
 def push (s : State) : State :=
   { s with marks := s.marks.push ⟨s.lbRevert.size, s.ubRevert.size, s.proofs.size, s.antecedents.size,
                                    s.canBePropagatedW.size, s.assertionOrderW.size, s.toPropagate.size,
-                                   s.conflicts.size, s.learnedBounds.size, s.diseqQueue.size⟩ }
+                                   s.conflicts.size, s.learnedBounds.size, s.diseqQueue.size,
+                                   s.constantIntegers.size, s.dio.mark, s.blackBox⟩ }
 
 /-- Pop one level: the lists back to their sizes at the push, with their
 cleanups from the last element down. -/
@@ -521,7 +547,10 @@ def pop (s : State) : State := Id.run do
                 learnedBounds := s.learnedBounds.extract 0 m.learnedBounds,
                 learnedBoundsHead := min s.learnedBoundsHead m.learnedBounds,
                 diseqQueue := s.diseqQueue.extract 0 m.diseqQueue,
-                diseqQueueHead := min s.diseqQueueHead m.diseqQueue }
+                diseqQueueHead := min s.diseqQueueHead m.diseqQueue,
+                constantIntegers := s.constantIntegers.extract 0 m.constantIntegers,
+                constantIntegersHead := min s.constantIntegersHead m.constantIntegers,
+                dio := s.dio.restore m.dio, blackBox := m.blackBox }
   return s
 
 end State

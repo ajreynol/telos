@@ -146,8 +146,8 @@ answer. That cvc5 output needs the patch `cvc5-theory-events.patch`.
 
 So far the engine, UF, datatypes, cvc5's MiniSat and linear real arithmetic
 are ported: cvc5's equality engine, used as the central one, UF and datatypes
-over it, and arithmetic's simplex (`Telos/Solver/Theory/Arith/`, in progress:
-integers are not handled, nor arithmetic with other theories). In
+over it, and linear arithmetic (`Telos/Solver/Theory/Arith/`: the simplex,
+branch and bound and the Diophantine solver; not yet with other theories). In
 other logics the theories' checks do nothing, and the answer is `unknown` as
 soon as a theory gets a literal.
 

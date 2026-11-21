@@ -143,6 +143,30 @@ structure ConstraintRule where
   farkas : Option (Array Rat) := none
   deriving Inhabited
 
+/-- The linear solver's options that the logic decides (`SetDefaults`,
+`set_defaults.cpp`). -/
+structure Options where
+  /-- `arithHeuristicPivots`: 5, but 0 for pure quantifier-free real
+  arithmetic, and -1 (the number of variables plus one) for difference logic. -/
+  heuristicPivots : Int := 0
+  /-- `arithPivotThreshold`: 2, but 16 for difference logic. -/
+  pivotThreshold : Nat := 2
+  /-- `arithStandardCheckVarOrderPivots`: 200 for pure quantifier-free
+  arithmetic, -1 otherwise. -/
+  varOrderPivots : Int := 200
+  /-- `arithRewriteEq`: for pure linear quantifier-free arithmetic. -/
+  rewriteEq : Bool := true
+  deriving Inhabited, Repr
+
+/-- The options of a logic: pure (arithmetic and no other theory),
+quantified, linear, with integers, difference logic. -/
+def Options.ofLogic (pure quantified linear integers difference : Bool) : Options :=
+  let pureQF := pure && !quantified
+  { heuristicPivots := if pureQF then (if difference then -1 else if !integers then 0 else 5) else 5
+    pivotThreshold := if pureQF && difference then 16 else 2
+    varOrderPivots := if pureQF then 200 else -1
+    rewriteEq := pureQF && linear }
+
 /-- `ArithType`. -/
 inductive ArithType where
   | unset | real | integer

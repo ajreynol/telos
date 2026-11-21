@@ -31,17 +31,19 @@ namespace Telos.Solver.Arith
 
 open State
 
-/-- The polynomial of `a - b`, by the rewriter. -/
-def linPoly (a b : Node) : Poly := Poly.parse (Telos.rewrite (Node.mkNode .SUB #[a, b]))
+/-- The polynomial of `a - b` (through `to_real`). -/
+def linPoly (a b : Node) : Telos.Arith.Poly := Telos.Arith.polyOf (Node.mkNode .SUB #[a, b])
 
-def coeffOf (p : Poly) (m : Node) : Rat :=
-  p.terms.foldl (fun acc (c, m') => if m' == m then acc + c else acc) 0
+def coeffOf (p : Telos.Arith.Poly) (m : Telos.Arith.Mono) : Rat :=
+  ((p.find? fun e => decide (e.1 = m)).map (·.2)).getD 0
+
+/-- The first non-constant monomial of a polynomial, with its coefficient. -/
+def firstMono (p : Telos.Arith.Poly) : Option (Telos.Arith.Mono × Rat) := p.find? (·.1 != [])
 
 /-- The entry of the literal `l` of a bound of `x` with cvc5's coefficient `f`. -/
 def farkasCoeff (s : State) (x : Nat) (l : Node) (f : Rat) : Option (Node × Rat) := do
   let (a, b, _) ← linParts l
-  let X := Poly.parse (s.var x).node
-  let (cx, m) ← X.terms.find? (!Poly.isConstantMono ·)
+  let (m, cx) ← firstMono (Telos.Arith.polyOf (s.var x).node)
   let alpha := coeffOf (linPoly a b) m / cx
   if alpha == 0 then none
   pure (l, -f / alpha)
@@ -50,17 +52,24 @@ def farkasCoeff (s : State) (x : Nat) (l : Node) (f : Rat) : Option (Node × Rat
 def pairFarkas (l1 l2 : Node) : Option LinCert := do
   let (a1, b1, _) ← linParts l1
   let (a2, b2, _) ← linParts l2
-  let p1 := linPoly a1 b1
-  let (c1, m) ← p1.terms.find? (!Poly.isConstantMono ·)
+  let (m, c1) ← firstMono (linPoly a1 b1)
   let c2 := coeffOf (linPoly a2 b2) m
   if c2 == 0 then none
   let r := -c1 / c2
   let cands : List (Array (Node × Rat)) := [#[(l1, 1), (l2, r)], #[(l1, -1), (l2, -r)]]
   (cands.find? (checkFarkas #[l1, l2])).map .farkas
 
-/-- A refutation of a few literals: by a split of a disequality among them, and
-then of two of them. -/
+/-- A refutation of a few literals: by cases on a negated conjunction among
+them, by a split of a disequality, and then of two of them. -/
 partial def smallRefute (lits : Array Node) : Option LinCert :=
+  match lits.findIdx? (fun l => (notAndParts l).isSome) with
+  | some i => do
+    let l := lits[i]!
+    let cs ← notAndParts l
+    let rest := lits.eraseIdx! i
+    let subs ← cs.mapM fun c => return (c, ← smallRefute (rest.push (negate c)))
+    pure (.cases l subs)
+  | none =>
   match lits.findIdx? (fun l => (diseqParts l).isSome) with
   | some i => do
     let l := lits[i]!
@@ -91,7 +100,12 @@ def litOf (s : State) (c : Nat) : Node :=
   | some l => l
   | none =>
     let p := (s.var k.var).node
-    let v := ratNode k.value.c
+    -- an integer variable: an integer constant, or its real value
+    let (p, v) :=
+      if s.isInteger k.var then
+        if k.value.c.den == 1 then (p, Node.const (.integer k.value.c.num))
+        else (Node.mkNode .TO_REAL #[p], ratNode k.value.c)
+      else (p, ratNode k.value.c)
     match k.type with
     | .lowerBound => Node.mkNode (if k.value.k > 0 then .GT else .GEQ) #[p, v]
     | .upperBound => Node.mkNode (if k.value.k < 0 then .LT else .LEQ) #[p, v]
@@ -121,7 +135,7 @@ partial def refute (s : State) (c : Nat) (order : Option Nat) (negLit : Node) : 
   let ants := antecedentsOf s r
   match r.proofType with
   | .farkas => farkasCert s order c negLit ants (← r.farkas)
-  | .trichotomy => withLits s order ants.toList #[] fun ls => smallRefute (ls.push negLit)
+  | .trichotomy | .intTighten => withLits s order ants.toList #[] fun ls => smallRefute (ls.push negLit)
   | _ => none
 
 /-- The Farkas combination of a rule: `negLit` for the negation of `c`, and the
@@ -166,5 +180,56 @@ def propagationCert (s : State) (lit : Node) : Option LinCert := do
 /-- The certificate of a clause `(or l₁ … lₙ)` of literals: a refutation of
 their negations. -/
 def clauseCert (lits : Array Node) : Option LinCert := smallRefute (lits.map negate)
+
+/-- The entry of the input equation `P = 0` (`P` a polynomial) with the weight
+`w`, by one of the literals of its bounds: `P` is `α` times the difference of
+its sides, so its coefficient is `w / α`, nonnegative unless it is an
+equality. -/
+def eqEntry (lits : Array Node) (P : Telos.Arith.Poly) (w : Rat) : Option (Node × Rat) := do
+  let (m, cp) ← firstMono P
+  lits.findSome? fun l => do
+    let (a, b, r) ← linParts l
+    let alpha := coeffOf (linPoly a b) m / cp
+    if alpha == 0 then none
+    let q := w / alpha
+    if r == .eq || q ≥ 0 then some (l, q) else none
+
+/-- The certificate of a conflict of the Diophantine solver: the input
+equations `Pⱼ = 0` (with their constraints) combine, with the weights `μⱼ`,
+into `E = g Q + k = 0`, where `Q` has coprime integer coefficients and `g`
+does not divide `k` (or `E` is a nonzero constant). With `r = -k / g`, which is
+not an integer, a cut on `Q ≥ ⌈r⌉`: then `Q - ⌈r⌉ ≥ 0` and `-(Q - r) = 0` sum
+to `r - ⌈r⌉ < 0`; otherwise `Q ≤ ⌈r⌉ - 1` (an integer) and `Q - r = 0` sum to
+`⌈r⌉ - 1 - r < 0`. -/
+def dioConflictCert (s : State) (ins : Array (Array Nat × Telos.Arith.Poly × Rat)) : Option LinCert :=
+  let cons := ins.foldl (fun acc (cs, _, _) => acc ++ cs) #[]
+  withLits s none cons.toList #[] fun ls => do
+    -- the literals of each input's constraints
+    let mut litsOf : Array (Array Node) := #[]
+    let mut i := 0
+    for (cs, _, _) in ins do
+      litsOf := litsOf.push (ls.extract i (i + cs.size))
+      i := i + cs.size
+    let E := ins.foldl (fun acc (_, P, mu) => Telos.Arith.Poly.add acc (Telos.Arith.Poly.scale P mu))
+      ([] : Telos.Arith.Poly)
+    let terms := Telos.Arith.Poly.removeConstant E
+    let k := Telos.Arith.Poly.constant E
+    let entries (kappa : Rat) : Option (Array (Node × Rat)) :=
+      (ins.zip litsOf).filterMapM fun ((_, P, mu), lits) =>
+        if mu == 0 then pure none else (eqEntry lits P (kappa * mu)).map some
+    if terms.isEmpty then
+      if k == 0 then none
+      pure (.farkas (← entries (if k > 0 then -1 else 1)))
+    else
+      let g : Rat := (terms.foldl (fun (g : Nat) (_, c) => Nat.gcd g c.num.natAbs) 0 : Nat)
+      if g == 0 then none
+      let r := -k / g
+      if r.den == 1 then none
+      let Q := (Poly.mk ((Telos.Arith.Poly.sorted (terms.map fun (m, c) => (m, c / g))).toArray.map
+        fun (m, c) => (c, Telos.Arith.monoKey m))).node
+      let L := Node.mkNode .GEQ #[Q, Node.const (.integer r.ceil)]
+      let pos ← entries (-1 / g)
+      let neg ← entries (1 / g)
+      pure (.cut L (.farkas (#[(L, 1)] ++ pos)) (.farkas (#[(negate L, 1)] ++ neg)))
 
 end Telos.Solver.Arith

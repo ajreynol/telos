@@ -223,6 +223,145 @@ theorem linParts_sem {N : SmtModel} {l a b : Node} {r : LinRel} (h : linParts l 
       · simp at h
   · simp at h
 
+/-! ## Integers -/
+
+/-- A node has the integer value `i` in a model. -/
+def IVal (N : SmtModel) (t : Node) (i : Int) : Prop := __smtx_model_eval N t.toSmt = SmtValue.Numeral i
+
+theorem int_of_isIntTerm {N : SmtModel} (hN : model_wf N) {t : Node} (h : isIntTerm t = true) :
+    ∃ i, IVal N t i := by
+  unfold isIntTerm at h
+  exact LogosFacts.eval_int N _ hN (by simpa using h)
+
+omit [LogosFacts] in
+theorem eval_isub {N : SmtModel} {a b : Node} {ia ib : Int} (ha : IVal N a ia) (hb : IVal N b ib) :
+    IVal N (Node.mkNode .SUB #[a, b]) (ia - ib) := by
+  unfold IVal at *
+  rw [toSmt_two (op := UserOp.neg) rfl, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.neg) x) y)
+    = SmtTerm.neg (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+  simp only
+  rw [show __eo_to_smt a.toEo = a.toSmt from rfl, show __eo_to_smt b.toEo = b.toSmt from rfl, ha, hb]
+  simp [__smtx_model_eval__, native_zplus, native_zneg, sub_eq_add_neg]
+
+omit [LogosFacts] in
+theorem eval_toReal {N : SmtModel} {t : Node} {i : Int} (h : IVal N t i) :
+    RVal N (Node.mkNode .TO_REAL #[t]) (i : ℝ) := by
+  unfold RVal IVal at *
+  unfold Node.mkNode
+  rw [toSmt_un (op := UserOp.to_real) rfl (cs := #[t]) rfl, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.to_real) x)
+    = SmtTerm.to_real (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+  simp only
+  rw [show __eo_to_smt #[t][0].toEo = t.toSmt from rfl, h]
+  simp [__smtx_model_eval_to_real, native_int_to_real]
+
+omit [LogosFacts] in
+theorem eval_intDiff {N : SmtModel} {a b : Node} {ia ib : Int} (ha : IVal N a ia) (hb : IVal N b ib)
+    (strict : Bool) : RVal N (intDiff a b strict) (((ia - ib : Int) : ℝ) - (if strict then 1 else 0)) := by
+  have hd := eval_toReal (eval_isub ha hb)
+  unfold intDiff
+  cases strict
+  · simpa using hd
+  · have h1 : RVal N (ratNode 1) 1 := by simpa using eval_ratNode N 1
+    simpa using eval_sub hd h1
+
+omit [LogosFacts] in
+theorem eval_intLinTerm {N : SmtModel} {q : Rat} {a b : Node} {ia ib : Int} (ha : IVal N a ia) (hb : IVal N b ib)
+    (strict : Bool) :
+    RVal N (intLinTerm q a b strict) ((q : ℝ) * (((ia - ib : Int) : ℝ) - (if strict then 1 else 0))) :=
+  eval_mult2 (eval_ratNode N q) (eval_intDiff ha hb strict) (typeof_ratNode q)
+
+omit [LogosFacts] in
+theorem eval_igeq {N : SmtModel} {ds : Array Node} (h : ds.size = 2) {x y : Int} (hx : IVal N ds[0] x) (hy : IVal N ds[1] y) :
+    __smtx_model_eval N (Node.app (.kind .GEQ) ds).toSmt = SmtValue.Boolean (decide (y ≤ x)) := by
+  rw [toSmt_cmp (op := UserOp.geq) rfl h, show ∀ a b, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.geq) a) b)
+    = SmtTerm.geq (__eo_to_smt a) (__eo_to_smt b) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+  simp only
+  rw [show __eo_to_smt ds[0].toEo = ds[0].toSmt from rfl, show __eo_to_smt ds[1].toEo = ds[1].toSmt from rfl, hx, hy]
+  simp [__smtx_model_eval_geq, __smtx_model_eval_leq, native_zleq]
+
+omit [LogosFacts] in
+theorem eval_igt {N : SmtModel} {ds : Array Node} (h : ds.size = 2) {x y : Int} (hx : IVal N ds[0] x) (hy : IVal N ds[1] y) :
+    __smtx_model_eval N (Node.app (.kind .GT) ds).toSmt = SmtValue.Boolean (decide (y < x)) := by
+  rw [toSmt_cmp (op := UserOp.gt) rfl h, show ∀ a b, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.gt) a) b)
+    = SmtTerm.gt (__eo_to_smt a) (__eo_to_smt b) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+  simp only
+  rw [show __eo_to_smt ds[0].toEo = ds[0].toSmt from rfl, show __eo_to_smt ds[1].toEo = ds[1].toSmt from rfl, hx, hy]
+  simp [__smtx_model_eval_gt, __smtx_model_eval_lt, native_zlt]
+
+omit [LogosFacts] in
+theorem eval_ileq {N : SmtModel} {ds : Array Node} (h : ds.size = 2) {x y : Int} (hx : IVal N ds[0] x) (hy : IVal N ds[1] y) :
+    __smtx_model_eval N (Node.app (.kind .LEQ) ds).toSmt = SmtValue.Boolean (decide (x ≤ y)) := by
+  rw [toSmt_cmp (op := UserOp.leq) rfl h, show ∀ a b, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.leq) a) b)
+    = SmtTerm.leq (__eo_to_smt a) (__eo_to_smt b) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+  simp only
+  rw [show __eo_to_smt ds[0].toEo = ds[0].toSmt from rfl, show __eo_to_smt ds[1].toEo = ds[1].toSmt from rfl, hx, hy]
+  simp [__smtx_model_eval_leq, native_zleq]
+
+omit [LogosFacts] in
+theorem eval_ilt {N : SmtModel} {ds : Array Node} (h : ds.size = 2) {x y : Int} (hx : IVal N ds[0] x) (hy : IVal N ds[1] y) :
+    __smtx_model_eval N (Node.app (.kind .LT) ds).toSmt = SmtValue.Boolean (decide (x < y)) := by
+  rw [toSmt_cmp (op := UserOp.lt) rfl h, show ∀ a b, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.lt) a) b)
+    = SmtTerm.lt (__eo_to_smt a) (__eo_to_smt b) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+  simp only
+  rw [show __eo_to_smt ds[0].toEo = ds[0].toSmt from rfl, show __eo_to_smt ds[1].toEo = ds[1].toSmt from rfl, hx, hy]
+  simp [__smtx_model_eval_lt, native_zlt]
+
+omit [LogosFacts] in
+theorem eval_iequal {N : SmtModel} {ds : Array Node} (h : ds.size = 2) {x y : Int} (hx : IVal N ds[0] x) (hy : IVal N ds[1] y) :
+    __smtx_model_eval N (Node.app (.kind .EQUAL) ds).toSmt = SmtValue.Boolean (decide (x = y)) := by
+  rw [toSmt_eq h, eval_eq', hx, hy]
+  simp [__smtx_model_eval_eq, native_veq]
+
+/-- The bound `d ⋈ 0` of a relation, over the integers. -/
+def RelHoldsI : LinRel → Int → Prop
+  | .ge, d => 0 ≤ d
+  | .gt, d => 0 < d
+  | .eq, d => d = 0
+
+omit [LogosFacts] in
+/-- A true literal of integers bounds the difference of its sides. -/
+theorem linParts_isem {N : SmtModel} {l a b : Node} {r : LinRel} (h : linParts l = some (a, b, r))
+    (hl : TrueIn N l.toEo) {ia ib : Int} (ha : IVal N a ia) (hb : IVal N b ib) : RelHoldsI r (ia - ib) := by
+  unfold TrueIn at hl
+  rw [show __eo_to_smt l.toEo = l.toSmt from rfl] at hl
+  unfold linParts at h
+  split at h
+  · rename_i k cs
+    split at h
+    · rename_i hk
+      have hk : k = .NOT := by simpa using hk
+      subst hk
+      split at h
+      · rename_i h1
+        rw [not_true_iff h1] at hl
+        split at h
+        · rename_i k' ds he
+          split at h
+          · rename_i h2
+            rw [he] at hl
+            unfold negParts at h
+            split at h <;> simp only [Option.some.injEq, Prod.mk.injEq, reduceCtorEq] at h <;>
+              obtain ⟨rfl, rfl, rfl⟩ := h
+            · rw [eval_igeq h2 hb ha] at hl; simp at hl; simp [RelHoldsI]; omega
+            · rw [eval_igt h2 hb ha] at hl; simp at hl; simp [RelHoldsI]; omega
+            · rw [eval_ileq h2 ha hb] at hl; simp at hl; simp [RelHoldsI]; omega
+            · rw [eval_ilt h2 ha hb] at hl; simp at hl; simp [RelHoldsI]; omega
+          · simp at h
+        · simp at h
+      · simp at h
+    · split at h
+      · rename_i h2
+        unfold cmpParts at h
+        split at h <;> simp only [Option.some.injEq, Prod.mk.injEq, reduceCtorEq] at h <;>
+          obtain ⟨rfl, rfl, rfl⟩ := h
+        · rw [eval_igeq h2 ha hb] at hl; simp at hl; simp [RelHoldsI]; omega
+        · rw [eval_igt h2 ha hb] at hl; simp at hl; simp [RelHoldsI]; omega
+        · rw [eval_ileq h2 hb ha] at hl; simp at hl; simp [RelHoldsI]; omega
+        · rw [eval_ilt h2 hb ha] at hl; simp at hl; simp [RelHoldsI]; omega
+        · rw [eval_iequal h2 ha hb] at hl; simp at hl; simp [RelHoldsI]; omega
+      · simp at h
+  · simp at h
+
 /-! ## Farkas combinations -/
 
 omit [LogosFacts] in
@@ -247,33 +386,63 @@ theorem entry_sem {N : SmtModel} (hN : model_wf N) {A : Array Node} (hA : ∀ a 
   · rename_i a b r hp
     split at h
     · rename_i hc
-      simp only [Option.some.injEq, Prod.mk.injEq] at h
-      obtain ⟨rfl, rfl⟩ := h
       simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq] at hc
-      obtain ⟨⟨⟨hm, hra⟩, hrb⟩, hq⟩ := hc
-      obtain ⟨ra, ha⟩ := real_of_isRealTerm hN hra
-      obtain ⟨rb, hb⟩ := real_of_isRealTerm hN hrb
+      obtain ⟨hm, hq⟩ := hc
       have hl := hA e.1 (Array.mem_toList_iff.2 (Array.contains_iff_mem.1 hm))
-      have hr := linParts_sem hp hl ha hb
-      refine ⟨(e.2 : ℝ) * (ra - rb), eval_linTerm ha hb, ?_, ?_⟩
-      · cases r with
-        | eq => simp [RelHolds] at hr; simp [hr]
-        | ge =>
-          have : (0 : ℝ) ≤ e.2 := by exact_mod_cast (hq.resolve_left (by decide))
-          exact mul_nonneg this hr
-        | gt =>
-          have : (0 : ℝ) ≤ e.2 := by exact_mod_cast (hq.resolve_left (by decide))
-          exact mul_nonneg this (le_of_lt hr)
-      · intro hs
-        cases r with
-        | gt =>
-          have hq0 : 0 < e.2 := by
-            simpa only [show (LinRel.gt == LinRel.gt) = true from by decide, Bool.true_and,
-              decide_eq_true_eq] using hs
-          have : (0 : ℝ) < e.2 := by exact_mod_cast hq0
-          exact mul_pos this hr
-        | ge => simp [show (LinRel.ge == LinRel.gt) = false from by decide] at hs
-        | eq => simp [show (LinRel.eq == LinRel.gt) = false from by decide] at hs
+      split at h
+      · -- reals
+        rename_i hreal
+        simp only [Bool.and_eq_true] at hreal
+        obtain ⟨hra, hrb⟩ := hreal
+        simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        obtain ⟨ra, ha⟩ := real_of_isRealTerm hN hra
+        obtain ⟨rb, hb⟩ := real_of_isRealTerm hN hrb
+        have hr := linParts_sem hp hl ha hb
+        refine ⟨(e.2 : ℝ) * (ra - rb), eval_linTerm ha hb, ?_, ?_⟩
+        · cases r with
+          | eq => simp [RelHolds] at hr; simp [hr]
+          | ge =>
+            have : (0 : ℝ) ≤ e.2 := by exact_mod_cast (hq.resolve_left (by decide))
+            exact mul_nonneg this hr
+          | gt =>
+            have : (0 : ℝ) ≤ e.2 := by exact_mod_cast (hq.resolve_left (by decide))
+            exact mul_nonneg this (le_of_lt hr)
+        · intro hs
+          cases r with
+          | gt =>
+            have hq0 : 0 < e.2 := by
+              simpa only [show (LinRel.gt == LinRel.gt) = true from by decide, Bool.true_and,
+                decide_eq_true_eq] using hs
+            have : (0 : ℝ) < e.2 := by exact_mod_cast hq0
+            exact mul_pos this hr
+          | ge => simp [show (LinRel.ge == LinRel.gt) = false from by decide] at hs
+          | eq => simp [show (LinRel.eq == LinRel.gt) = false from by decide] at hs
+      · split at h
+        · -- integers: a strict bound strengthened
+          rename_i _ hint
+          simp only [Bool.and_eq_true] at hint
+          obtain ⟨hia, hib⟩ := hint
+          simp only [Option.some.injEq, Prod.mk.injEq] at h
+          obtain ⟨rfl, rfl⟩ := h
+          obtain ⟨ia, ha⟩ := int_of_isIntTerm hN hia
+          obtain ⟨ib, hb⟩ := int_of_isIntTerm hN hib
+          have hr := linParts_isem hp hl ha hb
+          refine ⟨_, eval_intLinTerm ha hb (r == .gt), ?_, by simp⟩
+          cases r with
+          | eq =>
+            simp [RelHoldsI] at hr
+            simp [show (LinRel.eq == LinRel.gt) = false from by decide, hr]
+          | ge =>
+            have : (0 : ℝ) ≤ e.2 := by exact_mod_cast (hq.resolve_left (by decide))
+            have hd : (0 : ℝ) ≤ ((ia - ib : Int) : ℝ) := by exact_mod_cast hr
+            simpa [show (LinRel.ge == LinRel.gt) = false from by decide] using mul_nonneg this hd
+          | gt =>
+            have : (0 : ℝ) ≤ e.2 := by exact_mod_cast (hq.resolve_left (by decide))
+            have hd : (1 : ℝ) ≤ ((ia - ib : Int) : ℝ) := by exact_mod_cast (show (1 : Int) ≤ ia - ib by simp [RelHoldsI] at hr; omega)
+            have := mul_nonneg this (sub_nonneg.2 hd)
+            simpa [show (LinRel.gt == LinRel.gt) = true from by decide] using this
+        · simp at h
     · simp at h
   · simp at h
 
