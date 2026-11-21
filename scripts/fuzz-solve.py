@@ -257,11 +257,20 @@ def lra_sum(rng):
     return terms[0] if len(terms) == 1 else "(+ " + " ".join(terms) + ")"
 
 
+# (`--ite`: some sums are `ite` terms, for term formula removal's skolems)
+ITE_TERMS = False
+
+
 def lra_literal(rng):
     rel = rng.choice(["<=", "<", ">=", ">", "<=", ">=", "="])
     c = rng.randint(-4, 4)
     rhs = str(c) if c >= 0 else f"(- {-c})"
-    atom = f"({rel} {lra_sum(rng)} {rhs})"
+    lhs = lra_sum(rng)
+    if ITE_TERMS and rng.random() < 0.3:
+        k = rng.randint(-2, 2)
+        cond = f"(>= {lra_sum(rng)} {k if k >= 0 else f'(- {-k})'})"
+        lhs = f"(ite {cond} {lhs} {lra_sum(rng)})"
+    atom = f"({rel} {lhs} {rhs})"
     return atom if rel == "=" or rng.random() < 0.8 else f"(not {atom})"
 
 
@@ -537,8 +546,13 @@ def main():
                     help="solve with telos's SAT solver (--via-sat), cvc5 with --sat-solver=minisat")
     ap.add_argument("--size", type=int, default=6, help="the most literals of a random benchmark")
     ap.add_argument("--theory", choices=["uf", "dt", "lra", "lia"], default="uf", help="the theory of the random benchmarks")
+    ap.add_argument("--decision", choices=["internal", "justification", "stoponly"],
+                    help="the SAT solver's decision mode, for both (otherwise the logic's)")
+    ap.add_argument("--ite", action="store_true", help="arithmetic literals with ite terms")
     ap.add_argument("files", nargs="*")
     a = ap.parse_args()
+    global ITE_TERMS
+    ITE_TERMS = a.ite
     if not TELOS.exists():
         sys.exit("error: build telos first: lake build telos")
     files = [Path(f) for f in a.files]
@@ -599,7 +613,8 @@ def main():
             tpath = path.with_suffix(".pp.smt2")
             tpath.write_text(body)
         ours, err = run([str(TELOS), "--theory-events"] + (["--theory-events-ee"] if a.ee else []) +
-                        (["--no-preprocess"] if a.cvc5_pp else []) + (["--via-sat"] if a.sat else []), tpath)
+                        (["--no-preprocess"] if a.cvc5_pp else []) + (["--via-sat"] if a.sat else []) +
+                        ([f"--decision={a.decision}"] if a.decision else []), tpath)
         if err and "by certificate" in err:
             counts["by-certificate"] += 1
         if ours is None:
@@ -612,11 +627,10 @@ def main():
             rec = path.with_suffix(".cvc5")
             theirs, cerr = (rec.read_text(), "") if rec.exists() else (None, f"no recorded trace {rec}")
         else:
-            # arithmetic logics use the justification heuristic by default, which
-            # telos does not port yet: MiniSat's own decisions are compared
+            # (the decision mode is the logic's, as in telos, unless `--decision`)
             theirs, cerr = run([a.cvc5, *CVC5_OPTS] + (["-o", "theory-events-ee"] if a.ee else []) +
                                (["--sat-solver=minisat"] if a.sat else []) +
-                               (["--decision=internal"] if a.sat and a.theory in ("lra", "lia") else []), path)
+                               ([f"--decision={a.decision}"] if a.decision else []), path)
         if theirs is None or "(error" in theirs:
             failures.append((path, cerr or theirs))
             continue

@@ -135,6 +135,9 @@ structure UserOptions where
   staticLearning : Option Bool := none
   arithStaticLearning : Option Bool := none
   repeatSimp : Option Bool := none
+  /-- `--decision=MODE` (`internal`, `justification` or `stoponly`): the SAT
+  solver's decision mode, which the logic decides otherwise. -/
+  decision : Option String := none
   deriving Repr
 
 /-- The options the preprocessor runs with. -/
@@ -216,6 +219,9 @@ def UserOptions.parseArg (u : UserOptions) (arg : String) : Option UserOptions :
     some { u with arithStaticLearning := some b }
   else if let some b := boolOption? "repeat-simp" arg then
     some { u with repeatSimp := some b }
+  else if arg.startsWith "--decision=" then
+    let m := (arg.drop "--decision=".length).toString
+    if ["internal", "justification", "stoponly"].contains m then some { u with decision := some m } else none
   else none
 
 end Telos.Preprocess

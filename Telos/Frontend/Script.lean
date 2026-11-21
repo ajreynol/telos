@@ -20,7 +20,8 @@ replays that numbering to map constants back to their names, so that they become
 
 Supported commands: `declare-const`, `declare-fun`, `declare-sort`,
 `declare-datatypes` and `declare-datatype`, `define-fun`, `simplify`, `assert`,
-`check-sat` and `set-logic`; `set-option`, `set-info` and `exit` are ignored.
+`check-sat` and `set-logic`; of `set-option`, only `:decision`; `set-info`
+and `exit` are ignored.
 Scripts of `simplify` queries have no assertions; a benchmark for the
 preprocessor has assertions and one `check-sat` after them (incremental scripts
 are not supported).
@@ -69,6 +70,8 @@ structure Script where
   assertions : List Assertion := []
   /-- The logic of `set-logic`. -/
   logic : Option String := none
+  /-- The decision mode of `(set-option :decision MODE)`, if any. -/
+  decision : Option String := none
   /-- The declared sorts, datatypes and constants, in order. -/
   symbols : List Symbol := []
 
@@ -291,6 +294,7 @@ def readScript (input : String) (cvc5Output : Bool := false) : Except String Scr
   -- the sources of the `simplify` (`true`) and `assert` (`false`) commands, in order
   let mut items : Array (Bool × String) := #[]
   let mut logic : Option String := none
+  let mut decision : Option String := none
   let mut symbols : Array Symbol := #[]
   let mut checkSat := false
   -- the arithmetic types of the symbols (of the return types of functions)
@@ -304,6 +308,9 @@ def readScript (input : String) (cvc5Output : Bool := false) : Except String Scr
     match s with
     | .expr [.atom "declare-const", .atom x, ty] => numEnv := (x, NumTy.ofSort ty) :: numEnv
     | .expr [.atom "declare-fun", .atom x, _, ret] => numEnv := (x, NumTy.ofSort ret) :: numEnv
+    | _ => pure ()
+    match s with
+    | .expr [.atom "set-option", .atom ":decision", .atom m] => decision := some m
     | _ => pure ()
     match s with
     | .expr (.atom c :: _) =>
@@ -377,7 +384,7 @@ def readScript (input : String) (cvc5Output : Bool := false) : Except String Scr
     else some ⟨src, match Node.ofEo [] (nameConsts constName t) with
       | some n => .ok n
       | none => .error "the term uses an operator telos does not support yet"⟩
-  return { decls := decls.toList, names, queries, dtNames, assertions, logic,
+  return { decls := decls.toList, names, queries, dtNames, assertions, logic, decision,
            symbols := symbols.toList }
 
 end Telos.Frontend

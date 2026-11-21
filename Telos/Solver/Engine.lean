@@ -14,6 +14,7 @@ import Telos.Solver.Cnf
 import Telos.Solver.SatProof
 import Telos.Solver.DtLemma
 import Telos.Solver.Theory.Arith.Solver
+import Telos.Solver.Decision
 
 /-!
 # The theory engine, on conjunctions of literals
@@ -84,6 +85,30 @@ def arithOptionsOf (logic : String) : Arith.Options :=
   | .ok l => let l := l.widen; Arith.Options.ofLogic l.pureArith l.quantified l.linear l.integers l.difference
   | .error _ => Arith.Options.ofLogic false true false true false
 
+/-- `SetDefaults::setDefaultDecisionMode`: justification for `ALL`,
+quantifiers, strings, QF_LRA, the logics of bit-vectors with UF or arrays,
+QF_BV, and QF_AUFLIA; stop-only for QF_LRA and QF_AUFLIA; internal (MiniSat's
+own decisions) otherwise. `--decision=MODE` overrides it. -/
+def decisionModeOf (logic : String) (user : Option String := none) : Decision.Mode :=
+  match user with
+  | some "internal" => .internal
+  | some "justification" => .justification
+  | some "stoponly" => .stopOnly
+  | _ =>
+    match Preprocess.Logic.parse logic with
+    | .error _ => .internal
+    | .ok l =>
+      let all := l == Preprocess.Logic.all
+      let l := l.widen
+      let qfLra := !l.quantified && l.pureArith && l.linear && !l.difference && !l.integers
+      let qfAuflia := !l.quantified && l.arrays && l.uf && l.arith
+      let justification := all ||
+        (!l.quantified && l.bv && l.numTheories == 1) ||
+        (!l.quantified && (l.arrays || l.uf) && l.bv) ||
+        qfAuflia || qfLra || l.quantified || l.strings
+      let stopOnly := !(all || l.strings) && (qfAuflia || qfLra)
+      if !justification then .internal else if stopOnly then .stopOnly else .justification
+
 /-- The configuration of the engine. -/
 structure Config where
   /-- The enabled theories, in cvc5's order. -/
@@ -113,6 +138,8 @@ structure Config where
   satMode : Bool := false
   /-- The linear solver's options that the logic decides. -/
   arith : Arith.Options := {}
+  /-- The SAT solver's decision mode. -/
+  decision : Decision.Mode := .internal
 
 /-- A Boolean term skolem (`Env::isBooleanTermSkolem`): the purification
 skolem of a Boolean term in a term position, which term formula removal
@@ -215,6 +242,7 @@ structure Saved where
   asserted : Nat
   sharedLog : Nat
   registerLog : Nat
+  skActive : Nat
   deriving Inhabited
 
 /-- An undo entry of the shared terms database and the propagation marks (cvc5's
@@ -320,6 +348,19 @@ structure State where
   satLemmaQueue : Array (Node × Bool × Option Pending × Option EqProof) := #[]
   /-- The sources of the formulas given to the CNF stream. -/
   satSources : Array SatSource := #[]
+  /-- The formulas given to the decision engine since it last took them (the
+lemmas, as `TheoryProxy::notifyAssertion`), and the skolem definitions that
+became active (its local assertions). -/
+  decisionQueue : Array Node := #[]
+  decisionLocalQueue : Array Node := #[]
+  /-- The skolem definitions (`SkolemDefManager`): of each skolem, and those
+  active (context dependent, in order). -/
+  skDefs : Std.HashMap Key Node := {}
+  skActive : Array Node := #[]
+  skActiveSet : Std.HashSet Key := {}
+  /-- A skolem definition became active in the last check
+  (`d_activatedSkDefs`). -/
+  activatedSkDefs : Bool := false
   /-- The outputs of the linear solver left to `flushArithDeferred`. -/
   arithDeferred : Array Arith.Output := #[]
   /-- `TheoryEngine::d_outputChannelUsed` and `d_lemmasAdded`, since the last
@@ -758,8 +799,51 @@ def pushLevel : EngineM Unit :=
   modify fun s =>
     let sv : Saved := ⟨s.assignTrail.size, s.preregLog.size, s.ufFacts.size, s.ufHead,
       s.dtFacts.size, s.dtHead, s.arithFacts.size, s.arithHead, s.factsAsserted, s.inConflict, s.theoryConflict, s.propagated.size, s.asserted.size,
-      s.sharedLog.size, s.registerLog.size⟩
+      s.sharedLog.size, s.registerLog.size, s.skActive.size⟩
     { s with saved := s.saved.push sv, level := s.level + 1, ee := EE.push s.ee, arith := s.arith.push }
+
+/-- A purification skolem (as `--post-asserts` names it in a script read back). -/
+def isPurifySkolem : Node → Bool
+  | .skolem .PURIFY _ => true
+  | .var name _ => name.startsWith "@purify_"
+  | _ => false
+
+/-- The skolem a formula defines, if it is a skolem definition of term formula
+removal: `(ite c (= k t₁) (= k t₂))` for an `ite` term, `(= k t)` for a
+Boolean term. -/
+def skolemOfDefinition (f : Node) : Option Node :=
+  let sides : Node → Array Node
+    | .app (.kind .EQUAL) #[a, b] => #[a, b]
+    | _ => #[]
+  match f with
+  | .app (.kind .ITE) #[_, e1, e2] =>
+    (sides e1).find? fun k => isPurifySkolem k && (sides e2).contains k
+  | .app (.kind .EQUAL) #[a, b] =>
+    if isPurifySkolem a && a.typeHint == some .boolean then some a
+    else if isPurifySkolem b && b.typeHint == some .boolean then some b else none
+  | _ => none
+
+/-- `SkolemDefManager::notifyAsserted`: the definitions of the skolems of an
+asserted literal that were not active, now active. -/
+def activateSkolems (lit : Node) : EngineM (Array Node) := do
+  let s ← get
+  if s.skDefs.isEmpty || s.skActive.size == s.skDefs.size then return #[]
+  let mut out := #[]
+  let mut visit := #[lit]
+  let mut seen : Std.HashSet Key := {}
+  while !visit.isEmpty do
+    let cur := visit.back!
+    visit := visit.pop
+    if seen.contains ⟨cur⟩ then continue
+    seen := seen.insert ⟨cur⟩
+    if let some d := s.skDefs.get? ⟨cur⟩ then
+      if !(← get).skActiveSet.contains ⟨d⟩ && !out.contains d then out := out.push d
+      continue
+    match cur with
+    | .app _ cs => visit := visit ++ cs
+    | _ => pure ()
+  modify fun s => { s with skActive := s.skActive ++ out, skActiveSet := out.foldl (·.insert ⟨·⟩) s.skActiveSet }
+  return out
 
 /-- Return to the SAT context level `k` (`Context::pop`), restoring what was
 saved when leaving it. -/
@@ -814,6 +898,11 @@ def popTo (k : Nat) : EngineM Unit := do
   let mut reg := reg
   for i in [sv.registerLog:rlog.size] do reg := reg.erase rlog[i]!
   modify fun s => { s with registered := reg, registerLog := rlog.take sv.registerLog }
+  -- the skolem definitions activated above level `k`
+  modify fun s =>
+    let gone := s.skActive.extract sv.skActive s.skActive.size
+    { s with skActive := s.skActive.take sv.skActive,
+             skActiveSet := gone.foldl (·.erase ⟨·⟩) s.skActiveSet }
   modify fun s => { s with
     assignment := asg, assignTrail := s.assignTrail.take sv.assignTrail,
     preregVisited := pv, preregLog := s.preregLog.take sv.preregLog,
@@ -980,6 +1069,8 @@ def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (proof : O
       | some (.arith p) => newSatSource (.arith (some (exp, p)))
       | _ => newSatSource (.theory cert)
     withCnf (Cnf.convertAndAssert (cnfHost c) (EE.mkAnd exp) false (negated := true) src)
+    -- (`PropEngine::assertLemmasInternal` notifies the decision engine)
+    modify fun s => { s with decisionQueue := s.decisionQueue.push (Node.notNode (EE.mkAnd exp)) }
   else
     let lem₀ := lem
     let lem := Telos.rewrite lem
@@ -997,6 +1088,7 @@ def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (proof : O
         let cert := proof.bind (DtLemma.forFormula lem₀ lem) |>.map (lem, ·)
         newSatSource (.lemma cert)
     withCnf (Cnf.convertAndAssert (cnfHost c) lem false (src := src))
+    modify fun s => { s with decisionQueue := s.decisionQueue.push lem }
 
 /-- `TheoryEngine::lemma`, after the event: the lemma, preprocessed (rewritten),
 goes to the CNF stream, which preregisters its new atoms. -/

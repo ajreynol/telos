@@ -141,7 +141,8 @@ def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Boo
   let named (n : Node) : String :=
     (substSkolems ((namedSkolems sc.dtNames out).map fun (k, v, _) => (k, v)) n).toSmtLibLet sc.dtNames
   let cfg : Solver.Config := { theories, termBased := opts.termBased, eeEvents, wantProof, cvc5Order,
-                                arith := Solver.arithOptionsOf (sc.logic.getD "ALL") }
+                                arith := Solver.arithOptionsOf (sc.logic.getD "ALL"),
+                                decision := Solver.decisionModeOf (sc.logic.getD "ALL") (u.decision <|> sc.decision) }
   let r ← if useSat cfg out viaSat then pure (Solver.runSat cfg out) else do
     let lits ← engineLiterals named out
     let r := Solver.run cfg lits

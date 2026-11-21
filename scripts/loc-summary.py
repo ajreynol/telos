@@ -3,8 +3,8 @@
 
 Every Lean file of the repository is put in exactly one bucket:
 
-  (1) specification: what `Telos.rewrite_correct` and `Telos.preprocess_correct`
-      mean. This is telos's part of the trusted base (TRUSTED.md): the `Node`
+  (1) specification: what `Telos.rewrite_correct`, `Telos.preprocess_correct`,
+      `Telos.solve_unsat_correct` and `Telos.solve_sat_correct` mean. This is telos's part of the trusted base (TRUSTED.md): the `Node`
       datatype (with `SkolemId`), its translation to Logos terms (`toEo`) and the
       definition of `Node.Equiv`. For reference, the Logos specification it
       builds on (the import closure of `Cpc.Spec` and `Cpc.SmtTranslate` in the
@@ -15,10 +15,16 @@ Every Lean file of the repository is put in exactly one bucket:
   (3) rewriter: `Telos/Rewriter/`, untrusted: the driver, the rule matcher and
       the theory strategies. Generated files are counted separately.
   (4) preprocessor: `Telos/Preprocess/`, untrusted: the pipeline and the passes.
-  (5) front end and proof output: SMT-LIB input, CPC proof printing, the `telos`
+  (5) solver: `Telos/Solver/`, untrusted, in two parts: the certificate
+      checkers and the model evaluator, which the solver theorems prove sound
+      (`SatProof`, `EqProof`, `LinCert`, `Explain`, `Model`), and the rest (the
+      theory engine, the SAT solver, the CNF stream, the theories and the
+      builders of certificates), whose answers stand only if they check.
+  (6) front end and proof output: SMT-LIB input, CPC proof printing, the `telos`
       executable. Untrusted, and outside the theorems.
-  (6) proofs: `verification/TelosProofs/`, minus the specification.
-  (7) tests and fuzzing.
+  (7) proofs: `verification/TelosProofs/` and `verification/TelosFull/`, minus
+      the specification.
+  (8) tests and fuzzing.
 
 A line of code is a non-blank, non-comment line (Lean `--` and nested `/- -/`
 comments stripped), as in Logos's `scripts/cpc-loc-summary.py`.
@@ -48,7 +54,10 @@ SPEC = [
     "verification/TelosProofs/Core/Spec.lean",
 ]
 GENERATED = ["Telos/Rewriter/Rules/Generated.lean", "Telos/Core/RuleNames.lean"]
-FRONTEND = ["Telos/Frontend/", "Telos/Core/Proof/", "Main.lean"]
+FRONTEND = ["Telos/Frontend/", "Telos/Core/Proof/", "Telos/Solver/EqProofCpc.lean", "Main.lean"]
+CHECKERS = ["Telos/Solver/SatProof.lean", "Telos/Solver/EqProof.lean", "Telos/Solver/LinCert.lean",
+            "Telos/Solver/Explain.lean", "Telos/Solver/Model.lean"]
+SOLVER = ["Telos/Solver/"]
 TESTS = ["TelosTests/", "FuzzMain.lean"]
 PROOFS = ["verification/TelosProofs/", "verification/TelosFull/"]
 REWRITER = ["Telos/Rewriter/"]
@@ -59,14 +68,16 @@ CORE = ["Telos/Core/", "Telos.lean"]
 BUCKETS = [
     ("spec", "(1) specification (trusted)", SPEC),
     ("gen", "(3) rewriter: generated rule tables", GENERATED),
-    ("front", "(5) front end and proof output", FRONTEND),
-    ("tests", "(7) tests and fuzzing", TESTS),
-    ("proofs", "(6) proofs", PROOFS),
+    ("front", "(6) front end and proof output", FRONTEND),
+    ("tests", "(8) tests and fuzzing", TESTS),
+    ("proofs", "(7) proofs", PROOFS),
+    ("check", "(5) solver: checkers and evaluator", CHECKERS),
+    ("solver", "(5) solver: engine, SAT solver, theories", SOLVER),
     ("rw", "(3) rewriter: hand-written", REWRITER),
     ("pp", "(4) preprocessor", PREPROCESSOR),
     ("core", "(2) core (shared, untrusted)", CORE),
 ]
-DISPLAY = ["spec", "core", "rw", "gen", "pp", "front", "proofs", "tests"]
+DISPLAY = ["spec", "core", "rw", "gen", "pp", "check", "solver", "front", "proofs", "tests"]
 SKIP_DIRS = {".lake", ".git"}
 
 

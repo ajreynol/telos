@@ -144,8 +144,8 @@ cvc5's theory engine (`Telos/Solver/`), and prints the events at the interface
 of the theory solvers, as cvc5 prints them with `-o theory-events`, then the
 answer. That cvc5 output needs the patch `cvc5-theory-events.patch`.
 
-So far the engine, UF, datatypes, cvc5's MiniSat and linear real arithmetic
-are ported: cvc5's equality engine, used as the central one, UF and datatypes
+So far the engine, UF, datatypes, cvc5's MiniSat with its decision engine (the
+justification heuristic) and linear arithmetic are ported: cvc5's equality engine, used as the central one, UF and datatypes
 over it, and linear arithmetic (`Telos/Solver/Theory/Arith/`: the simplex,
 branch and bound and the Diophantine solver; not yet with other theories). In
 other logics the theories' checks do nothing, and the answer is `unknown` as
@@ -236,7 +236,7 @@ lake build telos-fuzz && python3 scripts/fuzz.py --cvc5 PATH   # compare the rew
 python3 scripts/fuzz-pp.py --cvc5 PATH [--proofs]               # compare the preprocessor with cvc5 (and check its proofs)
 python3 scripts/fuzz-lemmas.py --cvc5 PATH [--solver PATH]       # compare the rewriter with cvc5 on its solver's lemmas (-t im)
 python3 scripts/check-proofs.py --fuzz 500                      # proofs, with Ethos
-python3 scripts/loc-summary.py                                  # lines: spec, core, rewriter, preprocessor, proofs
+python3 scripts/loc-summary.py                                  # lines: spec, core, rewriter, preprocessor, solver, proofs
 bash scripts/profile.sh                                         # where rewriting time goes
 ```
 

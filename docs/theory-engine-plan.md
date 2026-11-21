@@ -872,7 +872,7 @@ engine (59) is certified, agrees with cvc5, and its CPC proof is accepted by
 Ethos. Most `unsat`s of random conjunctions are decided by preprocessing.
 `test/solve/dt-*.smt2` has a clash, a cycle and a tester conflict.
 
-## Stage 6: the SAT solver (in progress: milestones 1, 2 and 4 done)
+## Stage 6: the SAT solver (in progress: milestones 1 to 4 done)
 
 Without a SAT solver, telos solves conjunctions of literals and replays cvc5's
 search. Theories with lemmas (datatypes' splits and forced instantiations) need
@@ -1072,11 +1072,43 @@ several reasons. Next: a CPC proof of the refutation for Ethos (`rw` is printed
 as the rewriter's CPC proof, `Proof.emitChain`, which fails on its semantic
 steps).
 
+**The decision engine (milestone 3) is done** (`Telos/Solver/Decision.lean`):
+a port of cvc5's `JustificationStrategy`, with its assertion lists, justify
+cache and stack, their context-dependent parts restored at the SAT solver's
+pops. The mode is the logic's (`decisionModeOf`, `setDefaultDecisionMode`):
+justification for `ALL`, quantifiers, strings and a few combinations; stop-only
+(MiniSat decides, the heuristic stops the search once the assertions are
+justified) for QF_LRA and QF_AUFLIA; MiniSat's own decisions otherwise (QF_UF,
+QF_UFDT, QF_LIA). `--decision=MODE`, or `(set-option :decision MODE)` in the
+script, overrides it. The input formulas go to the heuristic before their
+conversion (`notifyInputFormulas`), every lemma after its own (conflicts
+included, as `(not (and …))`); skolem definitions of term formula removal wait
+until an asserted literal has their skolem (`jh-skolem-rlv=ASSERT`,
+`SkolemDefManager`), which makes a full check a standard one and asks for
+another check. A skolem definition is recognized by its form
+(`skolemOfDefinition`), so that it is one also in a script of cvc5's
+preprocessed assertions (`--cvc5-pp`).
+
+On cvc5's preprocessed assertions (`--cvc5-pp`), justification agrees with
+cvc5 exactly as often as MiniSat's own decisions do: on 200 of 200 QF_UF
+benchmarks with nested connectives, 174 of 200 QF_LRA ones, the same on
+QF_LIA with clauses; on QF_UFDT, but for 3 with purification skolems of the
+datatypes' `ppRewrite` (whose definitions are not recognized). With telos's
+own preprocessing, the differences that only justification shows (5 to 7 of
+200) come from the order of the children of Boolean equalities, by node id,
+which the heuristic follows; the same order, and the order of preregistration,
+make about a quarter of the benchmarks with nested connectives differ under
+MiniSat's decisions too. Stop-only adds no difference on QF_LRA with `ite`
+terms (`--ite`), where skolem definitions become relevant during the search;
+without their activation, half the benchmarks would differ.
+
 Not yet:
 - theory combination's care graph (`combineTheories`, splits on shared terms),
   at full effort with sharing;
-- decision requests of the theories;
-- the decision engine (milestone 3).
+- decision requests of the theories (none of the ported theories makes any);
+- the relevance order of the heuristic (`--jh-rlv-order`, off by default);
+- the skolem definitions of lemmas (`ppLemmas` of the theory preprocessor) and
+  of the theories' `ppRewrite`s other than term formula removal.
 
 Two Lean pitfalls caused bugs here, worth knowing:
 - `if a && !(← x)` runs `x` whatever `a` is: a nested action is lifted before
@@ -1261,8 +1293,7 @@ The CPC proof for Ethos is not done (as for the SAT solver's refutations in
 general).
 
 Results (`scripts/fuzz-solve.py --theory lra --sat --cvc5-pp`, cvc5 with
-`--decision=internal`, since arithmetic logics use the justification
-heuristic, milestone 3 of Stage 6): the input events agree on all of 300
+`--decision=internal` then, before the decision engine of Stage 6): the input events agree on all of 300
 random conjunctions and 300 with clauses. All the events (lemmas, conflicts,
 propagations, backtracking) and the answer agree on 283 of 300 larger
 conjunctions (96 `unsat`) and 291 of 300 with clauses; with telos's own

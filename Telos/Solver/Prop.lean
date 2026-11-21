@@ -47,10 +47,18 @@ def enqueueSat (lit : Node) : EngineM Unit := do
 /-- `TheoryProxy::theoryCheck`: the queued literals are asserted, then the
 theories are checked. -/
 def satCheck (e : Effort) : EngineM Unit := do
-  let q ← modifyGet fun s => (s.satQueue, { s with satQueue := #[] })
+  let q ← modifyGet fun s => (s.satQueue, { s with satQueue := #[], activatedSkDefs := false })
+  let mut e := e
   for lit in q do
     modify fun s => { s with asserted := s.asserted.push lit }
     assertFact lit
+    -- `TheoryProxy::theoryCheck`: the skolem definitions the literal activates
+    -- go to the decision engine, and a full check becomes a standard one
+    if (← read).decision != .internal then
+      let defs ← activateSkolems lit
+      if !defs.isEmpty then
+        modify fun s => { s with decisionLocalQueue := s.decisionLocalQueue ++ defs, activatedSkDefs := true }
+        if e == .full then e := .standard
   flushLemmas
   check e
   flushLemmas
@@ -99,6 +107,9 @@ structure PropState where
   certificate of a refutation. -/
   base : Array (Array Lit × BaseTag) := #[]
   learned : Array (Array Lit) := #[]
+  /-- The decision engine (`JustificationStrategy`), unless the mode is
+  internal. -/
+  dec : Decision.State := {}
 
 abbrev PropM := ReaderT Config (StateM PropState)
 
@@ -111,12 +122,35 @@ instance : MonadStateOf Sat.Solver PropM where
     let (a, sat) := f sat
     (a, { p with sat })
 
-/-- Run an operation of the engine. -/
+/-- Run an operation of the engine; the formulas it gave the decision engine
+are added to it (`TheoryProxy::notifyAssertion`). -/
 def onEngine (x : EngineM α) : PropM α := do
   let c ← read
   let e ← modifyGetThe PropState fun p => (p.eng, { p with eng := {} })
   let (a, e) := (x.run c).run e
-  modifyThe PropState fun p => { p with eng := e }
+  let q := e.decisionQueue
+  let ql := e.decisionLocalQueue
+  let e := { e with decisionQueue := #[], decisionLocalQueue := #[] }
+  modifyThe PropState fun p =>
+    let dec := if c.decision == .internal || q.isEmpty then p.dec else p.dec.addAssertions q
+    let dec := if c.decision == .internal || ql.isEmpty then dec else dec.addAssertions ql (isLocal := true)
+    { p with eng := e, dec := dec }
+  return a
+
+/-- Run an operation of the decision engine, with the SAT solver's values of
+the theory atoms. -/
+def onDecision (x : Decision.DecM α) : PropM α := do
+  let p ← getThe PropState
+  let oracle : Decision.Oracle := fun atom =>
+    match Cnf.getLiteral? p.eng.cnf atom with
+    | some l => match p.sat.value l with
+      | .tt => some true
+      | .ff => some false
+      | _ => none
+    | none => none
+  let d ← modifyGetThe PropState fun p => (p.dec, { p with dec := {} })
+  let (a, d) := (x.run oracle).run d
+  modifyThe PropState fun p => { p with dec := d }
   return a
 
 def cnfState : PropM Cnf.State := do return (← getThe PropState).eng.cnf
@@ -186,17 +220,31 @@ instance : TheoryProxy PropM where
   enqueueTheoryLiteral l := do
     let n ← satNode l
     onEngine (enqueueSat n)
-  contextPush := onEngine pushLevel
-  contextPop := onEngine do
-    let k := (← get).level - 1
-    popTo k
-    emit (.pop k)
+  contextPush := do
+    onEngine pushLevel
+    modifyThe PropState fun p => { p with dec := p.dec.push }
+  contextPop := do
+    onEngine do
+      let k := (← get).level - 1
+      popTo k
+      emit (.pop k)
+    modifyThe PropState fun p => { p with dec := p.dec.pop }
   notifyBacktrack := onEngineF satBacktrack
-  getNextDecisionRequest := pure (Lit.undef, false, false)
-  isDecisionEngineDone := pure false
+  getNextDecisionRequest := do
+    if (← read).decision == .internal then return (Lit.undef, false, false)
+    -- (no theory has decision strategies: the decision engine's)
+    let (d, stop) ← onDecision Decision.getNext
+    match d with
+    | some (atom, v) =>
+      let l ← satLit atom
+      return (if v then l else l.neg, false, stop)
+    | none => return (Lit.undef, false, stop)
+  isDecisionEngineDone := do
+    if (← read).decision == .internal then return false
+    onDecision Decision.isDone
   theoryNeedCheck := onEngine do
     let s ← get
-    return s.outputUsed || s.lemmasAdded
+    return s.outputUsed || s.lemmasAdded || s.activatedSkDefs
   notifySatClause c := modifyThe PropState fun p => { p with learned := p.learned.push c }
   notifyRestart := pure ()
 
@@ -240,11 +288,26 @@ def propSolve (formulas : List Node) : PropM Sat.Solver.Result := do
   onEngine pushLevel
   -- the node ids that the arithmetic solver approximates (by first occurrence)
   onEngine (modify fun s => { s with arith := formulas.foldl Arith.State.noteAges s.arith })
+  -- `notifyInputFormulas`: the formulas go to the decision engine first, before
+  -- the lemmas that their conversion may give
+  -- (skolem definitions wait until they become relevant, `jh-skolem-rlv=ASSERT`)
+  if c.decision != .internal then
+    let mut defs : Std.HashMap Key Node := {}
+    let mut plain := #[]
+    for f in formulas do
+      match skolemOfDefinition f with
+      | some k => defs := defs.insert ⟨k⟩ f
+      | none => plain := plain.push f
+    let defs' := defs
+    onEngine (modify fun s => { s with skDefs := defs' })
+    let plain' := plain
+    modifyThe PropState fun p => { p with dec := { p.dec.addAssertions plain' with mode := c.decision } }
   for (f, i) in formulas.zipIdx do
     onEngineTop do
       let src ← newSatSource (.input (i + 2))
       withCnf (Cnf.convertAndAssert (cnfHost c) f false (src := src))
-  -- `TheoryEngine::presolve`
+  -- `TheoryProxy::presolve`: the decision engine's, then the theories'
+  modifyThe PropState fun p => { p with dec := p.dec.presolve }
   if c.arithSolver then onEngineTop (withArith Arith.presolve)
   Sat.Solver.solve
 
