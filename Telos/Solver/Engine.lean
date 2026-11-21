@@ -140,6 +140,8 @@ structure Config where
   arith : Arith.Options := {}
   /-- The SAT solver's decision mode. -/
   decision : Decision.Mode := .internal
+  /-- The declared constants, by their order of declaration (cvc5's node ids). -/
+  declOrder : Std.HashMap String Nat := {}
 
 /-- A Boolean term skolem (`Env::isBooleanTermSkolem`): the purification
 skolem of a Boolean term in a term position, which term formula removal
@@ -178,8 +180,12 @@ among UF, datatypes and arithmetic, and the logic is quantifier-free. -/
 def Config.satSupported (c : Config) : Bool :=
   c.theories.all ([.THEORY_BUILTIN, .THEORY_BOOL, .THEORY_UF, .THEORY_DATATYPES, .THEORY_ARITH].contains ·)
 
+/-- The central equality engine runs, with UF and datatypes: the theories are
+supported (with arithmetic or not). -/
+def Config.eeSolver (c : Config) : Bool := c.satSupported
+
 /-- The theory of datatypes is enabled, and solved. -/
-def Config.dtSolver (c : Config) : Bool := c.ufSolver && c.theories.contains .THEORY_DATATYPES
+def Config.dtSolver (c : Config) : Bool := c.eeSolver && c.theories.contains .THEORY_DATATYPES
 
 /-- The answer to `check-sat`. -/
 inductive Answer where
@@ -243,6 +249,8 @@ structure Saved where
   sharedLog : Nat
   registerLog : Nat
   skActive : Nat
+  ufFunctionTerms : Nat
+  arithShared : Nat
   deriving Inhabited
 
 /-- An undo entry of the shared terms database and the propagation marks (cvc5's
@@ -358,6 +366,15 @@ became active (its local assertions). -/
   skDefs : Std.HashMap Key Node := {}
   skActive : Array Node := #[]
   skActiveSet : Std.HashSet Key := {}
+  /-- UF's function applications (`d_functionsTerms`, context dependent), for
+  its care graph. -/
+  ufFunctionTerms : Array Node := #[]
+  /-- Arithmetic's shared terms (its `TheoryState::getSharedTerms`, context
+  dependent), in order. -/
+  arithShared : Array Node := #[]
+  /-- The lemmas the builtin theory sent (the combination splits), rewritten
+  (its inference manager's cache). -/
+  builtinLemmas : Std.HashSet Key := {}
   /-- A skolem definition became active in the last check
   (`d_activatedSkDefs`). -/
   activatedSkDefs : Bool := false
@@ -394,7 +411,8 @@ def eeCtx : EngineM EE.Ctx := do
   let asg := (← get).assignment
   let dt := (← read).dtSolver
   let base : EE.Ctx := { congruenceKinds := fun k => UF.congruenceKind k || (dt && DT.congruenceKind k),
-                         value := fun a => asg.get? ⟨a⟩, cvc5Order := (← read).cvc5Order }
+                         value := fun a => asg.get? ⟨a⟩, cvc5Order := (← read).cvc5Order,
+                         declOrder := (← read).declOrder }
   return if dt then { base with onNote := DT.onNote base } else base
 
 /-- Run an operation of the equality engine, and take its notes. -/
@@ -428,6 +446,12 @@ def propagate (T : Theory) (lit : Node) : EngineM Unit := do
   | none => pure ()
   modify fun s => { s with propagated := s.propagated.push lit }
 
+/-- The key of a literal in the record of the literals given to theories
+(`markPropagation`): the central equality engine's theories share one record;
+arithmetic has its own (its unary-`and` wrapper cannot be a literal). -/
+def markKey (T : Theory) (lit : Node) : Key :=
+  if T == .THEORY_ARITH then ⟨Node.mkNode .AND #[lit]⟩ else ⟨lit⟩
+
 /-- An equality literal with its sides swapped. -/
 def flipEq : Node → Node
   | .app (.kind .EQUAL) #[a, b] => Node.eqNode b a
@@ -450,13 +474,14 @@ def assertShared (T : Theory) (lit : Node) : EngineM Unit := do
     return
   let norm := lit
   let marked := (← get).markedBuiltin
-  if marked.contains ⟨norm⟩ || marked.contains ⟨flipEq norm⟩ then return
-  modify fun s => { s with markedBuiltin := s.markedBuiltin.insert ⟨norm⟩,
-                           sharedLog := s.sharedLog.push (.markedBuiltin ⟨norm⟩),
+  if marked.contains (markKey T norm) || marked.contains (markKey T (flipEq norm)) then return
+  modify fun s => { s with markedBuiltin := s.markedBuiltin.insert (markKey T norm),
+                           sharedLog := s.sharedLog.push (.markedBuiltin (markKey T norm)),
                            factsAsserted := true,
                            used := if s.used.contains T then s.used else s.used.push T }
   emit (.assert (← level) T norm)
   if T == .THEORY_DATATYPES then modify fun s => { s with dtFacts := s.dtFacts.push norm }
+  if T == .THEORY_ARITH then modify fun s => { s with arithFacts := s.arithFacts.push norm }
 
 /-- Process the notes of the central equality engine
 (`EqEngineManagerCentral`): its propagations and conflicts are
@@ -493,6 +518,8 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
       -- there (a replay skips the trace's copy)
       if tag == Theory.THEORY_DATATYPES.tag then
         assertShared .THEORY_DATATYPES lit
+      else if tag == Theory.THEORY_ARITH.tag && (← read).arithSolver then
+        assertShared .THEORY_ARITH lit
     | .conflict T id exp =>
       emit (.conflict (← level) T id exp)
       if (← read).satMode then
@@ -557,7 +584,11 @@ def withArith (x : Arith.ArithM α) : EngineM α := do
 
 def theoryPreRegister (T : Theory) (t : Node) : EngineM Unit := do
   if T == .THEORY_ARITH && (← read).arithSolver then withArith (Arith.preRegisterTerm t)
-  if T == .THEORY_UF && (← read).ufSolver then withEE (UF.preRegisterTerm t)
+  if T == .THEORY_UF && (← read).eeSolver then
+    withEE (UF.preRegisterTerm t)
+    -- (`d_functionsTerms`)
+    if let .app (.node .APPLY_UF _) _ := t then
+      modify fun s => { s with ufFunctionTerms := s.ufFunctionTerms.push t }
   if T == .THEORY_DATATYPES && (← read).dtSolver then withEE (DT.preRegisterTerm t)
 
 /-- The theory that owns a type (`Theory::theoryOf(TypeNode)`). -/
@@ -714,7 +745,7 @@ def preRegisterAtom (atom : Node) : EngineM Unit := do
   if !(← read).sharing then return ← preRegisterVisit atom
   sharedVisit atom
   if let .app (.kind .EQUAL) _ := atom then
-    if (← read).ufSolver && !(← get).assignment.contains ⟨atom⟩ then
+    if (← read).eeSolver && !(← get).assignment.contains ⟨atom⟩ then
       withEE (EE.addTriggerPredicate atom)
 
 /-- `SharedSolver::preNotifySharedFact`: the theories sharing the terms of the
@@ -728,14 +759,22 @@ def preNotifySharedFact (atom : Node) : EngineM Unit := do
     let all := s.termTheories.getD (⟨atom⟩, ⟨term⟩) 0
     let old := s.notified.get? ⟨term⟩
     let newly := all ^^^ (all &&& old.getD 0)
+    -- `Theory::addSharedTerm`, of each theory: `notifySharedTerm` (arithmetic
+    -- sets the term up), then the trigger term, for the theories with an
+    -- equality engine
     for T in Theory.all do
-      if hasTheory newly T && (← read).ufSolver &&
-          (T == .THEORY_UF || T == .THEORY_DATATYPES) then
+      if !hasTheory newly T then continue
+      let arith := T == .THEORY_ARITH && (← read).arithSolver
+      if arith then
+        modify fun s => { s with arithShared := s.arithShared.push term }
+        withArith (Arith.notifySharedTerm term)
+      if (← read).eeSolver && (T == .THEORY_UF || T == .THEORY_DATATYPES || arith) then
         withEE (EE.addTriggerTerm term T.tag)
+    -- `SharedTermsDatabase::markNotified`: the trigger terms again
     if newly != 0 then
       modify fun s => { s with notified := s.notified.insert ⟨term⟩ (newly ||| old.getD 0),
                                sharedLog := s.sharedLog.push (.notified ⟨term⟩ old) }
-      if (← read).ufSolver then
+      if (← read).eeSolver then
         for T in Theory.all do
           if hasTheory newly T then withEE (EE.addTriggerTerm term T.tag)
 
@@ -770,11 +809,11 @@ def assertFact (lit : Node) (fromSat : Bool := true) (to : Option Theory := none
   if fromSat && c.sharing then preNotifySharedFact atom
   -- the literal is marked as asserted to the central equality engine's
   -- theories; a theory is not given it twice (`markPropagation`)
-  let marked := (← get).markedBuiltin
-  if marked.contains ⟨lit⟩ || marked.contains ⟨flipEq lit⟩ then return
-  modify fun s => { s with markedBuiltin := s.markedBuiltin.insert ⟨lit⟩,
-                           sharedLog := s.sharedLog.push (.markedBuiltin ⟨lit⟩) }
   let T := to.getD (c.theoryOf atom)
+  let marked := (← get).markedBuiltin
+  if marked.contains (markKey T lit) || marked.contains (markKey T (flipEq lit)) then return
+  modify fun s => { s with markedBuiltin := s.markedBuiltin.insert (markKey T lit),
+                           sharedLog := s.sharedLog.push (.markedBuiltin (markKey T lit)) }
   emit (.assert (← level) T lit)
   modify fun s => { s with factsAsserted := true,
                            used := if s.used.contains T then s.used else s.used.push T }
@@ -799,7 +838,7 @@ def pushLevel : EngineM Unit :=
   modify fun s =>
     let sv : Saved := ⟨s.assignTrail.size, s.preregLog.size, s.ufFacts.size, s.ufHead,
       s.dtFacts.size, s.dtHead, s.arithFacts.size, s.arithHead, s.factsAsserted, s.inConflict, s.theoryConflict, s.propagated.size, s.asserted.size,
-      s.sharedLog.size, s.registerLog.size, s.skActive.size⟩
+      s.sharedLog.size, s.registerLog.size, s.skActive.size, s.ufFunctionTerms.size, s.arithShared.size⟩
     { s with saved := s.saved.push sv, level := s.level + 1, ee := EE.push s.ee, arith := s.arith.push }
 
 /-- A purification skolem (as `--post-asserts` names it in a script read back). -/
@@ -902,6 +941,8 @@ def popTo (k : Nat) : EngineM Unit := do
   modify fun s =>
     let gone := s.skActive.extract sv.skActive s.skActive.size
     { s with skActive := s.skActive.take sv.skActive,
+             ufFunctionTerms := s.ufFunctionTerms.take sv.ufFunctionTerms,
+             arithShared := s.arithShared.take sv.arithShared,
              skActiveSet := gone.foldl (·.erase ⟨·⟩) s.skActiveSet }
   modify fun s => { s with
     assignment := asg, assignTrail := s.assignTrail.take sv.assignTrail,
@@ -1022,15 +1063,15 @@ def cnfHost (c : Config) : Cnf.Host (StateT Cnf.State EngineM) where
 
 /-- The equalities of a formula oriented as cvc5's node ids would (see
 `flushLemmas`). -/
-partial def orientEqs (ids : Std.HashMap Key Nat) (n : Node) : Node :=
+partial def orientEqs (ids : Std.HashMap Key Nat) (n : Node) (decl : Std.HashMap String Nat := {}) : Node :=
   match n with
   | .app (.kind .EQUAL) #[l, r] =>
-    if l.typeHint == some .boolean then .app (.kind .EQUAL) #[orientEqs ids l, orientEqs ids r]
+    if l.typeHint == some .boolean then .app (.kind .EQUAL) #[orientEqs ids l decl, orientEqs ids r decl]
     -- (an arithmetic equality is oriented by its normal form, by the rewriter)
     else if l.typeHint == some .integer || l.typeHint == some .real then n
-    else if EE.ageLt ids r l then Node.eqNode r l else n
+    else if EE.ageLt ids r l decl then Node.eqNode r l else n
   | .app (.kind k) cs =>
-    if Cnf.isConnective n || k == .NOT then .app (.kind k) (cs.map (orientEqs ids)) else n
+    if Cnf.isConnective n || k == .NOT then .app (.kind k) (cs.map (orientEqs ids · decl)) else n
   | _ => n
 
 /-- The outputs of the linear solver from a literal it ensures on: the
@@ -1077,7 +1118,7 @@ def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (proof : O
     let lem₀ := lem
     let lem := Telos.rewrite lem
     let ids := (← get).ee.nodeIds
-    let lem := if c.cvc5Order then orientEqs ids lem else lem
+    let lem := if c.cvc5Order then orientEqs ids lem c.declOrder else lem
     -- the formula's proof, from the lemma's
     let src ← match kind with
       | some (.arith p) =>
@@ -1113,10 +1154,11 @@ def flushLemmas : EngineM Unit := do
           preRegister atom
           continue
         let ids := (← get).ee.nodeIds
+        let decl := (← read).declOrder
         let atom := match atom with
           | .app (.kind .EQUAL) #[l, r] =>
             if l.typeHint == some .integer || l.typeHint == some .real then Telos.rewrite atom
-            else if EE.ageLt ids r l then Node.eqNode r l else atom
+            else if EE.ageLt ids r l decl then Node.eqNode r l else atom
           | _ => Telos.rewrite atom
         preRegister atom
 
@@ -1178,13 +1220,144 @@ def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
       flushLemmas
     let _ ← withArith (Arith.postCheck (e == .full))
     flushArithDeferred
-  if T == .THEORY_UF && (← read).ufSolver then
+  if T == .THEORY_UF && (← read).eeSolver then
     repeat
       let s ← get
       if s.inConflict || s.ufHead ≥ s.ufFacts.size then break
       let fact := s.ufFacts[s.ufHead]!
       modify fun s => { s with ufHead := s.ufHead + 1 }
       withEEF (UF.assertFact fact)
+
+/-! ## Theory combination (`CombinationCareGraph`) -/
+
+/-- The equality engine's representative of a term. -/
+def eeRep (ee : EE.EqualityEngine) (t : Node) : Node :=
+  match ee.nodeIds.get? ⟨t⟩ with
+  | some i => ee.nodes[EE.find ee i]!
+  | none => t
+
+/-- `getTriggerTermRepresentative`: the trigger term of the tag in the class
+of `t`, if it is a trigger term of it (`isTriggerTerm`). -/
+def eeTriggerRep? (ee : EE.EqualityEngine) (t : Node) (tag : Nat) : Option Node := do
+  let i ← ee.nodeIds.get? ⟨t⟩
+  let ts ← (ee.termTriggers[EE.find ee i]?).join
+  if (EE.TSet.tags (some ts) >>> tag) % 2 == 1 then some ee.nodes[EE.TSet.get ts tag]! else none
+
+def eeAreEqual (a b : Node) : EngineM Bool := return (← runEE (EE.areEqual a b)).1
+def eeAreDisequal (a b : Node) : EngineM Bool := return (← runEE (EE.areDisequal a b false)).1
+
+/-- `TheoryEngine::getEqualityStatus` (`SharedSolverDistributed`): by the
+shared terms database (the central equality engine), for two shared terms;
+otherwise by the theory of their type (arithmetic's model, or UF's equality
+engine, which takes the others as disequal in the model). -/
+def equalityStatus (a b : Node) : EngineM Arith.EqStatus := do
+  let s ← get
+  if s.notified.contains ⟨a⟩ && s.notified.contains ⟨b⟩ then
+    if ← eeAreEqual a b then return .trueAndPropagated
+    if ← eeAreDisequal a b then return .falseAndPropagated
+  if (a.typeHint == some .real || a.typeHint == some .integer) && (← read).arithSolver then
+    return ← withArith (Arith.equalityStatus a b)
+  if ← eeAreEqual a b then return .isTrue
+  if ← eeAreDisequal a b then return .isFalse
+  return .falseInModel
+
+/-- `TheoryUF::areCareDisequal`. -/
+def ufAreCareDisequal (x y : Node) : EngineM Bool := do
+  let ee := (← get).ee
+  if ee.nodeIds.contains ⟨x⟩ && ee.nodeIds.contains ⟨y⟩ && (← eeAreDisequal x y) then return true
+  let tag := Theory.THEORY_UF.tag
+  match eeTriggerRep? ee x tag, eeTriggerRep? ee y tag with
+  | some xs, some ys =>
+    match ← equalityStatus xs ys with
+    | .isFalse | .falseAndPropagated | .falseInModel => return true
+    | _ => return false
+  | _, _ => return false
+
+/-- `CarePairArgumentCallback::considerPath`. -/
+def ufConsiderPath (a b : Node) : EngineM Bool := do
+  if a == b then return true
+  if a.isConst && b.isConst then return false
+  return !(← ufAreCareDisequal a b)
+
+/-- `TheoryUF::computeCareGraph`: for the applications of each function with a
+trigger argument, one per vector of argument representatives
+(`TNodeTrie::addTerm`), the pairs whose arguments may be equal
+(`nodeTriePathPairProcess`) give pairs of their trigger arguments that are not
+equal (`processCarePairArgs`, `addCarePairArgs`). The care graph is a set, so
+the order in which the pairs are found does not matter. -/
+def ufCarePairs : EngineM (Array (Node × Node)) := do
+  let tag := Theory.THEORY_UF.tag
+  let ee := (← get).ee
+  let mut groups : Array (Node × Array (Array Node × Node)) := #[]
+  for app in (← get).ufFunctionTerms do
+    let .app (.node .APPLY_UF f) cs := app | continue
+    if !(cs.any fun c => (eeTriggerRep? ee c tag).isSome) then continue
+    let reps := cs.map (eeRep ee)
+    match groups.findIdx? (·.1 == f) with
+    | some i =>
+      if !(groups[i]!.2.any (·.1 == reps)) then
+        groups := groups.modify i fun (f, es) => (f, es.push (reps, app))
+    | none => groups := groups.push (f, #[(reps, app)])
+  let mut out := #[]
+  for (_, es) in groups do
+    for i in [0:es.size] do
+      for j in [i+1:es.size] do
+        let (r1, fa) := es[i]!
+        let (r2, fb) := es[j]!
+        let mut ok := true
+        for k in [0:r1.size] do
+          if !(← ufConsiderPath r1[k]! r2[k]!) then ok := false; break
+        if !ok then continue
+        -- `processCarePairArgs`
+        if ← eeAreEqual fa fb then continue
+        let ee := (← get).ee
+        let (.app _ xs, .app _ ys) := (fa, fb) | continue
+        for k in [0:xs.size] do
+          let (x, y) := (xs[k]!, ys[k]!)
+          if let (some xr, some yr) := (eeTriggerRep? ee x tag, eeTriggerRep? ee y tag) then
+            if !(← eeAreEqual x y) then out := out.push (xr, yr)
+  return out
+
+/-- cvc5's node order, for the care pairs (`EE.ageLt`, with the order of the
+declarations). -/
+def idLt (c : Config) (ids : Std.HashMap Key Nat) (a b : Node) : Bool := EE.ageLt ids a b c.declOrder
+
+/-- `CombinationCareGraph::combineTheories`: the care pairs of the parametric
+theories (UF here: arithmetic is not parametric, its model only prunes UF's
+pairs; datatypes' care graph is not ported), a set ordered by theory and node
+ids, each a split of the equality
+(`COMBINATION_SPLIT`, by the builtin theory, whose lemmas are cached), whose
+literal gets the preferred phase `true`. -/
+def combineTheories : EngineM Unit := do
+  let c ← read
+  let mut pairs : Array (Nat × Node × Node) := #[]
+  if c.eeSolver then
+    for (a, b) in ← ufCarePairs do pairs := pairs.push (Theory.all.idxOf .THEORY_UF, a, b)
+  let ids := (← get).ee.nodeIds
+  -- `CarePair`: the smaller node first; the set's order
+  let normal := pairs.map fun (t, a, b) => if idLt c ids b a then (t, b, a) else (t, a, b)
+  let lt := fun (x y : Nat × Node × Node) =>
+    x.1 < y.1 || (x.1 == y.1 && (idLt c ids x.2.1 y.2.1 ||
+      (x.2.1 == y.2.1 && idLt c ids x.2.2 y.2.2)))
+  let sorted := normal.toList.mergeSort (fun x y => !lt y x)
+  let mut seen : Array (Nat × Node × Node) := #[]
+  for p in sorted do
+    if seen.contains p then continue
+    seen := seen.push p
+    let (_, a, b) := p
+    let eq := Node.eqNode a b
+    let lem := Node.mkNode .OR #[eq, Node.notNode eq]
+    let r := Telos.rewrite lem
+    if (← get).builtinLemmas.contains ⟨r⟩ then continue
+    modify fun s => { s with builtinLemmas := s.builtinLemmas.insert ⟨r⟩, outputUsed := true, lemmasAdded := true }
+    emit (.lemma (← level) .THEORY_BUILTIN "COMBINATION_SPLIT" lem)
+    if c.satMode then
+      satLemma lem false none
+      -- `ensureLiteral`, and `PropEngine::preferPhase` (no event)
+      let e := Telos.rewrite eq
+      let e := if c.cvc5Order then orientEqs ids e c.declOrder else e
+      withCnf (Cnf.ensureLiteral (cnfHost c) e)
+      withCnf (Cnf.preferPhase e true)
 
 /-- `TheoryEngine::check`: rounds of checks of every enabled theory, while new
 facts are asserted and there is no conflict. At full effort the first round
@@ -1202,6 +1375,12 @@ def check (e : Effort) : EngineM Unit := do
         if (← get).inConflict then break
     -- `TheoryEngine::propagate`: arithmetic's (the others propagate as they go)
     if !(← get).inConflict && (← read).arithSolver then withArith Arith.propagate
+    -- at full effort, theory combination, if every fact was processed and no
+    -- lemma was sent
+    let st ← get
+    if e == .full && (← read).sharing && !st.factsAsserted && !(st.outputUsed || st.lemmasAdded) &&
+        !st.inConflict then
+      combineTheories
 
 /-- The explanation of a propagated literal (`TheoryEngine::getExplanation`,
 with the central equality engine), as its assumptions: the equality engine
@@ -1209,7 +1388,7 @@ explains it, and then, in turn, each assumption that the SAT solver did not
 assert (the explanation of an internal fact), until all are; conjunctions are
 split, and `true` dropped. -/
 def explain (lit : Node) : EngineM (Array Node) := do
-  if !(← read).ufSolver then return #[]
+  if !(← read).eeSolver then return #[]
   explainAll #[lit] false
 
 /-- What the SAT solver does with the propagated literals. -/

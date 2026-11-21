@@ -1103,8 +1103,6 @@ terms (`--ite`), where skolem definitions become relevant during the search;
 without their activation, half the benchmarks would differ.
 
 Not yet:
-- theory combination's care graph (`combineTheories`, splits on shared terms),
-  at full effort with sharing;
 - decision requests of the theories (none of the ported theories makes any);
 - the relevance order of the heuristic (`--jh-rlv-order`, off by default);
 - the skolem definitions of lemmas (`ppLemmas` of the theory preprocessor) and
@@ -1150,7 +1148,24 @@ core is about 13k lines of C++: `theory_arith_private.cpp` (6k),
 3. **QF_LIA**: branch and bound, the Diophantine solver, cuts, with certified
    lemmas (splits are valid; cuts are Farkas-like).
 4. **Combination with UF and datatypes**: the congruence manager, care graphs
-   and `combineTheories`; UFLRA, UFLIA.
+   and `combineTheories`; UFLRA, UFLIA. Done so far: arithmetic in the central
+   equality engine (its shared terms are trigger terms, the equalities of
+   their classes are asserted to it, apart from the UF record of what was
+   asserted: `markKey`); the care graph (`combineTheories`, at full effort
+   when every fact was processed and nothing was sent), of UF only, since
+   arithmetic is not parametric: UF's pairs of applications whose arguments
+   may be equal, pruned by `getEqualityStatus` (the central engine for shared
+   terms, else arithmetic's model), each a `COMBINATION_SPLIT` lemma (cached
+   by the builtin theory) whose equality is a SAT literal with the preferred
+   phase `true`; `Theory::addSharedTerm` before `markNotified`, which notify
+   the trigger terms twice, as cvc5 does; combined models (an arithmetic
+   class has the value of a numeral or term in it, or a fresh one). cvc5's
+   node ids for the declared constants are their order of declaration
+   (`declOrder`). On QF_UFLRA (`fuzz-solve.py --theory uflra`) every answer
+   agrees with cvc5's, and the events of 80% of the benchmarks; the rest
+   differ in the order of the monomials of applications (cvc5's node ids).
+   Not yet: the congruence manager (arithmetic's equalities to the equality
+   engine), datatypes' care graph, QF_UFLIA.
 5. Later: nonlinear arithmetic (`nl-ext`).
 
 ### Port notes (cvc5's linear solver, `src/theory/arith/linear/`)

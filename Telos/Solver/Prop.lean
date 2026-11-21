@@ -274,7 +274,7 @@ def propSolve (formulas : List Node) : PropM Sat.Solver.Result := do
   let c ← read
   Sat.Solver.init
   onEngine do
-    if c.ufSolver then
+    if c.eeSolver then
       let ctx ← eeCtx
       modify fun s => { s with ee := { EE.init ctx with dt := { enabled := c.dtSolver } } }
   -- `PropEngine::finishInit`: `true` and `(not false)`, at level 0
@@ -377,7 +377,7 @@ def runSat (c : Config) (formulas : List Node) : Result :=
     -- arithmetic is solved if its relaxation is satisfiable and it met nothing
     -- unsupported
     let arithOk := c.arithSolver && e.arith.unsupported.isNone && e.arith.qflraStatus == .sat
-    let solved := e.used.isEmpty || ((c.ufSolver || arithOk) &&
+    let solved := e.used.isEmpty || ((c.eeSolver || arithOk) &&
       e.used.all fun T => [.THEORY_UF, .THEORY_DATATYPES].contains T || (T == .THEORY_ARITH && arithOk))
     { answer := if solved then .sat else .unknown, events := e.events, ee := e.ee,
       asserted := e.asserted ++ bools, arithModel := if arithOk then Arith.modelValues e.arith else #[] }

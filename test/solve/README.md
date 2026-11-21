@@ -23,5 +23,8 @@ certificates of arithmetic conflicts and lemmas, and `sat-lia-unsat` and
 `sat-lia-dio-conflict` those of branches and of the Diophantine solver's
 conflicts). `sat-lia-*` have branch and bound (`sat-lia-branch`), the
 Diophantine solver's cuts (`sat-lia-dio-cut`, with the `pop` of its
-speculative scope) and conflicts. With `--proofs`,
+speculative scope) and conflicts. `sat-uflra-*` combine UF and arithmetic:
+a split of the care graph (`COMBINATION_SPLIT`) that arithmetic then refutes
+(`sat-uflra-split-unsat`), and a model with the values of arithmetic for the
+classes of the equality engine (`sat-uflra-model`). With `--proofs`,
 the refutation of each `unsat` is also checked by Ethos.

@@ -288,6 +288,50 @@ def lra_benchmark(rng, size, clauses=False, prelude=LRA_PRELUDE):
     return prelude + "".join(f"(assert {l})\n" for l in out) + "(check-sat)\n"
 
 
+UFLRA_PRELUDE = LRA_PRELUDE.replace("QF_LRA", "QF_UFLRA") + """(declare-fun f (Real) Real)
+(declare-fun g (Real Real) Real)
+"""
+
+
+def uflra_term(rng):
+    """A variable, or an application of `f` or `g` to variables."""
+    vs = ["w", "x", "y", "z"]
+    r = rng.random()
+    if r < 0.25:
+        return f"(f {rng.choice(vs)})"
+    if r < 0.35:
+        return f"(g {rng.choice(vs)} {rng.choice(vs)})"
+    return rng.choice(vs)
+
+
+def uflra_literal(rng):
+    """An arithmetic literal over terms with applications, or an equality of
+    applications."""
+    if rng.random() < 0.25:
+        atom = f"(= {uflra_term(rng)} {uflra_term(rng)})"
+        return atom if rng.random() < 0.6 else f"(not {atom})"
+    ts = [uflra_term(rng) for _ in range(rng.randint(1, 3))]
+    terms = []
+    for t in ts:
+        c = rng.choice([1, 1, 1, 2, -1, 3, -2])
+        terms.append(t if c == 1 else f"(* {c} {t})" if c > 0 else f"(* (- {-c}) {t})")
+    lhs = terms[0] if len(terms) == 1 else "(+ " + " ".join(terms) + ")"
+    rel = rng.choice(["<=", "<", ">=", ">", "<=", ">="])
+    c = rng.randint(-4, 4)
+    atom = f"({rel} {lhs} {c if c >= 0 else f'(- {-c})'})"
+    return atom if rng.random() < 0.8 else f"(not {atom})"
+
+
+def uflra_benchmark(rng, size, clauses=False):
+    out = []
+    for _ in range(rng.randint(2, size)):
+        if clauses and rng.random() < 0.5:
+            out.append("(or " + " ".join(uflra_literal(rng) for _ in range(rng.randint(2, 3))) + ")")
+        else:
+            out.append(uflra_literal(rng))
+    return UFLRA_PRELUDE + "".join(f"(assert {l})\n" for l in out) + "(check-sat)\n"
+
+
 def lia_benchmark(rng, size, clauses=False):
     """The literals of `lra_benchmark`, over integers."""
     return lra_benchmark(rng, size, clauses, LIA_PRELUDE)
@@ -545,7 +589,7 @@ def main():
     ap.add_argument("--sat", action="store_true",
                     help="solve with telos's SAT solver (--via-sat), cvc5 with --sat-solver=minisat")
     ap.add_argument("--size", type=int, default=6, help="the most literals of a random benchmark")
-    ap.add_argument("--theory", choices=["uf", "dt", "lra", "lia"], default="uf", help="the theory of the random benchmarks")
+    ap.add_argument("--theory", choices=["uf", "dt", "lra", "lia", "uflra"], default="uf", help="the theory of the random benchmarks")
     ap.add_argument("--decision", choices=["internal", "justification", "stoponly"],
                     help="the SAT solver's decision mode, for both (otherwise the logic's)")
     ap.add_argument("--ite", action="store_true", help="arithmetic literals with ite terms")
@@ -563,11 +607,12 @@ def main():
             p = tmp / f"s{i}.smt2"
             if a.bool:
                 prelude, lit = {"dt": (DT_PRELUDE, dt_literal), "lra": (LRA_PRELUDE, lra_literal),
-                                  "lia": (LIA_PRELUDE, lra_literal)}.get(
+                                  "lia": (LIA_PRELUDE, lra_literal), "uflra": (UFLRA_PRELUDE, uflra_literal)}.get(
                     a.theory, (UF_PRELUDE, uf_literal))
                 p.write_text(bool_benchmark(prelude, lit, rng, a.size))
             else:
-                gen = {"dt": dt_benchmark, "lra": lra_benchmark, "lia": lia_benchmark}.get(a.theory, uf_benchmark)
+                gen = {"dt": dt_benchmark, "lra": lra_benchmark, "lia": lia_benchmark,
+                       "uflra": uflra_benchmark}.get(a.theory, uf_benchmark)
                 p.write_text(gen(rng, a.size, a.clauses or a.replay))
             files.append(p)
     counts = collections.Counter()

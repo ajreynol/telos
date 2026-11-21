@@ -64,6 +64,17 @@ def computeRowValue (s : State) (x : Nat) (useSafe : Bool) : DeltaRational :=
 def setupBasicValue (x : Nat) : ArithM Unit :=
   modify fun s => s.setAssignment2 x (computeRowValue s x true) (computeRowValue s x false)
 
+/-- `notifySharedTerm`: the variables of a shared term are set up (`to_real`
+dropped). -/
+def notifySharedTerm (n : Node) : ArithM Unit := do
+  let n := match n with
+    | .app (.kind .TO_REAL) #[a] => a
+    | n => n
+  if constVal? n |>.isNone then
+    if !(← isSetup n) then
+      for (_, m) in (Poly.parse n).terms do
+        if m != Poly.one && !(← isSetup m) then setupVariableList m
+
 /-- `setupPolynomial`: the variables of the monomials, and for a sum, its slack
 variable and its row. -/
 def setupPolynomial (p : Poly) : ArithM Unit := do
@@ -1062,6 +1073,41 @@ def propagate : ArithM Unit := do
       modify fun s => { s with outputs := s.outputs.push (.propagate k.literal.get!) }
 
 /-! ## The model -/
+
+/-- `getDeltaValue`: the delta-rational value of a term in the assignment
+(constants, variables, sums, products by constants); none otherwise. -/
+partial def deltaValue (s : State) (n : Node) : Option DeltaRational :=
+  match constVal? n with
+  | some c => some (DeltaRational.ofRat c)
+  | none =>
+    match s.asArithVar? n with
+    | some x => some (s.assignment x)
+    | none =>
+      match n with
+      | .app (.kind .ADD) cs => cs.foldlM (fun acc c => (deltaValue s c).map (acc + ·)) 0
+      | .app (.kind .MULT) #[a, b] =>
+        match constVal? a, constVal? b with
+        | some c, _ => (deltaValue s b).map (· * c)
+        | _, some c => (deltaValue s a).map (· * c)
+        | _, _ => none
+      | .app (.kind .TO_REAL) #[a] => deltaValue s a
+      | _ => none
+
+/-- An equality status of two terms (`EqualityStatus`), for theory
+combination. -/
+inductive EqStatus where
+  | trueAndPropagated | falseAndPropagated | isTrue | isFalse | trueInModel | falseInModel | unknown
+  deriving BEq, Inhabited
+
+/-- `TheoryArithPrivate::getEqualityStatus`: by the values of the terms, once
+the real relaxation is solved. -/
+def equalityStatus (a b : Node) : ArithM EqStatus := do
+  if a == b then return .trueInModel
+  let s ← get
+  if s.qflraStatus == .unknown then return .unknown
+  match deltaValue s a, deltaValue s b with
+  | some x, some y => return if x == y then .trueInModel else .falseInModel
+  | _, _ => return .unknown
 
 /-- `DeltaRational::seperatingDelta`: lower `res` so that `δ` keeps `a < b`. -/
 def separatingDelta (res : Rat) (a b : DeltaRational) : Rat :=

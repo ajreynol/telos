@@ -574,10 +574,38 @@ class of a datatype with a constructor term has the constructor applied to the
 values of its arguments' classes; one with none (the theory did not need to
 split it) a value of its own, distinct from the others', whose constructor is
 not one its testers exclude; the others as `classValue`. -/
-def classValues (ee : EE.EqualityEngine) : Std.HashMap Nat MVal := Id.run do
+def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : Std.HashMap Nat MVal := Id.run do
   let n := ee.nodes.size
   let find (i : Nat) := EE.find ee i
   let id? (t : Node) : Option Nat := (ee.nodeIds.get? ⟨t⟩).map find
+  -- the value of an arithmetic class: of a numeral in it, or of a term the
+  -- arithmetic solver has a value of
+  let arithVals : Std.HashMap Key Rat := arith.foldl (fun m (t, q) => m.insert ⟨t⟩ q) {}
+  let mut arithOf : Std.HashMap Nat MVal := {}
+  for h : i in [0:n] do
+    if ee.isInternal[i]! then continue
+    let t := ee.nodes[i]
+    let r := find i
+    if arithOf.contains r then continue
+    let q? := match t with
+      | .const (.integer k) => some (k : Rat)
+      | .const (.rational q) => some q
+      | _ => arithVals.get? ⟨t⟩
+    if let some q := q? then
+      arithOf := arithOf.insert r (if t.typeHint == some .integer then .int q.floor else .rat q)
+  -- an arithmetic class with no value gets a fresh one, distinct from the
+  -- others (as the model builder's type enumerators do)
+  let mut usedArith : Array MVal := arithOf.fold (fun acc _ v => acc.push v) #[]
+  for h : i in [0:n] do
+    if ee.isInternal[i]! || find i != i || arithOf.contains i then continue
+    let t := ee.nodes[i]
+    let isInt := t.typeHint == some .integer
+    if !(isInt || t.typeHint == some .real) then continue
+    let mut k : Int := 0
+    while usedArith.contains (if isInt then .int k else .rat k) do k := k + 1
+    let v : MVal := if isInt then .int k else .rat k
+    arithOf := arithOf.insert i v
+    usedArith := usedArith.push v
   -- a constructor term of each class, and the constructors its testers exclude
   let mut cons : Std.HashMap Nat Nat := {}
   let mut excluded : Std.HashMap Nat (List Nat) := {}
@@ -604,6 +632,7 @@ def classValues (ee : EE.EqualityEngine) : Std.HashMap Nat MVal := Id.run do
       | none =>
         match ee.nodes[r]!.typeHint.map fun T => __eo_to_smt_type T.toEo with
         | some (.Datatype ..) => fresh.get? r
+        | some .Real | some .Int => arithOf.get? r
         | _ => classValue ee r
   let reps := (List.range n).filter fun i => !ee.isInternal[i]! && find i == i
   let dtRep (r : Nat) : Option (native_String × SmtDatatypeDecl) :=
@@ -673,7 +702,7 @@ def buildModel (ee : EE.EqualityEngine) (relevant : Std.HashSet Key) (syms : Lis
     (defs : List (Node × Node)) (inputs : List Node)
     (arith : Array (Node × Rat) := #[]) : Model := Id.run do
   let mut b : Builder := {}
-  let vals := classValues ee
+  let vals := classValues ee arith
   let valOf (t : Node) : Option MVal := (ee.nodeIds.get? ⟨t⟩).bind fun j => vals.get? (EE.find ee j)
   -- the functions of the wrong applications of selectors: their keys
   let mut wrong : Array (String × native_String × SmtType) := #[]

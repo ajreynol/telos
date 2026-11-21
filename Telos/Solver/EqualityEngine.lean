@@ -258,6 +258,9 @@ structure Ctx where
   produced (the orientation of equalities), so that the events are cvc5's
   (`Config.cvc5Order`). -/
   cvc5Order : Bool := true
+  /-- The declared constants, by their order of declaration (cvc5's node ids
+  for them). -/
+  declOrder : Std.HashMap String Nat := {}
 
 abbrev EEM := ReaderT Ctx (StateM EqualityEngine)
 
@@ -409,15 +412,19 @@ orients equalities: constants (and nullary constructors) first, as they are
 created with their declarations, then declared symbols, then the other terms
 (skolems included) by the order in which the engine met them (a term it does
 not have is the newest). -/
-def ageKey (ids : Std.HashMap Key Nat) (t : Node) : Nat × Nat :=
+def ageKey (ids : Std.HashMap Key Nat) (t : Node) (decl : Std.HashMap String Nat := {}) : Nat × Nat :=
   let rank := if t.isConst then 0 else match t with
     | .var name _ => if name.startsWith "@" then 2 else 1
     | _ => 2
-  (rank, ids.getD ⟨t⟩ (1 <<< 62))
+  match t with
+  | .var name _ => match decl.get? name with
+    | some i => (1, i)
+    | none => (rank, ids.getD ⟨t⟩ (1 <<< 62))
+  | _ => (rank, ids.getD ⟨t⟩ (1 <<< 62))
 
-def ageLt (ids : Std.HashMap Key Nat) (a b : Node) : Bool :=
-  let (r₁, i₁) := ageKey ids a
-  let (r₂, i₂) := ageKey ids b
+def ageLt (ids : Std.HashMap Key Nat) (a b : Node) (decl : Std.HashMap String Nat := {}) : Bool :=
+  let (r₁, i₁) := ageKey ids a decl
+  let (r₂, i₂) := ageKey ids b decl
   r₁ < r₂ || (r₁ == r₂ && i₁ < i₂)
 
 /-- `notifyTriggerTermEquality`, answered as cvc5's central equality engine
@@ -428,7 +435,7 @@ def notifyTriggerTermEquality (tag : Nat) (t₁ t₂ : Node) (value : Bool) : EE
   -- cvc5 orients by node ids, the older term first: approximated by the order
   -- in which the engine met the terms
   let ids := (← get).nodeIds
-  let (a, b) := if (← read).cvc5Order && ageLt ids t₂ t₁ then (t₂, t₁) else (t₁, t₂)
+  let (a, b) := if (← read).cvc5Order && ageLt ids t₂ t₁ (← read).declOrder then (t₂, t₁) else (t₁, t₂)
   let eq := Node.eqNode a b
   let lit := if value then eq else Node.notNode eq
   if (← get).teConflict then return false
