@@ -473,6 +473,8 @@ def defaultValue (T : SmtType) : Option MVal :=
   match T with
   | .Bool => some (.bool false)
   | .USort s => some (.uval s 0)
+  | .Int => some (.int 0)
+  | .Real => some (.rat 0)
   | .Datatype .. => groundValue 16 T
   | _ => none
 

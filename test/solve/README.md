@@ -17,5 +17,6 @@ added (cvc5's default SAT solver is CaDiCaL); the `sat-lra-*` ones also with
 heuristic, which telos does not port yet. Their `sat` answers are certified by
 the model check, with the arithmetic solver's values. An `unsat` of the SAT solver is
 certified by the certificate of its refutation (`sat-or-unsat`; `sat-dt-lemmas*`
-need the certificates of datatypes lemmas). With `--proofs`,
+need the certificates of datatypes lemmas, and `sat-lra-unsat*` the Farkas
+certificates of arithmetic conflicts and lemmas). With `--proofs`,
 the refutation of each `unsat` is also checked by Ethos.

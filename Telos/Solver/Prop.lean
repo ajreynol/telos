@@ -59,7 +59,13 @@ def satCheck (e : Effort) : EngineM Unit := do
 (`EE.explainLitV`), or else the equality engine's; and the certificate of the
 clause it makes (the literal, or the negation of a reason), which refutes the
 reasons with the literal's negation. -/
-def satExplainQuiet (lit : Node) : EngineM (Array Node × Option (Array Node × EqProof)) := do
+def satExplainQuiet (lit : Node) : EngineM (Array Node × Option SatProof.Just) := do
+  let c ← read
+  if c.arithSolver && c.theoryOf (atomOf lit).1 == .THEORY_ARITH then
+    -- the linear solver's explanation, and its certificate
+    let exp ← explainAll #[lit] false
+    let cert ← withArith (Arith.explainCert lit)
+    return (exp, cert.map (.arith (exp.push (negate lit)) ·))
   let exp ← match EE.explainLitV (← exCtx) lit with
     | some exp => pure exp
     | none =>
@@ -68,10 +74,10 @@ def satExplainQuiet (lit : Node) : EngineM (Array Node × Option (Array Node × 
   let s ← get
   -- (from the literals of the clause only)
   let lits := exp.push (negate lit)
-  return (exp, (EE.conflictOfPropagation s.ee lits exp lit (negate lit)).toOption)
+  return (exp, (EE.conflictOfPropagation s.ee lits exp lit (negate lit)).toOption.map fun (A, q) => .theory A q)
 
 /-- `TheoryEngine::getExplanation`, as the SAT solver asks for it. -/
-def satExplain (lit : Node) : EngineM (Array Node × Option (Array Node × EqProof)) := do
+def satExplain (lit : Node) : EngineM (Array Node × Option SatProof.Just) := do
   let (exp, cert) ← satExplainQuiet lit
   emit (.explain (← level) lit (EE.mkAnd exp))
   return (exp, cert)
@@ -83,7 +89,7 @@ inductive BaseTag where
   /-- The CNF stream. -/
   | cnf (tag : Cnf.ClauseTag)
   /-- An explanation of a theory propagation, with its certificate. -/
-  | theory (cert : Option (Array Node × EqProof))
+  | theory (cert : Option SatProof.Just)
   deriving Inhabited
 
 structure PropState where
@@ -268,14 +274,14 @@ def buildCert (p : PropState) : Option SatProof.Cert := do
     | some (.input i) => some (.input i)
     | some (.theory (some (A, q))) => some (.theory A q)
     | some (.lemma (some (F, q))) => some (.lemma F q)
+    | some (.arith (some (A, q))) => some (.arith A q)
     | _ => none
   let mut clauses : Array (SatProof.Clause × SatProof.Just) := #[]
   for (c, tag) in p.base do
     let j := match tag with
       | .cnf (.defn n) => some (.defn n)
       | .cnf (.src k) => source k
-      | .theory (some (A, q)) => some (.theory A q)
-      | .theory none => none
+      | .theory j => j
     if let some j := j then clauses := clauses.push ((← toNodes c), j)
   let learned ← p.learned.mapM toNodes
   return { clauses, learned }

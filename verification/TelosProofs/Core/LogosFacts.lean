@@ -128,6 +128,10 @@ class LogosFacts : Prop where
   term of SMT type `Bool` evaluates to a Boolean. -/
   eval_bool : ∀ (M : SmtModel) (t : SmtTerm), model_wf M →
     __smtx_typeof t = SmtType.Bool → ∃ b, __smtx_model_eval M t = SmtValue.Boolean b
+  /-- `type_preservation` and `real_value_canonical`: in a well-formed model, a
+  term of SMT type `Real` evaluates to a real. -/
+  eval_real : ∀ (M : SmtModel) (t : SmtTerm), model_wf M →
+    __smtx_typeof t = SmtType.Real → ∃ r, __smtx_model_eval M t = SmtValue.Real r
   /-- `CongSupport.congTrueSpine_eq_true`: congruence of an application spine in
   one model, for a spine that is not a quantifier, from argument equalities that
   are true in every model agreeing with it on the globals. -/

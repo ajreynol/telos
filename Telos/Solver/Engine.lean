@@ -169,6 +169,8 @@ inductive Pending where
   | constants (a b : Node)
   /-- A conflict of the theory of datatypes (its event is already emitted). -/
   | dt (cf : DT.Conflict)
+  /-- A conflict or a lemma of linear arithmetic, with its certificate. -/
+  | arith (cert : LinCert)
   deriving Inhabited
 
 /-- The source of a formula given to the CNF stream (`Cnf.ClauseTag.src`), for
@@ -181,6 +183,9 @@ inductive SatSource where
   | lemma (cert : Option (Node × EqProof))
   /-- The negation of a theory conflict, with its certificate, if any. -/
   | theory (cert : Option (Array Node × EqProof))
+  /-- A conflict of linear arithmetic, or a lemma's clause, with its
+  certificate, if any (`SatProof.Just.arith`). -/
+  | arith (cert : Option (Array Node × LinCert))
   deriving Inhabited
 
 /-- The context-dependent state of the engine saved at a push (cvc5's `CDO`s
@@ -465,18 +470,18 @@ def withArith (x : Arith.ArithM α) : EngineM α := do
   modify fun s => { s with arith := { st with outputs := #[] } }
   for o in outs do
     match o with
-    | .lemma id lem =>
+    | .lemma id lem cert =>
       emit (.lemma (← level) .THEORY_ARITH id lem)
       if (← read).satMode then
-        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lem, false, none, none),
+        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lem, false, cert.map .arith, none),
                                  outputUsed := true, lemmasAdded := true }
       else
         modify fun s => { s with lemmaSent := true, lemmaQueue := s.lemmaQueue.push lem, lemmasAdded := true }
-    | .conflict id exp =>
+    | .conflict id exp cert =>
       -- `TheoryEngine::conflict`: each conflict is printed and is a clause
       emit (.conflict (← level) .THEORY_ARITH id exp)
       if (← read).satMode then
-        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (exp, true, none, none),
+        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (exp, true, cert.map .arith, none),
                                  outputUsed := true, lemmasAdded := true }
       let why := s!"a conflict of THEORY_ARITH, which is not certified yet"
       modify fun s => { s with inConflict := true, theoryConflict := true, cert := .error why }
@@ -934,7 +939,9 @@ def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (proof : O
       | some (.constants a b) => (EE.conflictOfConstants ee exp exp a b).toOption
       | some (.dt cf) => (EE.conflictOfDt ee exp cf).toOption
       | _ => none
-    let src ← newSatSource (.theory cert)
+    let src ← match kind with
+      | some (.arith p) => newSatSource (.arith (some (exp, p)))
+      | _ => newSatSource (.theory cert)
     withCnf (Cnf.convertAndAssert (cnfHost c) (EE.mkAnd exp) false (negated := true) src)
   else
     let lem₀ := lem
@@ -942,8 +949,16 @@ def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (proof : O
     let ids := (← get).ee.nodeIds
     let lem := if c.cvc5Order then orientEqs ids lem else lem
     -- the formula's proof, from the lemma's
-    let cert := proof.bind (DtLemma.forFormula lem₀ lem) |>.map (lem, ·)
-    let src ← newSatSource (.lemma cert)
+    let src ← match kind with
+      | some (.arith p) =>
+        -- the clause's literals, whose negations the certificate refutes
+        let lits := match lem with
+          | .app (.kind .OR) cs => cs
+          | l => #[l]
+        newSatSource (.arith (some (lits.map negate, p)))
+      | _ =>
+        let cert := proof.bind (DtLemma.forFormula lem₀ lem) |>.map (lem, ·)
+        newSatSource (.lemma cert)
     withCnf (Cnf.convertAndAssert (cnfHost c) lem false (src := src))
 
 /-- `TheoryEngine::lemma`, after the event: the lemma, preprocessed (rewritten),
@@ -1312,7 +1327,7 @@ def certifyV (lits : List Node) (ee : EE.EqualityEngine) : Pending → Option (A
         | none => none
       else none
     | _, _ => none
-  | .dt _ => none
+  | .dt _ | .arith _ => none
 
 /-- The explanation of a pending conflict by the equality engine's own
 explanation (`EE.explainLit`, not verified), and the certificate of the
@@ -1328,12 +1343,14 @@ def explainPending (s : State) : Pending → Array Node × Except String (Array 
       |>.run s.ee).1
     (exp, EE.conflictOfConstants s.ee s.asserted exp a b)
   | .dt cf => (#[], EE.conflictOfDt s.ee s.asserted cf)
+  | .arith _ => (#[], .error "a conflict of linear arithmetic, outside the SAT solver")
 
 /-- The event of a pending conflict, with its explanation. -/
 def Pending.event (k : Nat) (exp : Array Node) : Pending → Event
   | .prop lit => .explain k lit (EE.mkAnd exp)
   | .constants _ _ => .conflict k .THEORY_BUILTIN "EQ_CONSTANT_MERGE" (EE.mkAnd exp)
   | .dt cf => .conflict k .THEORY_DATATYPES cf.id (EE.mkAnd exp)
+  | .arith _ => .conflict k .THEORY_ARITH "" (EE.mkAnd exp)
 
 /-- Run `solve` on `lits`. An `unsat` answer stands only if it is certified:
 by the verified explanation of its conflict (`certifyV`), or else by a

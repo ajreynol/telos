@@ -1,5 +1,6 @@
 import Std.Data.HashSet
 import Telos.Solver.EqProof
+import Telos.Solver.LinCert
 import Telos.Core.Node.FastType
 import Telos.Core.Node.Print
 
@@ -128,6 +129,10 @@ inductive Just where
   /-- A clause of the CNF translation of the lemma `F`, which `p` proves
   (`(F, true)`) from no assumptions. -/
   | lemma (F : Node) (p : EqProof)
+  /-- The certificate `(A, p)` of a conflict of linear arithmetic, or of a
+  clause of a lemma: `p` refutes the literals `A`, whose negations the clause
+  contains. -/
+  | arith (A : Array Node) (p : LinCert)
   deriving Inhabited
 
 /-- A certificate of a refutation. -/
@@ -180,6 +185,7 @@ def Just.check (inputs : Array Node) (c : Clause) : Just → Bool
   | .theory A p => EqProof.checkConflict A p && A.all isBool && A.all fun a => c.contains (negate a)
   | .lemma F p => EqProof.check #[] p == some (F, Node.mkTrue) && boolTree F &&
       (inputClauses F false).any (subsumes · c)
+  | .arith A p => p.check A && A.all isBool && A.all fun a => c.contains (negate a)
 
 /-! ## Reverse unit propagation -/
 
@@ -230,6 +236,7 @@ def Cert.why (inputs : Array Node) (cert : Cert) : String := Id.run do
         | .defn n => s!"definition of {n.toSmtLib}"
         | .theory A _ => s!"theory, assumptions {A.toList.map (Node.toSmtLib ·)}"
         | .lemma F _ => s!"lemma {F.toSmtLib}"
+        | .arith A _ => s!"arithmetic, assumptions {A.toList.map (Node.toSmtLib ·)}"
       return s!"the justification ({kind}) of the clause {c.toList.map (Node.toSmtLib ·)} does not check"
   let mut db := cert.clauses.map (·.1)
   for (c, i) in cert.learned.zipIdx do

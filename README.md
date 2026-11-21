@@ -147,14 +147,15 @@ answer. That cvc5 output needs the patch `cvc5-theory-events.patch`.
 So far the engine, UF, datatypes, cvc5's MiniSat and linear real arithmetic
 are ported: cvc5's equality engine, used as the central one, UF and datatypes
 over it, and arithmetic's simplex (`Telos/Solver/Theory/Arith/`, in progress:
-its `unsat` answers are not certified yet, and integers are not handled). In
+integers are not handled, nor arithmetic with other theories). In
 other logics the theories' checks do nothing, and the answer is `unknown` as
 soon as a theory gets a literal.
 
 An `unsat` answer is certified. With SAT structure, the SAT solver's
 refutation comes with a clausal certificate (`Telos/Solver/SatProof.lean`):
 its clauses justified by the CNF translation, the definitions of connectives,
-certificates of theory conflicts and of theory lemmas, its learned clauses by
+certificates of theory conflicts and of theory lemmas (for arithmetic,
+Farkas combinations, `Telos/Solver/LinCert.lean`), its learned clauses by
 unit propagation;
 the checker is proved sound. For a conjunction of literals, its conflict is
 explained by a verified

@@ -2,6 +2,7 @@ import Std.Data.HashMap
 import Std.Data.HashSet
 import Telos.Solver.Theory.Arith.Matrix
 import Telos.Solver.Theory.Arith.Poly
+import Telos.Solver.LinCert
 
 /-!
 # The state of the linear arithmetic solver
@@ -65,8 +66,11 @@ inductive Status where
 
 /-- What the solver sends out. -/
 inductive Output where
-  | lemma (id : String) (lem : Node)
-  | conflict (id : String) (exp : Node)
+  /-- A lemma, with the certificate of its clause (refuting the negations of
+  its literals), if any. -/
+  | lemma (id : String) (lem : Node) (cert : Option LinCert := none)
+  /-- A conflict, with its certificate, if any. -/
+  | conflict (id : String) (exp : Node) (cert : Option LinCert := none)
   | propagate (lit : Node)
   deriving Inhabited
 

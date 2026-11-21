@@ -1083,7 +1083,7 @@ Two Lean pitfalls caused bugs here, worth knowing:
   the statement;
 - `return` inside a `match` arm's `do` returns from the enclosing function.
 
-## Stage 7: linear arithmetic (in progress: milestone 1 done, but for `unsat`)
+## Stage 7: linear arithmetic (in progress: milestones 1 and 2 done)
 
 ### Scope
 
@@ -1238,23 +1238,56 @@ translates them), `-`, unary `-`, the comparisons and `to_real` as Logos
 does; its soundness proof covers them (`combine_sound_in`, `ev_sound`,
 `verification/TelosProofs/Solver/Model.lean`).
 
+**`unsat` is certified** (milestone 2) by the certificate of the SAT solver's
+refutation, in which a conflict of arithmetic, the clause of one of its
+lemmas, and the explanation of one of its propagations are justified by a
+refutation of literals (`SatProof.Just.arith`, `Telos/Solver/LinCert.lean`):
+the conflict's literals, or the negations of the clause's. A refutation is a
+Farkas combination of the literals (each bounds the difference of its sides,
+by `≥ 0`, `> 0` or `= 0`), checked by summing the scaled differences and
+letting the verified rewriter rewrite the sum's comparison with `0` to
+`false`; a split of a disequality `(not (= a b))` into `(< a b)` and
+`(> a b)`; or a cut on a literal. The solver builds the certificates from
+its constraints' proofs, as cvc5's proof production reads them
+(`Telos/Solver/Theory/Arith/Cert.lean`): an explanation's assumptions are
+its leaves, a Farkas rule is a combination with cvc5's coefficients (scaled
+to each literal's sides), a trichotomy rule a split, and a derived
+antecedent a cut on its literal whose other side refutes the constraint's
+negation. Nothing there is trusted. `LinCert.check` is proved sound
+(`verification/TelosProofs/Solver/LinCert.lean`, `linCert_sound` and
+`arith_sat` in `.../SatProof.lean`), from the rewriter's correctness and one
+more Logos fact (a real term evaluates to a real, `LogosFacts.eval_real`).
+The CPC proof for Ethos is not done (as for the SAT solver's refutations in
+general).
+
 Results (`scripts/fuzz-solve.py --theory lra --sat --cvc5-pp`, cvc5 with
 `--decision=internal`, since arithmetic logics use the justification
 heuristic, milestone 3 of Stage 6): the input events agree on all of 300
 random conjunctions and 300 with clauses. All the events (lemmas, conflicts,
-propagations, backtracking) and the answer agree on 269 of the
-conjunctions and 280 of those with clauses (188 of another 200), the `sat`
-answers certified; the rest are `unsat`s, which are not certified yet, and
-the order of unate lemmas' disjuncts. With telos's own preprocessing
-(`--recorded`), 54 of 61. `test/solve/sat-lra-*.smt2` have row implications,
-unate lemmas and a simplex conflict. The
+propagations, backtracking) and the answer agree on 283 of 300 larger
+conjunctions (96 `unsat`) and 291 of 300 with clauses; with telos's own
+preprocessing, on 272 of 300 conjunctions and 274 to 297 of 300 with
+clauses. Every answer agrees, the `sat`s certified by the model check and
+every `unsat` by its certificate (over 500 `unsat`s in all). The
 differences are the order of the two disjuncts of unate lemmas, by node id
 (`proveOr`), which telos approximates by first occurrence in the input; cvc5's
 ids come from its preprocessing, which `--cvc5-pp` does not show.
+`test/solve/sat-lra-*.smt2` have row implications, unate lemmas and simplex
+conflicts; `sat-lra-unsat*` are certified `unsat`s.
+
+In QF_LRA, disequalities do not reach the solver (`arithRewriteEq` makes
+equalities pairs of inequalities), so the certificates of the trichotomy
+rules and of the disequality splits (`ARITH_SPLIT_DEQ`) are not exercised
+yet: they come with the logics that combine arithmetic with other theories
+(milestone 4). The certificates of propagations are, by rows longer than
+`arithPropAsLemmaLength`, but those are rare in the random benchmarks.
 
 Not yet:
-- **`unsat`** needs the certificates of arithmetic's conflicts and lemmas
-  (milestone 2: Farkas certificates); it answers `unknown`;
+- at a conflict at decision level 0, cvc5's MiniSat finalizes its proof
+  (`SatProofManager::finalizeProof`), which explains the theory propagations
+  the refutation uses, with `explain` events; telos explains them after the
+  fact, silently (`explainLevelZero`). An arithmetic propagation of a long
+  row that a level-0 refutation uses shows the difference;
 - the congruence manager (equalities of variables, arithmetic's own equality
   engine), the random skipping of long rows in propagation, integers
   (milestone 3), sharing (milestone 4);

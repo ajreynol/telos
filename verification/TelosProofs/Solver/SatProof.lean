@@ -1,4 +1,5 @@
 import TelosProofs.Solver.Model
+import TelosProofs.Solver.LinCert
 import Telos.Solver.SatProof
 
 /-!
@@ -11,6 +12,8 @@ its inputs. In a well-formed model that makes every input true:
   negations of theory conflicts (`theory_sat`, from the certificates'
   soundness, `checkConflict_sound`), and the clauses of theory lemmas, valid
   by their certificates from no assumptions (`lemma_true`, from `check_sound`);
+  and the clauses of linear arithmetic, whose certificates refute the negations
+  of some of their literals (`arith_sat`, from `linCert_sound`);
 - a clause that follows from true clauses by unit propagation is true
   (`rup_sound`), so each learned clause is, and so is the empty clause, which
   is impossible (`Cert.check_sound`).
@@ -516,6 +519,56 @@ theorem theory_sat {N : SmtModel} (hN : model_wf N) {A : Array Node} {p : EqProo
     exact absurd ⟨_, Array.mem_toList_iff.2 (Array.contains_iff_mem.1 hm), h⟩ hne
 
 omit [LogosFacts] in
+theorem push_true {N : SmtModel} {A : Array Node} (hA : ∀ a ∈ A.toList, TrueIn N a.toEo) {l : Node}
+    (hl : TrueIn N l.toEo) : ∀ a ∈ (A.push l).toList, TrueIn N a.toEo := by
+  intro a ha
+  simp only [Array.toList_push, List.mem_append, List.mem_singleton] at ha
+  rcases ha with ha | rfl
+  · exact hA a ha
+  · exact hl
+
+/-- **A certificate of linear arithmetic refutes its literals**: Farkas
+combinations (`checkFarkas_sound`), splits of disequalities (`split_sem`), and
+cuts. -/
+theorem linCert_sound {N : SmtModel} (hN : model_wf N) : ∀ (p : LinCert) (A : Array Node),
+    p.check A = true → (∀ a ∈ A.toList, TrueIn N a.toEo) → False
+  | .farkas cs, A, h, hA => LinCertProof.checkFarkas_sound h N hN hA
+  | .split l lt gt, A, h, hA => by
+    simp only [LinCert.check] at h
+    split at h
+    · rename_i a b hd
+      simp only [Bool.and_eq_true] at h
+      obtain ⟨⟨⟨⟨hm, hra⟩, hrb⟩, hlt⟩, hgt⟩ := h
+      obtain ⟨ra, ha⟩ := LinCertProof.real_of_isRealTerm hN hra
+      obtain ⟨rb, hb⟩ := LinCertProof.real_of_isRealTerm hN hrb
+      have hl := hA l (Array.mem_toList_iff.2 (Array.contains_iff_mem.1 hm))
+      rcases LinCertProof.split_sem hd hl ha hb with h1 | h1
+      · exact linCert_sound hN lt _ hlt (push_true hA h1)
+      · exact linCert_sound hN gt _ hgt (push_true hA h1)
+    · cases h
+  | .cut l pos neg, A, h, hA => by
+    simp only [LinCert.check, Bool.and_eq_true, beq_iff_eq] at h
+    obtain ⟨⟨hb, hpos⟩, hneg⟩ := h
+    have hbv : BoolVal N l := boolVal_of_isBool hN (by unfold isBool; simpa using hb)
+    rcases lit_or_negate hbv with h1 | h1
+    · exact linCert_sound hN pos _ hpos (push_true hA h1)
+    · exact linCert_sound hN neg _ hneg (push_true hA h1)
+
+/-- **A clause of linear arithmetic is true**: it has the negations of literals
+that its certificate refutes. -/
+theorem arith_sat {N : SmtModel} (hN : model_wf N) {A : Array Node} {p : LinCert} {c : Clause}
+    (hc : p.check A = true) (hb : A.all isBool = true)
+    (hneg : (A.all fun a => c.contains (negate a)) = true) : SatIn N c := by
+  by_contra hne
+  have hbA : ∀ a ∈ A.toList, isBool a = true := fun a ha =>
+    (Array.all_eq_true_iff_forall_mem.1 hb) a (Array.mem_toList_iff.1 ha)
+  refine linCert_sound hN p A hc fun a ha => ?_
+  rcases lit_or_negate (boolVal_of_isBool hN (hbA a ha)) with h | h
+  · exact h
+  · have hm := (Array.all_eq_true_iff_forall_mem.1 hneg) a (Array.mem_toList_iff.1 ha)
+    exact absurd ⟨_, Array.mem_toList_iff.2 (Array.contains_iff_mem.1 hm), h⟩ hne
+
+omit [LogosFacts] in
 theorem bval_not_of {N : SmtModel} {x : Node} {b : Bool} (h : TrueIn N x.toEo ↔ b = false) : bval N x = !b := by
   cases b <;> simp_all [bval]
 
@@ -741,6 +794,9 @@ theorem just_sat {N : SmtModel} (hN : model_wf N) {inputs : Array Node}
     simp only [Just.check, Bool.and_eq_true, beq_iff_eq, List.any_eq_true] at h
     obtain ⟨⟨hp, ht⟩, d, hd, hs⟩ := h
     exact sat_of_subsumes (input_sat hN F false ht (by simpa using lemma_true hN hp) d hd) hs
+  | arith A p =>
+    simp only [Just.check, Bool.and_eq_true] at h
+    exact arith_sat hN h.1.1 h.1.2 h.2
 
 /-- The learned clauses follow, and then the empty clause: impossible if the
 clauses are true. -/

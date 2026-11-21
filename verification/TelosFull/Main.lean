@@ -94,6 +94,10 @@ instance logosFacts : LogosFacts where
     have hP := type_preservation M hM t (by unfold term_has_non_none_type; rw [h]; simp)
     rw [h] at hP
     exact bool_value_canonical hP
+  eval_real M t hM h := by
+    have hP := type_preservation M hM t (by unfold term_has_non_none_type; rw [h]; simp)
+    rw [h] at hP
+    exact real_value_canonical hP
   cong_spine_model M hM head xs ys hq hb h :=
     ((eo_interprets_true_iff M _).1 (CongSupport.congTrueSpine_eq_true M hM _ _ ⟨hq.1, hq.2⟩ hb
       (congTrueSpine_foldl M hM (CongSupport.CongTrueSpine.refl head) h))).2

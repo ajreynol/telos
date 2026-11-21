@@ -1,6 +1,6 @@
 import Telos.Rewriter.Rewrite
 import Telos.Core.Node.Print
-import Telos.Solver.Theory.Arith.Simplex
+import Telos.Solver.Theory.Arith.Cert
 
 /-!
 # The linear arithmetic solver
@@ -116,6 +116,11 @@ def preRegisterTerm (n : Node) : ArithM Unit := do
 
 /-! ## The unate lemmas of `presolve` -/
 
+/-- The certificate of a lemma `(or l₁ … lₙ)`. -/
+def orCert : Node → Option LinCert
+  | .app (.kind .OR) cs => clauseCert cs
+  | _ => none
+
 /-- `proveOr`: `(or la lb)`, its disjuncts ordered by node id. -/
 def proveOr (a b : Nat) : ArithM Node := do
   let s ← get
@@ -192,7 +197,7 @@ def presolve : ArithM Unit := do
   let mut lemmas := #[]
   for x in [0:n] do lemmas := lemmas ++ (← unateInequalityLemmas x)
   for x in [0:n] do lemmas := lemmas ++ (← unateEqualityLemmas x)
-  modify fun s => { s with outputs := s.outputs ++ lemmas.map (.lemma "ARITH_UNATE") }
+  modify fun s => { s with outputs := s.outputs ++ lemmas.map fun l => .lemma "ARITH_UNATE" l (orCert l) }
 
 /-! ## Explanations -/
 
@@ -236,6 +241,11 @@ def explain (lit : Node) : ArithM (Array Node) := do
   let s ← get
   let some c := s.lookup lit | return #[]
   return explainInto s c (s.constraint c).assertionOrder #[]
+
+/-- The certificate of the explanation of a propagated literal (see `explain`):
+it refutes the explanation with the negation of the literal. -/
+def explainCert (lit : Node) : ArithM (Option LinCert) := do
+  return propagationCert (← get) lit
 
 /-! ## Asserting facts -/
 
@@ -407,7 +417,7 @@ def assertDisequality (c : Nat) : ArithM Bool := do
   let k := s.constraint c
   if !k.split && k.value == s.assignment k.var then
     let lem ← split c
-    modify fun s => { s with outputs := s.outputs.push (.lemma "ARITH_SPLIT_DEQ" lem) }
+    modify fun s => { s with outputs := s.outputs.push (.lemma "ARITH_SPLIT_DEQ" lem (orCert lem)) }
     return false
   if s.cmpToLowerBound k.var k.value < 0 || s.cmpToUpperBound k.var k.value > 0 then return false
   if !k.split then modify fun s => { s with diseqQueue := s.diseqQueue.push c, deltaIsSafe := false }
@@ -494,7 +504,7 @@ def revertOutOfConflict : ArithM Unit :=
 def outputConflicts : ArithM Unit := do
   let s ← get
   for (c, id) in s.conflicts do
-    modify fun s => { s with outputs := s.outputs.push (.conflict id (explainConflict s c)) }
+    modify fun s => { s with outputs := s.outputs.push (.conflict id (explainConflict s c) (conflictCert s c)) }
 
 /-- `handleUnateProp`. -/
 def handleUnateProp (ant cons : Nat) : ArithM Bool := do
@@ -602,7 +612,7 @@ def splitDisequalities : ArithM Bool := do
     if k.split then continue
     if s.assignment k.var == k.value then
       let lem ← split front
-      modify fun s => { s with outputs := s.outputs.push (.lemma "ARITH_SPLIT_DEQ" lem) }
+      modify fun s => { s with outputs := s.outputs.push (.lemma "ARITH_SPLIT_DEQ" lem (orCert lem)) }
       split_ := true
     else if s.cmpToLowerBound k.var k.value < 0 || s.cmpToUpperBound k.var k.value > 0 then pure ()
     else save := save.push front
@@ -746,8 +756,10 @@ def rowImplicationCanBeApplied (r : Nat) (rowUp : Bool) (implied : Nat) : ArithM
     let ants := explain.foldl (fun acc c => explainInto s c none acc) #[]
     -- `externalImplication`: the antecedent is one literal, or a conjunction
     let ants := if ants.isEmpty then #[Node.mkTrue] else ants
-    let clause := flattenImplication ants k.literal.get!
-    modify fun s => { s with outputs := s.outputs.push (.lemma "ARITH_ROW_IMPL" clause) }
+    let b := k.literal.get!
+    let clause := flattenImplication ants b
+    let cert := farkasCert s none implied (negate b) explain farkas
+    modify fun s => { s with outputs := s.outputs.push (.lemma "ARITH_ROW_IMPL" clause cert) }
   else
     impliedByFarkas implied explain farkas
     modify fun s => s.tryToPropagate implied
