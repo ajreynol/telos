@@ -207,7 +207,7 @@ def presolve : ArithM Unit := do
   let mut lemmas := #[]
   for x in [0:n] do lemmas := lemmas ++ (← unateInequalityLemmas x)
   for x in [0:n] do lemmas := lemmas ++ (← unateEqualityLemmas x)
-  for l in lemmas do let _ ← sendLemma "ARITH_UNATE" l (orCert l)
+  for l in lemmas do let _ ← sendLemma "ARITH_UNATE" l (orCert (Telos.rewrite l))
 
 /-! ## Explanations -/
 
@@ -435,7 +435,7 @@ def assertDisequality (c : Nat) : ArithM Bool := do
   let k := s.constraint c
   if !k.split && k.value == s.assignment k.var then
     let lem ← split c
-    let _ ← sendLemma "ARITH_SPLIT_DEQ" lem (orCert lem)
+    let _ ← sendLemma "ARITH_SPLIT_DEQ" lem (orCert (Telos.rewrite lem))
     return false
   if s.cmpToLowerBound k.var k.value < 0 || s.cmpToUpperBound k.var k.value > 0 then return false
   if !k.split then modify fun s => { s with diseqQueue := s.diseqQueue.push c, deltaIsSafe := false }
@@ -633,7 +633,7 @@ def splitDisequalities : ArithM Bool := do
     if k.split then continue
     if s.assignment k.var == k.value then
       let lem ← split front
-      let _ ← sendLemma "ARITH_SPLIT_DEQ" lem (orCert lem)
+      let _ ← sendLemma "ARITH_SPLIT_DEQ" lem (orCert (Telos.rewrite lem))
       split_ := true
     else if s.cmpToLowerBound k.var k.value < 0 || s.cmpToUpperBound k.var k.value > 0 then pure ()
     else save := save.push front
@@ -747,6 +747,7 @@ def boundsAreEqual (s : State) (x : Nat) : Bool :=
 equal (with the explanations of the bounds), then a conflict of the solver,
 if any. -/
 def callDioSolver : ArithM (Option (Node × Option LinCert)) := do
+  modify fun s => { s with dio := { s.dio with ages := s.age } }
   while (← get).constantIntegersHead < (← get).constantIntegers.size do
     let s ← get
     let v := s.constantIntegers[s.constantIntegersHead]!
@@ -781,6 +782,7 @@ a bound (their bounds not equal), in a scope that is then popped, the cut of a
 plane `p + k = 0` of the solver: `(or (<= p (- k)) (>= p (- k)))`, rewritten
 (its gcd does not divide `k`). -/
 def dioCutting : ArithM (Option Node) := do
+  modify fun s => { s with dio := { s.dio with ages := s.age } }
   let s ← get
   let saved := s.dio.mark
   for v in [0:s.numVars] do

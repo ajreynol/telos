@@ -566,12 +566,18 @@ theorem linCert_sound {N : SmtModel} (hN : model_wf N) : ∀ (p : LinCert) (A : 
     simp only [LinCert.check] at h
     split at h
     · rename_i a b hd
-      simp only [Bool.and_eq_true] at h
-      obtain ⟨⟨⟨⟨hm, hra⟩, hrb⟩, hlt⟩, hgt⟩ := h
-      obtain ⟨ra, ha⟩ := LinCertProof.real_of_isRealTerm hN hra
-      obtain ⟨rb, hb⟩ := LinCertProof.real_of_isRealTerm hN hrb
+      simp only [Bool.and_eq_true, Bool.or_eq_true] at h
+      obtain ⟨⟨⟨hm, hty⟩, hlt⟩, hgt⟩ := h
       have hl := hA l (Array.mem_toList_iff.2 (Array.contains_iff_mem.1 hm))
-      rcases LinCertProof.split_sem hd hl ha hb with h1 | h1
+      have hor : TrueIn N (Node.mkNode .LT #[a, b]).toEo ∨ TrueIn N (Node.mkNode .GT #[a, b]).toEo := by
+        rcases hty with ⟨hra, hrb⟩ | ⟨hia, hib⟩
+        · obtain ⟨ra, ha⟩ := LinCertProof.real_of_isRealTerm hN hra
+          obtain ⟨rb, hb⟩ := LinCertProof.real_of_isRealTerm hN hrb
+          exact LinCertProof.split_sem hd hl ha hb
+        · obtain ⟨ia, ha⟩ := LinCertProof.int_of_isIntTerm hN hia
+          obtain ⟨ib, hb⟩ := LinCertProof.int_of_isIntTerm hN hib
+          exact LinCertProof.split_isem hd hl ha hb
+      rcases hor with h1 | h1
       · exact linCert_sound hN lt _ hlt (push_true hA h1)
       · exact linCert_sound hN gt _ hgt (push_true hA h1)
     · cases h

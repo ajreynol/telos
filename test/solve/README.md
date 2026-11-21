@@ -14,7 +14,7 @@ The `sat-*` cases have SAT structure, which telos's SAT solver (a port of
 cvc5's MiniSat) solves: their traces are recorded with `--sat-solver=minisat`
 added (cvc5's default SAT solver is CaDiCaL), with the logic's decision mode:
 stop-only for QF_LRA (`sat-lra-ite` has skolem definitions that become
-relevant), and justification where the script sets it
+relevant, `sat-lra-ite-unsat` is a certified `unsat` with them), and justification where the script sets it
 (`sat-uf-justification`). Their `sat` answers are certified by
 the model check, with the arithmetic solver's values. An `unsat` of the SAT solver is
 certified by the certificate of its refutation (`sat-or-unsat`; `sat-dt-lemmas*`

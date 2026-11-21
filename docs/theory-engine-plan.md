@@ -1361,6 +1361,21 @@ does not converge in cvc5 either (655,000 events in 29 seconds) times out.
 `test/solve/sat-lia-*.smt2` cover branches, cuts and the Diophantine
 solver's conflicts.
 
+**`ite` terms** (`--ite`): term formula removal's skolems and their
+definitions, `(ite c (= k t₁) (= k t₂))`, whose equalities reach the solver as
+equalities (they are made after `arithRewriteEq`'s static rewrite). Three
+things matter for fidelity there: the engine leaves arithmetic equalities as
+the rewriter orients them (by their normal form, not by node id, unlike UF's);
+a lemma of the solver goes to the CNF stream as soon as a fact made it (a
+disequality's split), so that its atoms are preregistered before the check goes
+on, as cvc5's `TheoryEngine::lemma` does; and the Diophantine solver orders two
+skolems by node id (approximated by first occurrence), as `VarList::cmp` does.
+Certificates use the rewritten lemma's literals, and a disequality split may
+be of integers. On 200 benchmarks each, QF_LRA with `ite` terms differs from
+cvc5 only in the order of unate lemmas' disjuncts (173 agree; 146 with
+clauses); QF_LIA in that order and in 6 cuts or branches (151 agree), every
+`unsat` certified.
+
 Not yet:
 - at a conflict at decision level 0, cvc5's MiniSat finalizes its proof
   (`SatProofManager::finalizeProof`), which explains the theory propagations

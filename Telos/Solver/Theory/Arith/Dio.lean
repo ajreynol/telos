@@ -200,6 +200,9 @@ structure Dio where
   usedDecompose : Bool := false
   /-- The fresh variables made (`makeIntegerVariable`). -/
   freshCount : Nat := 0
+  /-- The approximation of node ids (the arithmetic solver's `age`), which
+  orders skolems as cvc5 does, by their creation. -/
+  ages : Std.HashMap Key Nat := {}
   deriving Inhabited
 
 namespace Dio
@@ -226,8 +229,18 @@ def varId (n : Node) : DioM Nat := do
     set { d with varNodes := d.varNodes.push n, varIds := d.varIds.insert ⟨n⟩ v }
     return v
 
-/-- `varListCmp`: cvc5's order of the variables (`VarList::cmp`). -/
-def varLt (d : Dio) (a b : Nat) : Bool := Telos.Arith.monoLt [d.varNodes[a]!] [d.varNodes[b]!]
+/-- `varListCmp`: cvc5's order of the variables (`VarList::cmp`): by node id
+between two skolems (approximated by `ages`), as in the normal form
+otherwise. -/
+def varLt (d : Dio) (a b : Nat) : Bool :=
+  let na := d.varNodes[a]!
+  let nb := d.varNodes[b]!
+  match na, nb with
+  | .skolem .., .skolem .. =>
+    match d.ages.get? ⟨na⟩, d.ages.get? ⟨nb⟩ with
+    | some i, some j => i < j
+    | _, _ => Telos.Arith.monoLt [na] [nb]
+  | _, _ => Telos.Arith.monoLt [na] [nb]
 
 /-- `minimalTerm`: the term of least absolute coefficient, ties going to the
 least variable in cvc5's order. -/

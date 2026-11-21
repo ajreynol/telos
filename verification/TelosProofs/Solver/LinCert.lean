@@ -554,6 +554,48 @@ theorem split_sem {N : SmtModel} {l a b : Node} (h : diseqParts l = some (a, b))
     · simp at h
   · simp at h
 
+omit [LogosFacts] in
+/-- A true disequality of integers makes one of its strict inequalities true. -/
+theorem split_isem {N : SmtModel} {l a b : Node} (h : diseqParts l = some (a, b)) (hl : TrueIn N l.toEo)
+    {ra rb : Int} (ha : IVal N a ra) (hb : IVal N b rb) :
+    TrueIn N (Node.mkNode .LT #[a, b]).toEo ∨ TrueIn N (Node.mkNode .GT #[a, b]).toEo := by
+  unfold TrueIn at hl ⊢
+  rw [show __eo_to_smt l.toEo = l.toSmt from rfl] at hl
+  rw [show ∀ t : Node, __eo_to_smt t.toEo = t.toSmt from fun _ => rfl,
+    show ∀ t : Node, __eo_to_smt t.toEo = t.toSmt from fun _ => rfl]
+  unfold diseqParts at h
+  split at h
+  · rename_i k cs
+    split at h
+    · rename_i hk
+      have hk : k = .NOT := by simpa using hk
+      subst hk
+      split at h
+      · rename_i h1
+        rw [not_true_iff h1] at hl
+        split at h
+        · rename_i k' ds he
+          split at h
+          · rename_i hk'
+            have hk' : k' = .EQUAL := by simpa using hk'
+            subst hk'
+            split at h
+            · rename_i h2
+              simp only [Option.some.injEq, Prod.mk.injEq] at h
+              obtain ⟨rfl, rfl⟩ := h
+              rw [he, eval_iequal h2 ha hb] at hl
+              have hne : ra ≠ rb := by simpa using hl
+              unfold Node.mkNode
+              rcases lt_or_gt_of_ne hne with hlt | hgt
+              · left; rw [eval_ilt (ds := #[ds[0], ds[1]]) rfl ha hb]; simpa using hlt
+              · right; rw [eval_igt (ds := #[ds[0], ds[1]]) rfl ha hb]; simpa using hgt
+            · simp at h
+          · simp at h
+        · simp at h
+      · simp at h
+    · simp at h
+  · simp at h
+
 end LinCertProof
 
 end Telos.Solver

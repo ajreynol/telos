@@ -19,8 +19,8 @@ the fact, from the solver's proofs of its constraints, which are cvc5's
   `≥ 0`, or `> 0` if a strict bound has a positive coefficient. The rewriter,
   which is proved correct, must rewrite that comparison of `S` with `0` to
   `false`: its polynomial normal form makes `S` a constant.
-- `split l lt gt`: `l` is a disequality `(not (= a b))` of `A`, so `a < b` or
-  `a > b`: `lt` refutes `A` with `(< a b)`, and `gt` refutes it with `(> a b)`.
+- `split l lt gt`: `l` is a disequality `(not (= a b))` of `A` (of reals or of
+  integers), so `a < b` or `a > b`: `lt` refutes `A` with `(< a b)`, and `gt` refutes it with `(> a b)`.
 - `cut l pos neg`: `l` is true or false, so `pos` refutes `A` with `l`, and
   `neg` refutes it with the negation of `l`. Cuts introduce the constraints
   that the solver derived.
@@ -161,7 +161,7 @@ def LinCert.check (A : Array Node) : LinCert → Bool
   | .split l lt gt =>
     match diseqParts l with
     | some (a, b) =>
-      A.contains l && isRealTerm a && isRealTerm b &&
+      A.contains l && ((isRealTerm a && isRealTerm b) || (isIntTerm a && isIntTerm b)) &&
         lt.check (A.push (Node.mkNode .LT #[a, b])) && gt.check (A.push (Node.mkNode .GT #[a, b]))
     | none => false
   | .cut l pos neg =>

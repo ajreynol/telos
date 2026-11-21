@@ -1026,6 +1026,8 @@ partial def orientEqs (ids : Std.HashMap Key Nat) (n : Node) : Node :=
   match n with
   | .app (.kind .EQUAL) #[l, r] =>
     if l.typeHint == some .boolean then .app (.kind .EQUAL) #[orientEqs ids l, orientEqs ids r]
+    -- (an arithmetic equality is oriented by its normal form, by the rewriter)
+    else if l.typeHint == some .integer || l.typeHint == some .real then n
     else if EE.ageLt ids r l then Node.eqNode r l else n
   | .app (.kind k) cs =>
     if Cnf.isConnective n || k == .NOT then .app (.kind k) (cs.map (orientEqs ids)) else n
@@ -1113,7 +1115,8 @@ def flushLemmas : EngineM Unit := do
         let ids := (← get).ee.nodeIds
         let atom := match atom with
           | .app (.kind .EQUAL) #[l, r] =>
-            if EE.ageLt ids r l then Node.eqNode r l else atom
+            if l.typeHint == some .integer || l.typeHint == some .real then Telos.rewrite atom
+            else if EE.ageLt ids r l then Node.eqNode r l else atom
           | _ => Telos.rewrite atom
         preRegister atom
 
@@ -1170,6 +1173,9 @@ def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
       let fact := s.arithFacts[s.arithHead]!
       modify fun s => { s with arithHead := s.arithHead + 1 }
       withArith (Arith.assertFact fact)
+      -- a lemma (a disequality's split) goes to the CNF stream at once, which
+      -- preregisters its atoms before the facts and the check go on
+      flushLemmas
     let _ ← withArith (Arith.postCheck (e == .full))
     flushArithDeferred
   if T == .THEORY_UF && (← read).ufSolver then
