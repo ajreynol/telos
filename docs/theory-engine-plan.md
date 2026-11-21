@@ -1113,7 +1113,7 @@ Two Lean pitfalls caused bugs here, worth knowing:
   the statement;
 - `return` inside a `match` arm's `do` returns from the enclosing function.
 
-## Stage 7: linear arithmetic (in progress: milestones 1, 2 and 3 done)
+## Stage 7: linear arithmetic (in progress: milestones 1 to 4 done)
 
 ### Scope
 
@@ -1147,7 +1147,7 @@ core is about 13k lines of C++: `theory_arith_private.cpp` (6k),
    scaled sum of bounds and `arith_poly_norm`.
 3. **QF_LIA**: branch and bound, the Diophantine solver, cuts, with certified
    lemmas (splits are valid; cuts are Farkas-like).
-4. **Combination with UF and datatypes**: the congruence manager, care graphs
+4. **Combination with UF and datatypes** (done): care graphs
    and `combineTheories`; UFLRA, UFLIA. Done so far: arithmetic in the central
    equality engine (its shared terms are trigger terms, the equalities of
    their classes are asserted to it, apart from the UF record of what was
@@ -1422,9 +1422,7 @@ Not yet:
   the refutation uses, with `explain` events; telos explains them after the
   fact, silently (`explainLevelZero`). An arithmetic propagation of a long
   row that a level-0 refutation uses shows the difference;
-- the congruence manager (equalities of variables, arithmetic's own equality
-  engine), the random skipping of long rows in propagation, sharing
-  (milestone 4);
+- the random skipping of long rows in propagation;
 - the order of unate lemmas' disjuncts where cvc5's node ids differ from the
   order of first occurrence (above);
 - the Diophantine solver's decomposition lemmas (`exportDioDecompositions` is
