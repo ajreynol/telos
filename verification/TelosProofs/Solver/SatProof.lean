@@ -223,7 +223,7 @@ theorem bools_map (l : List Bool) : Model.bools (l.map MVal.bool) = some l := by
 omit [LogosFacts] in
 /-- A connective of Boolean children has the value its kind gives them. -/
 theorem conn_sem {N : SmtModel} {k : Kind} {cs : Array Node} (hc : ∀ c ∈ cs.toList, BoolVal N c) {r : Bool}
-    (h : Model.combine k (cs.toList.map fun c => MVal.bool (bval N c)) = some (.bool r)) :
+    (h : Model.combine k cs (cs.toList.map fun c => MVal.bool (bval N c)) = some (.bool r)) :
     BoolVal N (.app (.kind k) cs) ∧ (TrueIn N (Node.app (.kind k) cs).toEo ↔ r = true) := by
   have e := combine_sound_in N (vals_bval hc) h
   refine ⟨⟨r, e⟩, ?_⟩
@@ -303,7 +303,7 @@ omit [LogosFacts] in
 theorem and_sem {N : SmtModel} {cs : Array Node} (hc : ∀ c ∈ cs.toList, BoolVal N c) (h2 : 2 ≤ cs.size) :
     BoolVal N (.app (.kind .AND) cs) ∧ (TrueIn N (Node.app (.kind .AND) cs).toEo ↔ ∀ c ∈ cs.toList, TrueIn N c.toEo) := by
   have hm : (cs.toList.map fun c => MVal.bool (bval N c)) = (cs.toList.map (bval N)).map MVal.bool := by simp
-  have e : Model.combine .AND (cs.toList.map fun c => MVal.bool (bval N c)) =
+  have e : Model.combine .AND cs (cs.toList.map fun c => MVal.bool (bval N c)) =
       some (.bool ((cs.toList.map (bval N)).all id)) := by
     rw [hm]; simp only [Model.combine, List.length_map, Array.length_toList, h2, ↓reduceIte, bools_map, Option.map_some]
   obtain ⟨hb, hiff⟩ := conn_sem hc e
@@ -317,7 +317,7 @@ omit [LogosFacts] in
 theorem or_sem {N : SmtModel} {cs : Array Node} (hc : ∀ c ∈ cs.toList, BoolVal N c) (h2 : 2 ≤ cs.size) :
     BoolVal N (.app (.kind .OR) cs) ∧ (TrueIn N (Node.app (.kind .OR) cs).toEo ↔ ∃ c ∈ cs.toList, TrueIn N c.toEo) := by
   have hm : (cs.toList.map fun c => MVal.bool (bval N c)) = (cs.toList.map (bval N)).map MVal.bool := by simp
-  have e : Model.combine .OR (cs.toList.map fun c => MVal.bool (bval N c)) =
+  have e : Model.combine .OR cs (cs.toList.map fun c => MVal.bool (bval N c)) =
       some (.bool ((cs.toList.map (bval N)).any id)) := by
     rw [hm]; simp only [Model.combine, List.length_map, Array.length_toList, h2, ↓reduceIte, bools_map, Option.map_some]
   obtain ⟨hb, hiff⟩ := conn_sem hc e
@@ -330,7 +330,7 @@ theorem or_sem {N : SmtModel} {cs : Array Node} (hc : ∀ c ∈ cs.toList, BoolV
 omit [LogosFacts] in
 theorem bin_sem {N : SmtModel} {k : Kind} {cs : Array Node} (hc : ∀ c ∈ cs.toList, BoolVal N c) (h2 : cs.size = 2)
     {f : Bool → Bool → Bool}
-    (hf : ∀ a b, Model.combine k [.bool a, .bool b] = some (.bool (f a b))) :
+    (hf : ∀ a b, Model.combine k cs [.bool a, .bool b] = some (.bool (f a b))) :
     BoolVal N (.app (.kind k) cs) ∧
       (TrueIn N (Node.app (.kind k) cs).toEo ↔ f (bval N cs[0]) (bval N cs[1]) = true) := by
   have e := hf (bval N cs[0]) (bval N cs[1])
@@ -344,7 +344,7 @@ theorem ite_sem {N : SmtModel} {cs : Array Node} (hc : ∀ c ∈ cs.toList, Bool
       (if TrueIn N cs[0].toEo then TrueIn N cs[1].toEo else TrueIn N cs[2].toEo)) := by
   have hm : (cs.toList.map fun c => MVal.bool (bval N c)) =
       [.bool (bval N cs[0]), .bool (bval N cs[1]), .bool (bval N cs[2])] := by rw [toList_three h3]; rfl
-  have e : Model.combine .ITE (cs.toList.map fun c => MVal.bool (bval N c)) =
+  have e : Model.combine .ITE cs (cs.toList.map fun c => MVal.bool (bval N c)) =
       some (.bool (if bval N cs[0] then bval N cs[1] else bval N cs[2])) := by
     rw [hm]; simp only [Model.combine]; split <;> rfl
   obtain ⟨hb, hiff⟩ := conn_sem hc e

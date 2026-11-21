@@ -237,11 +237,13 @@ def dt_literal(rng):
     return atom if rng.random() < 0.65 else f"(not {atom})"
 
 
+# declared in alphabetical order, so that telos's order of variables (by name)
+# is cvc5's (by node id, which follows declaration)
 LRA_PRELUDE = """(set-logic QF_LRA)
+(declare-fun w () Real)
 (declare-fun x () Real)
 (declare-fun y () Real)
 (declare-fun z () Real)
-(declare-fun w () Real)
 """
 
 
@@ -323,12 +325,30 @@ def split_cvc5(text):
     return pp, events
 
 
-def neg_free(e):
-    """`e` with `(- n)` for a numeral `n` written `-n`, as telos prints it."""
+def num_atom(e):
+    """The numeral `n` or `(- n)`, as an integer, or None."""
     if isinstance(e, str):
-        return e
+        return int(e) if e.isdigit() else None
     if len(e) == 2 and e[0] == "-" and isinstance(e[1], str) and e[1].isdigit():
-        return "-" + e[1]
+        return -int(e[1])
+    return None
+
+
+def neg_free(e):
+    """`e` with its constants written as telos prints them: cvc5's `(- n)` as
+    `-n`, its rational `(/ a b)` as `a/b`; and telos's rationals with an integral
+    value, `n/1`, as `n` (cvc5 prints the integral reals as integers)."""
+    if isinstance(e, str):
+        if e.endswith("/1") and e[:-2].lstrip("-").isdigit():
+            return e[:-2]
+        return e
+    n = num_atom(e)
+    if n is not None:
+        return str(n)
+    if len(e) == 3 and e[0] == "/" and num_atom(e[1]) is not None and num_atom(e[2]) not in (None, 0):
+        from fractions import Fraction
+        q = Fraction(num_atom(e[1]), num_atom(e[2]))
+        return str(q.numerator) if q.denominator == 1 else f"{q.numerator}/{q.denominator}"
     return [neg_free(x) for x in e]
 
 
@@ -583,8 +603,11 @@ def main():
             rec = path.with_suffix(".cvc5")
             theirs, cerr = (rec.read_text(), "") if rec.exists() else (None, f"no recorded trace {rec}")
         else:
+            # arithmetic logics use the justification heuristic by default, which
+            # telos does not port yet: MiniSat's own decisions are compared
             theirs, cerr = run([a.cvc5, *CVC5_OPTS] + (["-o", "theory-events-ee"] if a.ee else []) +
-                               (["--sat-solver=minisat"] if a.sat else []), path)
+                               (["--sat-solver=minisat"] if a.sat else []) +
+                               (["--decision=internal"] if a.sat and a.theory == "lra" else []), path)
         if theirs is None or "(error" in theirs:
             failures.append((path, cerr or theirs))
             continue

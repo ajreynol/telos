@@ -118,7 +118,7 @@ def main (args : List String) : IO UInt32 := do
     match Sat.solveDimacs input with
     | .ok out => IO.println out; return 0
     | .error e => IO.eprintln s!"telos: {e}"; return 1
-  let sc ← match ← Profile.measure "frontend" "parse script" fun _ => readScript input with
+  let sc ← match ← Profile.measure "frontend" "parse script" fun _ => readScript input (cvc5Output := opts.noPreprocess) with
     | .ok sc => pure sc
     | .error e => IO.eprintln s!"telos: {e}"; return 1
   if let some t := opts.replay then

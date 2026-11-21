@@ -1083,7 +1083,7 @@ Two Lean pitfalls caused bugs here, worth knowing:
   the statement;
 - `return` inside a `match` arm's `do` returns from the enclosing function.
 
-## Stage 7: linear arithmetic (in progress)
+## Stage 7: linear arithmetic (in progress: milestone 1 done, but for `unsat`)
 
 ### Scope
 
@@ -1202,11 +1202,64 @@ bounds:
   traversals are in cvc5's order. `TelosTests/ArithTableau.lean` checks random
   pivots against the original equations.
 
-`scripts/fuzz-solve.py --theory lra` generates QF_LRA benchmarks. On them,
-cvc5's events are arithmetic's asserts and checks, `ARITH_UNATE` lemmas at
-preregistration and `ARITH_CONF_SIMPLEX` conflicts; telos answers `unknown`.
-Next: the constraint database and the partial model, then preregistration
-(`setupAtom`, `setupPolynomial`) and the unate lemmas, then the dual simplex.
+- `Basic.lean`, `State.lean`: bound counts, constraints, value collections,
+  constraint rules, the variables' information; the solver's state as one
+  structure (the partial model, the tableau, the constraint database, the
+  error set, the simplex's and `TheoryArithPrivate`'s fields), its
+  context-dependent lists truncated at a pop with cvc5's cleanups;
+- `Poly.lean`: what the solver reads of a normal-form atom (`Comparison`):
+  its constraint type, its normalized variable part (which keys its arith
+  variable) and its delta-rational bound;
+- `Simplex.lean`: the error set, the linear equality module (updates,
+  pivots, the rows' bound counts), the Farkas conflict builder
+  (`minimallyWeakConflict`), the dual simplex;
+- `Solver.lean`: preregistration (`setupAtom`, `setupPolynomial`), the unate
+  lemmas of `presolve`, the assertion of facts (`assertionCases`,
+  `Assert*`), `postCheck` (learned bounds, the simplex, unate propagation,
+  disequality splits), row bound propagation (`propagateCandidatesNew`, its
+  row-implication lemmas), the propagations, and the explanations.
+
+The engine runs arithmetic through the SAT solver (its unate lemmas need it),
+and gives it its facts, checks, propagations and explanations as cvc5's
+`TheoryEngine` does; each conflict of arithmetic is an event and a clause.
+
+The front end reads a numeral in a position of type `Real` as a real
+(`cvc5Numerals`), as SMT-LIB does: CPC types it as an integer, so `(>= x 1)`
+for a real `x` is ill typed, and inside a connective Logos's parser makes it
+`Stuck`. Reading cvc5's output (`--no-preprocess`, replay), it also reads
+cvc5's constants as the literals they denote: `(- 1)`, and `(/ a b)` for a
+rational. The comparator writes both sides' constants alike.
+
+**`sat` is certified** by the model check, with the arithmetic solver's values
+of its variables (`modelValues`: `collectModelValues`, with `δ` from
+`deltaValueForTotalOrder`). The model's evaluator has integers and rationals,
+and evaluates `+`, `*` (with their typed neutral elements, as `Node.toEo`
+translates them), `-`, unary `-`, the comparisons and `to_real` as Logos
+does; its soundness proof covers them (`combine_sound_in`, `ev_sound`,
+`verification/TelosProofs/Solver/Model.lean`).
+
+Results (`scripts/fuzz-solve.py --theory lra --sat --cvc5-pp`, cvc5 with
+`--decision=internal`, since arithmetic logics use the justification
+heuristic, milestone 3 of Stage 6): the input events agree on all of 300
+random conjunctions and 300 with clauses. All the events (lemmas, conflicts,
+propagations, backtracking) and the answer agree on 269 of the
+conjunctions and 280 of those with clauses (188 of another 200), the `sat`
+answers certified; the rest are `unsat`s, which are not certified yet, and
+the order of unate lemmas' disjuncts. With telos's own preprocessing
+(`--recorded`), 54 of 61. `test/solve/sat-lra-*.smt2` have row implications,
+unate lemmas and a simplex conflict. The
+differences are the order of the two disjuncts of unate lemmas, by node id
+(`proveOr`), which telos approximates by first occurrence in the input; cvc5's
+ids come from its preprocessing, which `--cvc5-pp` does not show.
+
+Not yet:
+- **`unsat`** needs the certificates of arithmetic's conflicts and lemmas
+  (milestone 2: Farkas certificates); it answers `unknown`;
+- the congruence manager (equalities of variables, arithmetic's own equality
+  engine), the random skipping of long rows in propagation, integers
+  (milestone 3), sharing (milestone 4);
+- `arithHeuristicPivots` and `arithStandardCheckVarOrderPivots` are QF_LRA's
+  (0 and 200).
 
 ## Order of work (all stages)
 

@@ -120,9 +120,11 @@ def hasDistinctAtom (out : List Node) : Bool :=
   out.any fun f => (formulaAtoms f #[]).any isDistinct
 
 /-- The assertions go to the SAT solver (`Solver.runSat`): they are not a
-conjunction of literals, or `viaSat` asks for it, and the theories are solved. -/
+conjunction of literals, or `viaSat` asks for it, or arithmetic is enabled
+(whose unate lemmas need the SAT solver), and the engine handles the theories. -/
 def useSat (cfg : Solver.Config) (out : List Node) (viaSat : Bool) : Bool :=
-  cfg.ufSolver && !hasDistinctAtom out && (viaSat || (literalsOf out matches .error _))
+  cfg.satSupported && !hasDistinctAtom out &&
+    (viaSat || cfg.arithSolver || (literalsOf out matches .error _))
 
 /-- Solve the assertions of `sc`: the assertions given to the engine, and the
 engine's result. A conjunction of literals goes to the engine alone
@@ -148,6 +150,7 @@ def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Boo
   -- a `sat` stands only if its model satisfies the input assertions
   let r := if r.answer != .sat then r else
     let M := buildModel r.ee (relevantTerms r.asserted) (freeConsts as) (engineDefs as opts preprocess) as
+      r.arithModel
     if M.satisfies as then { r with model := some M }
     else { r with answer := .unknown, uncertified := some "the model does not satisfy the input" }
   return (out, r)

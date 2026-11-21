@@ -87,6 +87,120 @@ partial def bvNumerals : Sexp → Sexp
   | .expr xs => .expr (xs.map bvNumerals)
   | a => a
 
+/-! ## cvc5's numerals
+
+cvc5 prints a constant of type `Real` with an integral value as an integer
+numeral (`1`), a negative constant as `(- 1)`, and a non-integral one as
+`(/ 3 2)` or `(/ (- 3) 2)`. Read as terms, these are ill typed in CPC next to
+reals (`(>= x 1)` for a real `x`), and they are not constants. When reading
+cvc5's output (`--no-preprocess`, replay), `cvc5Numerals` writes them as the
+literals they denote: `-1` for an integer, `3/2` (with `n/1` for an integral
+value) for a real, which Logos's parser reads as constants. -/
+
+/-- The arithmetic type of a term, as far as `cvc5Numerals` needs it. -/
+inductive NumTy where
+  | int | real | other
+  deriving BEq, Inhabited
+
+/-- The arithmetic type named by a sort. -/
+def NumTy.ofSort : Sexp → NumTy
+  | .atom "Int" => .int
+  | .atom "Real" => .real
+  | _ => .other
+
+/-- An integer numeral, `n` or `(- n)`. -/
+def intLit? : Sexp → Option Int
+  | .atom a => if !a.isEmpty && a.all Char.isDigit then a.toNat?.map Int.ofNat else none
+  | .expr [.atom "-", .atom a] =>
+    if !a.isEmpty && a.all Char.isDigit then a.toNat?.map (- Int.ofNat ·) else none
+  | _ => none
+
+/-- A rational literal as cvc5 prints one: an integer numeral, or `(/ a b)` of
+integer numerals with `b ≠ 0`. -/
+def ratLit? (s : Sexp) : Option Rat :=
+  match intLit? s with
+  | some i => some i
+  | none => match s with
+    | .expr [.atom "/", a, b] => do
+      let a ← intLit? a
+      let b ← intLit? b
+      if b == 0 then none else some ((a : Rat) / b)
+    | _ => none
+
+/-- The literal of a rational of type `Real`. -/
+def realAtom (q : Rat) : Sexp := .atom s!"{q.num}/{q.den}"
+
+/-- The operators whose arguments have one arithmetic type. -/
+def arithOps : List String := ["+", "-", "*", "<", "<=", ">", ">=", "=", "distinct", "abs"]
+
+mutual
+  /-- The arithmetic type of `s`, for the types `env` of the symbols. -/
+  partial def numTy (env : List (String × NumTy)) : Sexp → NumTy
+    | .atom a =>
+      if !a.isEmpty && a.all Char.isDigit then .int
+      else if a.contains '.' || a.contains '/' then .real
+      else (env.lookup a).getD .other
+    | s@(.expr (.atom h :: args)) =>
+      if (ratLit? s).isSome then (if h == "/" then .real else .int)
+      else if h == "/" || h == "to_real" then .real
+      else if h == "to_int" then .int
+      else if h == "ite" then match args with
+        | [_, t, e] => let a := numTy env t; if a == .real || numTy env e == .real then .real else a
+        | _ => .other
+      else if h == "let" then match args with
+        | [.expr bs, body] => numTy (letEnv env bs) body
+        | _ => .other
+      else if h == "!" then match args with
+        | t :: _ => numTy env t
+        | _ => .other
+      else if ["+", "-", "*", "abs"].contains h then
+        if args.any (numTy env · == .real) then .real else if args.isEmpty then .other else .int
+      else (env.lookup h).getD .other
+    | _ => .other
+  /-- The symbols bound by a `let`. -/
+  partial def letEnv (env : List (String × NumTy)) (bs : List Sexp) : List (String × NumTy) :=
+    bs.foldl (fun e b => match b with
+      | .expr [.atom x, t] => (x, numTy env t) :: e
+      | _ => e) env
+end
+
+/-- `s` with its numerals in positions of type `Real` written as real
+literals (SMT-LIB reads a numeral there as a real; CPC as an integer); `real`
+when `s` is in such a position. With `fold` (cvc5's output), its integer
+constants `(- n)` and rational constants `(/ a b)` are written as the literals
+they denote too. -/
+partial def cvc5Numerals (env : List (String × NumTy)) (fold real : Bool) (s : Sexp) : Sexp :=
+  let lit? : Option Rat := if fold then ratLit? s else (intLit? s).map (fun i => (i : Rat))
+  match lit? with
+  | some q =>
+    if real || q.den != 1 then realAtom q
+    else if fold then Sexp.atom (toString q.num) else s
+  | none =>
+    match s with
+    | Sexp.expr (Sexp.atom h :: args) =>
+      if arithOps.contains h then
+        let realArgs := args.any (numTy env · == .real) ||
+          (real && ["+", "-", "*", "abs"].contains h)
+        Sexp.expr (Sexp.atom h :: args.map (cvc5Numerals env fold realArgs))
+      else if h == "/" then Sexp.expr (Sexp.atom h :: args.map (cvc5Numerals env fold true))
+      else if h == "to_real" then Sexp.expr (Sexp.atom h :: args.map (cvc5Numerals env fold false))
+      else if h == "ite" then match args with
+        | [c, t, e] =>
+          let r := real || numTy env t == .real || numTy env e == .real
+          Sexp.expr [Sexp.atom h, cvc5Numerals env fold false c, cvc5Numerals env fold r t,
+            cvc5Numerals env fold r e]
+        | _ => Sexp.expr (Sexp.atom h :: args.map (cvc5Numerals env fold false))
+      else if h == "let" then match args with
+        | [Sexp.expr bs, body] =>
+          let bs' := bs.map fun b => match b with
+            | Sexp.expr [Sexp.atom x, t] => Sexp.expr [Sexp.atom x, cvc5Numerals env fold false t]
+            | b => b
+          Sexp.expr [Sexp.atom h, Sexp.expr bs', cvc5Numerals (letEnv env bs) fold real body]
+        | _ => Sexp.expr (Sexp.atom h :: args.map (cvc5Numerals env fold false))
+      else Sexp.expr (Sexp.atom h :: args.map (cvc5Numerals env fold false))
+    | Sexp.expr xs => Sexp.expr (xs.map (cvc5Numerals env fold false))
+    | a => a
+
 /-- A declared field type, over the parameters `ps` of a parametric datatype. -/
 partial def typeTemplate (ps : List String) : Sexp → TypeTemplate
   | .atom a => match ps.idxOf? a with
@@ -163,8 +277,11 @@ def toNode (name : Nat → Option String) (t : Term) : Except String Node :=
     | some n => .ok n
     | none => .error "the term uses an operator telos does not support yet"
 
-/-- Read a script. -/
-def readScript (input : String) : Except String Script := do
+/-- Read a script. Numerals in positions of type `Real` are reals
+(`cvc5Numerals`). With `cvc5Output`, the script is cvc5's output (its
+preprocessed assertions, a replayed trace), whose constants are read as cvc5
+prints them. -/
+def readScript (input : String) (cvc5Output : Bool := false) : Except String Script := do
   let ss ← Sexp.Parser.manySexps!.run input
   let mut decls := #[]
   let mut eunoia := #[]
@@ -176,8 +293,18 @@ def readScript (input : String) : Except String Script := do
   let mut logic : Option String := none
   let mut symbols : Array Symbol := #[]
   let mut checkSat := false
+  -- the arithmetic types of the symbols (of the return types of functions)
+  let mut numEnv : List (String × NumTy) := []
   for s in ss do
     let s := bvNumerals s
+    let s : Sexp := match s with
+      | .expr [.atom "assert", t] => .expr [.atom "assert", cvc5Numerals numEnv cvc5Output false t]
+      | .expr [.atom "simplify", t] => .expr [.atom "simplify", cvc5Numerals numEnv cvc5Output false t]
+      | s => s
+    match s with
+    | .expr [.atom "declare-const", .atom x, ty] => numEnv := (x, NumTy.ofSort ty) :: numEnv
+    | .expr [.atom "declare-fun", .atom x, _, ret] => numEnv := (x, NumTy.ofSort ret) :: numEnv
+    | _ => pure ()
     match s with
     | .expr (.atom c :: _) =>
       if ignored.contains c then continue

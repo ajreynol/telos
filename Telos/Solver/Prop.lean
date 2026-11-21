@@ -230,10 +230,14 @@ def propSolve (formulas : List Node) : PropM Sat.Solver.Result := do
     withCnf (Cnf.convertAndAssert (cnfHost c) (Node.notNode Node.mkFalse) false (src := s1))
   -- the context level of `check-sat`
   onEngine pushLevel
+  -- the node ids that the arithmetic solver approximates (by first occurrence)
+  onEngine (modify fun s => { s with arith := formulas.foldl Arith.State.noteAges s.arith })
   for (f, i) in formulas.zipIdx do
     onEngineTop do
       let src ← newSatSource (.input (i + 2))
       withCnf (Cnf.convertAndAssert (cnfHost c) f false (src := src))
+  -- `TheoryEngine::presolve`
+  if c.arithSolver then onEngineTop (withArith Arith.presolve)
   Sat.Solver.solve
 
 /-- The inputs of the certificate of a refutation of `formulas`. -/
@@ -299,10 +303,13 @@ def runSat (c : Config) (formulas : List Node) : Result :=
         | some .ff => some (Node.notNode v)
         | _ => none
       | none => none
-    let solved := e.used.isEmpty || (c.ufSolver &&
-      e.used.all ([.THEORY_UF, .THEORY_DATATYPES].contains ·))
+    -- arithmetic is solved if its relaxation is satisfiable and it met nothing
+    -- unsupported
+    let arithOk := c.arithSolver && e.arith.unsupported.isNone && e.arith.qflraStatus == .sat
+    let solved := e.used.isEmpty || ((c.ufSolver || arithOk) &&
+      e.used.all fun T => [.THEORY_UF, .THEORY_DATATYPES].contains T || (T == .THEORY_ARITH && arithOk))
     { answer := if solved then .sat else .unknown, events := e.events, ee := e.ee,
-      asserted := e.asserted ++ bools }
+      asserted := e.asserted ++ bools, arithModel := if arithOk then Arith.modelValues e.arith else #[] }
   | .unsat =>
     -- the certificate, post hoc
     let p := ((explainLevelZero.run c).run p).2

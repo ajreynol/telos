@@ -36,6 +36,8 @@ noncomputable def toVal : MVal → SmtValue
   | .fn fid d r => .Fun ((fid : ℝ) + 1) d r
   | .dtc s dd i => .DtCons s dd i
   | .app f a => .Apply (toVal f) (toVal a)
+  | .int i => .Numeral i
+  | .rat q => .Real (q : ℝ)
 
 omit [LogosFacts] in
 theorem toVal_inj {a b : MVal} (h : toVal a = toVal b) : a = b := by
@@ -289,10 +291,121 @@ theorem eval_orChain_vals (N : SmtModel) : ∀ (xs : List Term) (vs : List MVal)
       simp [toVal, __smtx_model_eval_or, native_or]
     | _ => simp [Model.bools] at h
 
+/-! ### Arithmetic -/
+
+omit [LogosFacts] in
+theorem plusV_sound {a b r : MVal} (h : Model.plusV a b = some r) :
+    __smtx_model_eval_plus (toVal a) (toVal b) = toVal r := by
+  cases a <;> cases b <;> simp only [Model.plusV, reduceCtorEq, Option.some.injEq] at h <;> subst h <;>
+    simp [toVal, __smtx_model_eval_plus, native_zplus, native_rplus]
+
+omit [LogosFacts] in
+theorem multV_sound {a b r : MVal} (h : Model.multV a b = some r) :
+    __smtx_model_eval_mult (toVal a) (toVal b) = toVal r := by
+  cases a <;> cases b <;> simp only [Model.multV, reduceCtorEq, Option.some.injEq] at h <;> subst h <;>
+    simp [toVal, __smtx_model_eval_mult, native_zmult, native_rmult]
+
+omit [LogosFacts] in
+theorem subV_sound {a b r : MVal} (h : Model.subV a b = some r) :
+    __smtx_model_eval__ (toVal a) (toVal b) = toVal r := by
+  cases a <;> cases b <;> simp only [Model.subV, reduceCtorEq, Option.some.injEq] at h <;> subst h <;>
+    simp [toVal, __smtx_model_eval__, native_zplus, native_zneg, native_rplus, native_rneg]
+
+omit [LogosFacts] in
+theorem negV_sound {a r : MVal} (h : Model.negV a = some r) :
+    __smtx_model_eval_uneg (toVal a) = toVal r := by
+  cases a <;> simp only [Model.negV, reduceCtorEq, Option.some.injEq] at h <;> subst h <;>
+    simp [toVal, __smtx_model_eval_uneg, native_zneg, native_rneg]
+
+omit [LogosFacts] in
+theorem ltV_sound {a b r : MVal} (h : Model.ltV a b = some r) :
+    __smtx_model_eval_lt (toVal a) (toVal b) = toVal r := by
+  cases a <;> cases b <;> simp only [Model.ltV, reduceCtorEq, Option.some.injEq] at h <;> subst h <;>
+    simp [toVal, __smtx_model_eval_lt, native_zlt, native_rlt]
+
+omit [LogosFacts] in
+theorem leqV_sound {a b r : MVal} (h : Model.leqV a b = some r) :
+    __smtx_model_eval_leq (toVal a) (toVal b) = toVal r := by
+  cases a <;> cases b <;> simp only [Model.leqV, reduceCtorEq, Option.some.injEq] at h <;> subst h <;>
+    simp [toVal, __smtx_model_eval_leq, native_zleq, native_rleq]
+
+omit [LogosFacts] in
+/-- A right-associated chain of `op` evaluates as `chainV` computes it. -/
+theorem eval_opChain (N : SmtModel) (op : UserOp) (f : MVal → MVal → Option MVal)
+    (sm : SmtTerm → SmtTerm → SmtTerm) (fe : SmtValue → SmtValue → SmtValue)
+    (htr : ∀ x y, __eo_to_smt (eoApp2 op x y) = sm (__eo_to_smt x) (__eo_to_smt y))
+    (hev : ∀ x y, __smtx_model_eval N (sm x y) = fe (__smtx_model_eval N x) (__smtx_model_eval N y))
+    (hf : ∀ a b r, f a b = some r → fe (toVal a) (toVal b) = toVal r)
+    (nil : Term) (nv : MVal) (hnil : __smtx_model_eval N (__eo_to_smt nil) = toVal nv) :
+    ∀ (xs : List Term) (vs : List MVal) (r : MVal),
+    List.Forall₂ (fun x v => __smtx_model_eval N (__eo_to_smt x) = toVal v) xs vs →
+    Model.chainV f nv vs = some r →
+    __smtx_model_eval N (__eo_to_smt (eoRightAssocNil op nil xs)) = toVal r
+  | [], [], r, .nil, h => by
+    simp only [Model.chainV, Option.some.injEq] at h; subst h; exact hnil
+  | x :: xs, v :: vs, r, .cons hx hr, h => by
+    simp only [Model.chainV, Option.bind_eq_some_iff] at h
+    obtain ⟨w, hw, hr'⟩ := h
+    rw [eoRightAssocNil, htr, hev, hx, eval_opChain N op f sm fe htr hev hf nil nv hnil xs vs w hr hw]
+    exact hf v w r hr'
+
+omit [LogosFacts] in
+theorem toEo_typedChain {k : Kind} {op : UserOp} (hk : k.eoShape = .rightAssocNil op .typed)
+    (cs : Array Node) (h : 2 ≤ cs.size) :
+    (Node.app (.kind k) cs).toEo = eoRightAssocNil op (typedNil op cs[0].toEo) (cs.toList.map Node.toEo) := by
+  rw [Node.toEo_app]
+  have hhead : (cs.toList.map Node.toEo).headD Term.Stuck = cs[0].toEo := by
+    rcases cs with ⟨l⟩
+    cases l with
+    | nil => simp at h
+    | cons a l => rfl
+  simp only [Op.eoShape, hk, AppShape.toEo, List.length_map, Array.length_toList, h, ↓reduceIte, Nil.eval, hhead]
+
+omit [LogosFacts] in
+theorem eval_numeral_term (N : SmtModel) (i : Int) :
+    __smtx_model_eval N (__eo_to_smt (Term.Numeral i)) = SmtValue.Numeral i := by
+  rw [show __eo_to_smt (Term.Numeral i) = SmtTerm.Numeral i from rfl, __smtx_model_eval.eq_def]
+
+omit [LogosFacts] in
+theorem eval_rational_term (N : SmtModel) (q : Rat) :
+    __smtx_model_eval N (__eo_to_smt (Term.Rational q)) = SmtValue.Real (native_rat_to_real q) := by
+  rw [show __eo_to_smt (Term.Rational q) = SmtTerm.Rational q from rfl, __smtx_model_eval.eq_def]
+
+omit [LogosFacts] in
+/-- The typed nil of a chain evaluates to `chainNil`'s value. -/
+theorem eval_typedNil (N : SmtModel) (k : Kind) (op : UserOp) (x : Node) (nv : MVal)
+    (hop : (k = .ADD ∧ op = UserOp.plus) ∨ (k = .MULT ∧ op = UserOp.mult))
+    (h : Model.chainNil k (__smtx_typeof x.toSmt) = some nv) :
+    __smtx_model_eval N (__eo_to_smt (typedNil op x.toEo)) = toVal nv := by
+  unfold typedNil
+  have hx : __eo_to_smt x.toEo = x.toSmt := rfl
+  rw [hx]
+  rcases hop with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
+  · revert h
+    cases __smtx_typeof x.toSmt <;> simp only [Model.chainNil, reduceCtorEq, false_implies, Option.some.injEq] <;>
+      intro h <;> subst h <;>
+      simp [typedNilOfType, eval_numeral_term, eval_rational_term, toVal, native_rat_to_real, native_mk_rational]
+
+omit [LogosFacts] in
+theorem toSmt_bin {k : Kind} {op : UserOp} (hk : k.eoShape = .spine (Term.UOp op) (.exactly 2))
+    {cs : Array Node} (h : cs.size = 2) :
+    (Node.app (.kind k) cs).toSmt = __eo_to_smt (Term.Apply (Term.Apply (Term.UOp op) cs[0].toEo) cs[1].toEo) := by
+  unfold Node.toSmt
+  rw [Node.toEo_app, toList_two h]
+  simp [Op.eoShape, hk, AppShape.toEo, Arity.accepts]
+
+omit [LogosFacts] in
+theorem toSmt_un {k : Kind} {op : UserOp} (hk : k.eoShape = .spine (Term.UOp op) (.exactly 1))
+    {cs : Array Node} (h : cs.size = 1) :
+    (Node.app (.kind k) cs).toSmt = __eo_to_smt (Term.Apply (Term.UOp op) cs[0].toEo) := by
+  unfold Node.toSmt
+  rw [Node.toEo_app, toList_one h]
+  simp [Op.eoShape, hk, AppShape.toEo, Arity.accepts]
+
 omit [LogosFacts] in
 /-- **A connective has its value.** -/
 theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List MVal} {r : MVal}
-    (hv : ValsIn N cs.toList vs) (h : Model.combine k vs = some r) :
+    (hv : ValsIn N cs.toList vs) (h : Model.combine k cs vs = some r) :
     __smtx_model_eval N (Node.app (.kind k) cs).toSmt = toVal r := by
   have hlen : cs.size = vs.length := by simpa using hv.length_eq
   unfold Model.combine at h
@@ -351,11 +464,74 @@ theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List 
     obtain ⟨h2, -⟩ := List.forall₂_cons.1 hv
     rw [toSmt_ite hs, eval_ite', h0, h1, h2]
     cases c <;> simp [toVal, __smtx_model_eval_ite]
-  · cases h
+  · -- `+`
+    split at h
+    · rename_i h2
+      obtain ⟨nv, hnv, hc⟩ := Option.bind_eq_some_iff.1 h
+      have hs : 2 ≤ cs.size := by omega
+      have h0 : (cs[0]?.getD default) = cs[0] := by simp [Array.getElem?_eq_getElem (by omega : 0 < cs.size)]
+      rw [h0] at hnv
+      unfold Node.toSmt
+      rw [toEo_typedChain (op := UserOp.plus) rfl cs hs]
+      exact eval_opChain N UserOp.plus Model.plusV SmtTerm.plus __smtx_model_eval_plus (fun _ _ => rfl)
+        (fun _ _ => by rw [__smtx_model_eval.eq_def]) (fun _ _ _ => plusV_sound) _ nv
+        (eval_typedNil N .ADD UserOp.plus cs[0] nv (.inl ⟨rfl, rfl⟩) hnv) _ _ _ (vals_map hv) hc
+    · cases h
+  · -- `*`
+    split at h
+    · rename_i h2
+      obtain ⟨nv, hnv, hc⟩ := Option.bind_eq_some_iff.1 h
+      have hs : 2 ≤ cs.size := by omega
+      have h0 : (cs[0]?.getD default) = cs[0] := by simp [Array.getElem?_eq_getElem (by omega : 0 < cs.size)]
+      rw [h0] at hnv
+      unfold Node.toSmt
+      rw [toEo_typedChain (op := UserOp.mult) rfl cs hs]
+      exact eval_opChain N UserOp.mult Model.multV SmtTerm.mult __smtx_model_eval_mult (fun _ _ => rfl)
+        (fun _ _ => by rw [__smtx_model_eval.eq_def]) (fun _ _ _ => multV_sound) _ nv
+        (eval_typedNil N .MULT UserOp.mult cs[0] nv (.inr ⟨rfl, rfl⟩) hnv) _ _ _ (vals_map hv) hc
+    · cases h
+  all_goals first
+    | (cases h; done)
+    | skip
+  -- the binary and unary operations
+  all_goals
+    first
+    | (have hs : cs.size = 2 := by simpa using hlen
+       rw [toList_two hs] at hv
+       obtain ⟨h0, hv⟩ := List.forall₂_cons.1 hv
+       obtain ⟨h1, -⟩ := List.forall₂_cons.1 hv
+       first
+       | (rw [toSmt_bin (op := UserOp.neg) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.neg) x) y)
+            = SmtTerm.neg (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact subV_sound h)
+       | (rw [toSmt_bin (op := UserOp.lt) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.lt) x) y)
+            = SmtTerm.lt (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact ltV_sound h)
+       | (rw [toSmt_bin (op := UserOp.leq) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.leq) x) y)
+            = SmtTerm.leq (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact leqV_sound h)
+       | (rw [toSmt_bin (op := UserOp.gt) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.gt) x) y)
+            = SmtTerm.gt (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact ltV_sound h)
+       | (rw [toSmt_bin (op := UserOp.geq) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.geq) x) y)
+            = SmtTerm.geq (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact leqV_sound h))
+    | (have hs : cs.size = 1 := by simpa using hlen
+       rw [toList_one hs] at hv
+       obtain ⟨h0, -⟩ := List.forall₂_cons.1 hv
+       first
+       | (rw [toSmt_un (op := UserOp.__eoo_neg_2) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.__eoo_neg_2) x)
+            = SmtTerm.uneg (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, h0]; exact negV_sound h)
+       | (rw [toSmt_un (op := UserOp.to_real) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.to_real) x)
+            = SmtTerm.to_real (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, h0]
+          try (obtain rfl := Option.some.inj h)
+          simp [toVal, __smtx_model_eval_to_real, native_int_to_real, Rat.cast_intCast]))
 
 omit [LogosFacts] in
 theorem combine_sound (M : Model) {k : Kind} {cs : Array Node} {vs : List MVal} {r : MVal}
-    (hv : Vals M cs.toList vs) (h : Model.combine k vs = some r) :
+    (hv : Vals M cs.toList vs) (h : Model.combine k cs vs = some r) :
     __smtx_model_eval (toSmtModel M) (Node.app (.kind k) cs).toSmt = toVal r :=
   combine_sound_in _ hv h
 
@@ -749,6 +925,13 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
   split
   · rename_i b
     exact ⟨hS, fun v h => by cases h; exact evalsTo_const _ b⟩
+  · rename_i i
+    exact ⟨hS, fun v h => by
+      cases h; simpa [Node.toSmt, Node.toEo, Const.toEo, toVal] using eval_numeral_term (toSmtModel M) i⟩
+  · rename_i q
+    exact ⟨hS, fun v h => by
+      cases h; simpa [Node.toSmt, Node.toEo, Const.toEo, toVal, native_rat_to_real] using
+        eval_rational_term (toSmtModel M) q⟩
   · exact ⟨hS, fun v h => eval_var h⟩
   · rename_i cs
     split
@@ -977,9 +1160,9 @@ theorem solveScript_sat (sc : Script) (u : UserOptions) (ee pp wp co vs : Bool)
     -- input
     have key : ∀ r0 : Solver.Result, (if r0.answer != .sat then r0 else
         if (Solver.buildModel r0.ee (Solver.relevantTerms r0.asserted) (Solver.freeConsts as)
-            (engineDefs as opts pp) as).satisfies as then
+            (engineDefs as opts pp) as r0.arithModel).satisfies as then
           { r0 with model := some (Solver.buildModel r0.ee (Solver.relevantTerms r0.asserted)
-            (Solver.freeConsts as) (engineDefs as opts pp) as) }
+            (Solver.freeConsts as) (engineDefs as opts pp) as r0.arithModel) }
         else { r0 with answer := .unknown, uncertified := some "the model does not satisfy the input" }).answer = .sat →
         ∃ M, model_wf M ∧ TrueIn M (inputNode as).toEo := by
       intro r0 hs

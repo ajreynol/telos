@@ -144,10 +144,12 @@ cvc5's theory engine (`Telos/Solver/`), and prints the events at the interface
 of the theory solvers, as cvc5 prints them with `-o theory-events`, then the
 answer. That cvc5 output needs the patch `cvc5-theory-events.patch`.
 
-So far the engine and UF are ported: cvc5's equality engine, used as the central
-one, and UF. They cover logics in which UF is the only theory (QF_UF). In other
-logics the theories' checks do nothing, and the answer is `unknown` as soon as
-a theory gets a literal.
+So far the engine, UF, datatypes, cvc5's MiniSat and linear real arithmetic
+are ported: cvc5's equality engine, used as the central one, UF and datatypes
+over it, and arithmetic's simplex (`Telos/Solver/Theory/Arith/`, in progress:
+its `unsat` answers are not certified yet, and integers are not handled). In
+other logics the theories' checks do nothing, and the answer is `unknown` as
+soon as a theory gets a literal.
 
 An `unsat` answer is certified. With SAT structure, the SAT solver's
 refutation comes with a clausal certificate (`Telos/Solver/SatProof.lean`):

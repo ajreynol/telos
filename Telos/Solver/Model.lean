@@ -75,6 +75,10 @@ inductive MVal where
   /-- A value applied to another: a constructor to its arguments, one at a
   time (Logos's `Apply`). -/
   | app (f a : MVal)
+  /-- An integer (Logos's `Numeral`). -/
+  | int (i : Int)
+  /-- A real, rational (Logos's `Real` of a rational). -/
+  | rat (q : Rat)
   deriving DecidableEq, Inhabited
 
 /-- The Logos type of constructor `i` of the datatype `s` of `dd`. -/
@@ -88,6 +92,8 @@ def MVal.ty : MVal → SmtType
   | .fn _ d r => .FunType d r
   | .dtc s dd i => consType s dd i
   | .app f a => __smtx_typeof_apply_value f.ty a.ty
+  | .int _ => .Int
+  | .rat _ => .Real
 
 /-- Constructor `i` of `s` applied to `args`. -/
 def MVal.mkDt (s : native_String) (dd : SmtDatatypeDecl) (i : Nat) (args : List MVal) : MVal :=
@@ -201,9 +207,56 @@ def bools : List MVal → Option (List Bool)
   | .bool b :: vs => (bools vs).map (b :: ·)
   | _ => none
 
-/-- The value of a connective (or equality, or `ite`) of kind `k` on the values
-`vs` of its children. -/
-def combine (k : Kind) (vs : List MVal) : Option MVal :=
+/-! ### Arithmetic, as Logos evaluates it (`__smtx_model_eval_plus`, ...): on two
+integers or two reals, nothing otherwise -/
+
+def plusV : MVal → MVal → Option MVal
+  | .int a, .int b => some (.int (a + b))
+  | .rat a, .rat b => some (.rat (a + b))
+  | _, _ => none
+
+def multV : MVal → MVal → Option MVal
+  | .int a, .int b => some (.int (a * b))
+  | .rat a, .rat b => some (.rat (a * b))
+  | _, _ => none
+
+def subV : MVal → MVal → Option MVal
+  | .int a, .int b => some (.int (a + -b))
+  | .rat a, .rat b => some (.rat (a + -b))
+  | _, _ => none
+
+def negV : MVal → Option MVal
+  | .int a => some (.int (-a))
+  | .rat a => some (.rat (-a))
+  | _ => none
+
+def ltV : MVal → MVal → Option MVal
+  | .int a, .int b => some (.bool (decide (a < b)))
+  | .rat a, .rat b => some (.bool (decide (a < b)))
+  | _, _ => none
+
+def leqV : MVal → MVal → Option MVal
+  | .int a, .int b => some (.bool (decide (a ≤ b)))
+  | .rat a, .rat b => some (.bool (decide (a ≤ b)))
+  | _, _ => none
+
+/-- The neutral element that ends an `n`-ary sum or product, of the type of its
+first argument (the typed nil, `typedNilOfType`). -/
+def chainNil : Kind → SmtType → Option MVal
+  | .ADD, .Int => some (.int 0)
+  | .ADD, .Real => some (.rat 0)
+  | .MULT, .Int => some (.int 1)
+  | .MULT, .Real => some (.rat 1)
+  | _, _ => none
+
+/-- A right-associated chain of a binary operation, ending in `nil`. -/
+def chainV (f : MVal → MVal → Option MVal) (nil : MVal) : List MVal → Option MVal
+  | [] => some nil
+  | v :: vs => (chainV f nil vs).bind (f v)
+
+/-- The value of a connective (or equality, or `ite`, or an arithmetic
+operation) of kind `k` on the values `vs` of its children `cs`. -/
+def combine (k : Kind) (cs : Array Node) (vs : List MVal) : Option MVal :=
   match k, vs with
   | .NOT, [.bool b] => some (.bool !b)
   | .AND, vs => if 2 ≤ vs.length then (bools vs).map fun bs => .bool (bs.all id) else none
@@ -212,6 +265,19 @@ def combine (k : Kind) (vs : List MVal) : Option MVal :=
   | .XOR, [.bool a, .bool b] => some (.bool (a != b))
   | .EQUAL, [a, b] => some (.bool (a == b))
   | .ITE, [.bool c, a, b] => some (if c then a else b)
+  | .ADD, vs => if 2 ≤ vs.length then
+      (chainNil .ADD (__smtx_typeof (cs[0]?.getD default).toSmt)).bind fun nil => chainV plusV nil vs
+    else none
+  | .MULT, vs => if 2 ≤ vs.length then
+      (chainNil .MULT (__smtx_typeof (cs[0]?.getD default).toSmt)).bind fun nil => chainV multV nil vs
+    else none
+  | .SUB, [a, b] => subV a b
+  | .NEG, [a] => negV a
+  | .LT, [a, b] => ltV a b
+  | .LEQ, [a, b] => leqV a b
+  | .GT, [a, b] => ltV b a
+  | .GEQ, [a, b] => leqV b a
+  | .TO_REAL, [.int i] => some (.rat i)
   | _, _ => none
 
 /-- The CPC list of the arguments of a `distinct` (as `Node.toEo` writes it). -/
@@ -248,6 +314,8 @@ mutual
   def evNode (M : Model) (n : Nat) (t : Node) (S : Memo) : Option MVal × Memo :=
     match t with
     | .const (.boolean b) => (some (.bool b), S)
+    | .const (.integer i) => (some (.int i), S)
+    | .const (.rational q) => (some (.rat q), S)
     | .var x T => (M.const x T, S)
     | .app (.kind .DISTINCT) cs =>
       if distinctTyped cs then
@@ -258,7 +326,7 @@ mutual
     | .app (.kind k) cs =>
       match evList M n cs.toList S with
       | (none, S) => (none, S)
-      | (some vs, S) => (combine k vs, S)
+      | (some vs, S) => (combine k cs vs, S)
     | .app (.node .APPLY_UF (.var f T)) cs =>
       match M.const f T with
       | none => (none, S)
@@ -345,6 +413,8 @@ def groundValue : Nat → SmtType → Option MVal
   | 0, _ => none
   | _ + 1, .Bool => some (.bool false)
   | _ + 1, .USort s => some (.uval s 0)
+  | _ + 1, .Int => some (.int 0)
+  | _ + 1, .Real => some (.rat 0)
   | f + 1, .Datatype s dd =>
     (consesOf s dd).zipIdx.findSome? fun (fs, i) =>
       (fs.mapM (groundValue f)).map (MVal.mkDt s dd i)
@@ -598,7 +668,8 @@ partial def relevantTerms (asserted : Array Node) : Std.HashSet Key :=
 and the definitions `defs` (`x := t`) of the variables solved by
 preprocessing, in order. -/
 def buildModel (ee : EE.EqualityEngine) (relevant : Std.HashSet Key) (syms : List Node)
-    (defs : List (Node × Node)) (inputs : List Node) : Model := Id.run do
+    (defs : List (Node × Node)) (inputs : List Node)
+    (arith : Array (Node × Rat) := #[]) : Model := Id.run do
   let mut b : Builder := {}
   let vals := classValues ee
   let valOf (t : Node) : Option MVal := (ee.nodeIds.get? ⟨t⟩).bind fun j => vals.get? (EE.find ee j)
@@ -648,6 +719,10 @@ def buildModel (ee : EE.EqualityEngine) (relevant : Std.HashSet Key) (syms : Lis
         if let some fid := fid then
           let t := b.model.funs[fid]!
           b := setConst x T (.fn fid t.dom t.rng) b
+  -- the arithmetic solver's values of its variables
+  for (x, q) in arith do
+    if let .var name T := x then
+      b := setConst name T (if T == .integer then .int q.floor else .rat q) b
   -- the other constants: the defaults of those not defined, then the
   -- definitions (which may use them), then the defaults of the rest
   let defined := defs.map (·.1)

@@ -13,6 +13,7 @@ import Telos.Solver.Model
 import Telos.Solver.Cnf
 import Telos.Solver.SatProof
 import Telos.Solver.DtLemma
+import Telos.Solver.Theory.Arith.Solver
 
 /-!
 # The theory engine, on conjunctions of literals
@@ -132,6 +133,16 @@ theory other than the builtin, Boolean and quantifier theories. -/
 def Config.sharing (c : Config) : Bool :=
   (c.theories.filter fun T => ![.THEORY_BUILTIN, .THEORY_BOOL, .THEORY_QUANTIFIERS].contains T).length > 1
 
+/-- The linear arithmetic solver is on (`Telos/Solver/Theory/Arith/`): arithmetic
+is enabled. -/
+def Config.arithSolver (c : Config) : Bool := c.theories.contains .THEORY_ARITH
+
+/-- The engine and the SAT solver handle the enabled theories (some only in
+part: arithmetic answers `unknown` until its solver is complete): they are
+among UF, datatypes and arithmetic, and the logic is quantifier-free. -/
+def Config.satSupported (c : Config) : Bool :=
+  c.theories.all ([.THEORY_BUILTIN, .THEORY_BOOL, .THEORY_UF, .THEORY_DATATYPES, .THEORY_ARITH].contains ·)
+
 /-- The theory of datatypes is enabled, and solved. -/
 def Config.dtSolver (c : Config) : Bool := c.ufSolver && c.theories.contains .THEORY_DATATYPES
 
@@ -182,6 +193,8 @@ structure Saved where
   ufHead : Nat
   dtFacts : Nat
   dtHead : Nat
+  arithFacts : Nat
+  arithHead : Nat
   factsAsserted : Bool
   inConflict : Bool
   theoryConflict : Bool
@@ -203,6 +216,8 @@ inductive SharedUndo where
 
 structure State where
   events : Array Event := #[]
+  /-- The linear arithmetic solver (`Telos/Solver/Theory/Arith/`). -/
+  arith : Arith.State := {}
   /-- The SAT context level. -/
   level : Nat := 0
   assignment : Assignment := {}
@@ -241,6 +256,10 @@ structure State where
   /-- The facts of the theory of datatypes, and how many it has processed. -/
   dtFacts : Array Node := #[]
   dtHead : Nat := 0
+  /-- The facts of arithmetic, and how many it has processed (context
+  dependent). -/
+  arithFacts : Array Node := #[]
+  arithHead : Nat := 0
   /-- A theory sent a lemma, which `solve` cannot use (it has no SAT solver). -/
   lemmaSent : Bool := false
   /-- The shared terms database (`SharedTermsDatabase`): the shared terms of
@@ -436,8 +455,39 @@ def withEE (x : EE.EEM α) : EngineM α := do
   processNotes notes
   return a
 
+/-- Run an operation of the arithmetic solver, and send its outputs: its
+lemmas (`TheoryInferenceManager::trustedLemma`) go to the CNF stream, as the
+other theories' do. -/
+def withArith (x : Arith.ArithM α) : EngineM α := do
+  let st ← modifyGet fun s => (s.arith, { s with arith := {} })
+  let (a, st) := x.run st
+  let outs := st.outputs
+  modify fun s => { s with arith := { st with outputs := #[] } }
+  for o in outs do
+    match o with
+    | .lemma id lem =>
+      emit (.lemma (← level) .THEORY_ARITH id lem)
+      if (← read).satMode then
+        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lem, false, none, none),
+                                 outputUsed := true, lemmasAdded := true }
+      else
+        modify fun s => { s with lemmaSent := true, lemmaQueue := s.lemmaQueue.push lem, lemmasAdded := true }
+    | .conflict id exp =>
+      -- `TheoryEngine::conflict`: each conflict is printed and is a clause
+      emit (.conflict (← level) .THEORY_ARITH id exp)
+      if (← read).satMode then
+        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (exp, true, none, none),
+                                 outputUsed := true, lemmasAdded := true }
+      let why := s!"a conflict of THEORY_ARITH, which is not certified yet"
+      modify fun s => { s with inConflict := true, theoryConflict := true, cert := .error why }
+    | .propagate lit => propagate .THEORY_ARITH lit
+  if let some why := st.unsupported then
+    modify fun s => { s with satError := s.satError <|> some s!"arithmetic: {why}" }
+  return a
+
 /-- `Theory::preRegisterTerm` of theory `T`. -/
 def theoryPreRegister (T : Theory) (t : Node) : EngineM Unit := do
+  if T == .THEORY_ARITH && (← read).arithSolver then withArith (Arith.preRegisterTerm t)
   if T == .THEORY_UF && (← read).ufSolver then withEE (UF.preRegisterTerm t)
   if T == .THEORY_DATATYPES && (← read).dtSolver then withEE (DT.preRegisterTerm t)
 
@@ -661,6 +711,7 @@ def assertFact (lit : Node) (fromSat : Bool := true) (to : Option Theory := none
                            used := if s.used.contains T then s.used else s.used.push T }
   if T == .THEORY_UF then modify fun s => { s with ufFacts := s.ufFacts.push lit }
   if T == .THEORY_DATATYPES then modify fun s => { s with dtFacts := s.dtFacts.push lit }
+  if T == .THEORY_ARITH then modify fun s => { s with arithFacts := s.arithFacts.push lit }
 
 /-- The SAT solver assigns `lit` and asserts it. -/
 def assign (lit : Node) : EngineM Unit := do
@@ -678,9 +729,9 @@ instance : Inhabited Key := ⟨⟨default⟩⟩
 def pushLevel : EngineM Unit :=
   modify fun s =>
     let sv : Saved := ⟨s.assignTrail.size, s.preregLog.size, s.ufFacts.size, s.ufHead,
-      s.dtFacts.size, s.dtHead, s.factsAsserted, s.inConflict, s.theoryConflict, s.propagated.size, s.asserted.size,
+      s.dtFacts.size, s.dtHead, s.arithFacts.size, s.arithHead, s.factsAsserted, s.inConflict, s.theoryConflict, s.propagated.size, s.asserted.size,
       s.sharedLog.size, s.registerLog.size⟩
-    { s with saved := s.saved.push sv, level := s.level + 1, ee := EE.push s.ee }
+    { s with saved := s.saved.push sv, level := s.level + 1, ee := EE.push s.ee, arith := s.arith.push }
 
 /-- Return to the SAT context level `k` (`Context::pop`), restoring what was
 saved when leaving it. -/
@@ -701,6 +752,10 @@ def popTo (k : Nat) : EngineM Unit := do
       | some v => pv.insert key v
       | none => pv.erase key
   let ee := EE.popTo ee k
+  modify fun s => { s with arith := Id.run do
+    let mut a := s.arith
+    while a.marks.size > k do a := a.pop
+    return a }
   -- the shared terms database and the propagation marks
   let (at₀, tt₀, nt₀, ms₀, mb₀, log) ← modifyGet fun s =>
     ((s.atomTerms, s.termTheories, s.notified, s.markedSat, s.markedBuiltin, s.sharedLog),
@@ -736,6 +791,7 @@ def popTo (k : Nat) : EngineM Unit := do
     preregVisited := pv, preregLog := s.preregLog.take sv.preregLog,
     ufFacts := s.ufFacts.take sv.ufFacts, ufHead := sv.ufHead,
     dtFacts := s.dtFacts.take sv.dtFacts, dtHead := sv.dtHead,
+    arithFacts := s.arithFacts.take sv.arithFacts, arithHead := sv.arithHead,
     factsAsserted := sv.factsAsserted, inConflict := sv.inConflict,
     theoryConflict := sv.theoryConflict, propagated := s.propagated.take sv.propagated,
     asserted := s.asserted.take sv.asserted,
@@ -784,8 +840,13 @@ def explainAll (lits : Array Node) (all : Bool) : EngineM (Array Node) := do
     match l with
     | .app (.kind .AND) cs => todo := todo ++ cs
     | _ =>
-      let (exp, _) ← runEE (EE.explainLit l)
-      todo := todo ++ exp
+      let c ← read
+      if c.arithSolver && c.theoryOf (atomOf l).1 == .THEORY_ARITH then
+        -- `TheoryArith::explain`
+        todo := todo ++ (← withArith (Arith.explain l))
+      else
+        let (exp, _) ← runEE (EE.explainLit l)
+        todo := todo ++ exp
   return out
 
 /-! ### The CNF stream (`Config.satMode`) -/
@@ -955,6 +1016,17 @@ def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
       modify fun s => { s with dtHead := s.dtHead + 1 }
       withEEF (DT.assertFact fact)
     dtPostCheck (e == .full)
+  if T == .THEORY_ARITH && (← read).arithSolver then
+    -- `Theory::check`: `preCheck`, the facts (`preNotifyFact`), `postCheck`
+    let newFacts := (← get).arithHead < (← get).arithFacts.size
+    withArith (Arith.preCheck newFacts)
+    repeat
+      let s ← get
+      if s.arithHead ≥ s.arithFacts.size then break
+      let fact := s.arithFacts[s.arithHead]!
+      modify fun s => { s with arithHead := s.arithHead + 1 }
+      withArith (Arith.assertFact fact)
+    let _ ← withArith (Arith.postCheck (e == .full))
   if T == .THEORY_UF && (← read).ufSolver then
     repeat
       let s ← get
@@ -977,6 +1049,8 @@ def check (e : Effort) : EngineM Unit := do
       if T.hasCheck then
         theoryCheck T e
         if (← get).inConflict then break
+    -- `TheoryEngine::propagate`: arithmetic's (the others propagate as they go)
+    if !(← get).inConflict && (← read).arithSolver then withArith Arith.propagate
 
 /-- The explanation of a propagated literal (`TheoryEngine::getExplanation`,
 with the central equality engine), as its assumptions: the equality engine
@@ -1194,6 +1268,9 @@ structure Result where
   asserted : Array Node := #[]
   /-- The model of a certified `sat` answer. -/
   model : Option Model := none
+  /-- For a `sat` answer: the arithmetic solver's values of its variables
+  (`collectModelValues`). -/
+  arithModel : Array (Node × Rat) := #[]
   /-- The certificate of an `unsat` answer of the SAT solver: the input
   formulas and the refutation (`Telos/Solver/SatProof.lean`). -/
   satCert : Option (Array Node × SatProof.Cert) := none

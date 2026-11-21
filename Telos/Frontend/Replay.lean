@@ -147,7 +147,7 @@ def replayScript (input trace : String) (eeEvents : Bool := false) : Except Stri
   let mut sks : List (String × Node) := []
   for (name, t) in purifyDefs trace do
     if (input.splitOn s!"(declare-fun {name} ").length > 1 then continue
-    let sc ← readScript (input ++ "\n" ++ decls ++ s!"(simplify {t})\n")
+    let sc ← readScript (input ++ "\n" ++ decls ++ s!"(simplify {t})\n") (cvc5Output := true)
     let some q := sc.queries.getLast? | throw s!"bad purification lemma for {name}"
     let n ← q.node
     let some T := n.typeHint | throw s!"no type for {name}"
@@ -155,7 +155,7 @@ def replayScript (input trace : String) (eeEvents : Bool := false) : Except Stri
     sks := sks ++ [(name, .skolem .PURIFY #[substVars sks n])]
   -- the terms of the trace, read as `simplify` queries of the script
   let text := input ++ "\n" ++ decls ++ "\n".intercalate (terms.toList.map fun t => s!"(simplify {t})") ++ "\n"
-  let sc ← Profile.time "replay" (fun _ => "parse terms") fun _ => readScript text
+  let sc ← Profile.time "replay" (fun _ => "parse terms") fun _ => readScript text (cvc5Output := true)
   let nodes ← Profile.time "replay" (fun _ => "terms to nodes") fun _ => sc.queries.toArray.mapM fun q => q.node
   let nodes := if sks.isEmpty then nodes else nodes.map (substVars sks)
   -- telos's skolems printed with cvc5's names
