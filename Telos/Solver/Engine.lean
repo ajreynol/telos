@@ -7,6 +7,7 @@ import Telos.Solver.Event
 import Telos.Solver.EqualityEngine
 import Telos.Solver.Theory.UF
 import Telos.Solver.Theory.Datatypes
+import Telos.Solver.Theory.Sets
 import Telos.Solver.EqBuild
 import Telos.Solver.Explain
 import Telos.Solver.Model
@@ -180,7 +181,8 @@ def Config.arithSolver (c : Config) : Bool := c.theories.contains .THEORY_ARITH
 part: arithmetic answers `unknown` until its solver is complete): they are
 among UF, datatypes and arithmetic, and the logic is quantifier-free. -/
 def Config.satSupported (c : Config) : Bool :=
-  c.theories.all ([.THEORY_BUILTIN, .THEORY_BOOL, .THEORY_UF, .THEORY_DATATYPES, .THEORY_ARITH].contains ·)
+  c.theories.all ([.THEORY_BUILTIN, .THEORY_BOOL, .THEORY_UF, .THEORY_DATATYPES, .THEORY_ARITH,
+    .THEORY_SETS].contains ·)
 
 /-- The central equality engine runs, with UF and datatypes: the theories are
 supported (with arithmetic or not). -/
@@ -188,6 +190,9 @@ def Config.eeSolver (c : Config) : Bool := c.satSupported
 
 /-- The theory of datatypes is enabled, and solved. -/
 def Config.dtSolver (c : Config) : Bool := c.eeSolver && c.theories.contains .THEORY_DATATYPES
+
+/-- The theory of sets is enabled, and solved (`Telos/Solver/Theory/Sets.lean`). -/
+def Config.setsSolver (c : Config) : Bool := c.eeSolver && c.theories.contains .THEORY_SETS
 
 /-- The answer to `check-sat`. -/
 inductive Answer where
@@ -241,6 +246,8 @@ structure Saved where
   ufHead : Nat
   dtFacts : Nat
   dtHead : Nat
+  setsFacts : Nat
+  setsHead : Nat
   arithFacts : Nat
   arithHead : Nat
   factsAsserted : Bool
@@ -253,6 +260,7 @@ structure Saved where
   skActive : Nat
   ufFunctionTerms : Nat
   arithShared : Nat
+  setsShared : Nat
   deriving Inhabited
 
 /-- An undo entry of the shared terms database and the propagation marks (cvc5's
@@ -307,6 +315,10 @@ structure State where
   /-- The facts of the theory of datatypes, and how many it has processed. -/
   dtFacts : Array Node := #[]
   dtHead : Nat := 0
+  /-- The facts asserted to the theory of sets (`Theory::d_facts`), and the
+  next to process. -/
+  setsFacts : Array Node := #[]
+  setsHead : Nat := 0
   /-- The facts of arithmetic, and how many it has processed (context
   dependent). -/
   arithFacts : Array Node := #[]
@@ -374,6 +386,8 @@ became active (its local assertions). -/
   /-- Arithmetic's shared terms (its `TheoryState::getSharedTerms`, context
   dependent), in order. -/
   arithShared : Array Node := #[]
+  /-- The shared terms of the theory of sets (`Theory::d_sharedTerms`). -/
+  setsShared : Array Node := #[]
   /-- The lemmas the builtin theory sent (the combination splits), rewritten
   (its inference manager's cache). -/
   builtinLemmas : Std.HashSet Key := {}
@@ -412,10 +426,16 @@ def isTheoryAtom (c : Config) (atom : Node) : Bool :=
 def eeCtx : EngineM EE.Ctx := do
   let asg := (← get).assignment
   let dt := (← read).dtSolver
-  let base : EE.Ctx := { congruenceKinds := fun k => UF.congruenceKind k || (dt && DT.congruenceKind k),
+  let sets := (← read).setsSolver
+  let base : EE.Ctx := { congruenceKinds := fun k => UF.congruenceKind k || (dt && DT.congruenceKind k) ||
+                                                     (sets && Sets.congruenceKind k),
                          value := fun a => asg.get? ⟨a⟩, cvc5Order := (← read).cvc5Order,
-                         declOrder := (← read).declOrder }
-  return if dt then { base with onNote := DT.onNote base } else base
+                         declOrder := (← read).declOrder, order := (← read).order }
+  -- the theories' handlers, in the order of their ids
+  let onNote := fun n ee =>
+    let ee := if dt then DT.onNote base n ee else ee
+    if sets then Sets.onNote base n ee else ee
+  return if dt || sets then { base with onNote } else base
 
 /-- Run an operation of the equality engine, and take its notes. -/
 def runEE (x : EE.EEM α) : EngineM (α × Array EE.Note) := do
@@ -486,6 +506,7 @@ def assertShared (T : Theory) (lit : Node) : EngineM Unit := do
                            used := if s.used.contains T then s.used else s.used.push T }
   emit (.assert (← level) T norm)
   if T == .THEORY_DATATYPES then modify fun s => { s with dtFacts := s.dtFacts.push norm }
+  if T == .THEORY_SETS then modify fun s => { s with setsFacts := s.setsFacts.push norm }
   if T == .THEORY_ARITH then modify fun s => { s with arithFacts := s.arithFacts.push norm }
 
 /-- Process the notes of the central equality engine
@@ -528,7 +549,12 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
     | .conflict T id exp =>
       emit (.conflict (← level) T id exp)
       if (← read).satMode then
-        let kind := (← get).ee.dt.conflict.map Pending.dt
+        let ee := (← get).ee
+        let kind := if T == .THEORY_DATATYPES then ee.dt.conflict.map Pending.dt else none
+        -- sets' conflict, as the theory engine explains it (`getExplanation`)
+        let exp := if T == .THEORY_SETS then
+            (ee.sets.conflict.map fun (_, _, a) => EE.mkAnd a).getD exp
+          else exp
         modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (exp, true, kind, none),
                                  outputUsed := true, lemmasAdded := true }
       let why := s!"a conflict of {T.name}, which is not certified yet"
@@ -595,6 +621,7 @@ def theoryPreRegister (T : Theory) (t : Node) : EngineM Unit := do
     if let .app (.node .APPLY_UF _) _ := t then
       modify fun s => { s with ufFunctionTerms := s.ufFunctionTerms.push t }
   if T == .THEORY_DATATYPES && (← read).dtSolver then withEE (DT.preRegisterTerm t)
+  if T == .THEORY_SETS && (← read).setsSolver then withEE (Sets.preRegisterTerm t)
 
 /-- The theory that owns a type (`Theory::theoryOf(TypeNode)`). -/
 def typeTheory (T : TypeNode) : Theory := Theory.ofTheoryId T.theoryId
@@ -773,7 +800,9 @@ def preNotifySharedFact (atom : Node) : EngineM Unit := do
       if arith then
         modify fun s => { s with arithShared := s.arithShared.push term }
         withArith (Arith.notifySharedTerm term)
-      if (← read).eeSolver && (T == .THEORY_UF || T == .THEORY_DATATYPES || arith) then
+      let sets := T == .THEORY_SETS && (← read).setsSolver
+      if sets then modify fun s => { s with setsShared := s.setsShared.push term }
+      if (← read).eeSolver && (T == .THEORY_UF || T == .THEORY_DATATYPES || arith || sets) then
         withEE (EE.addTriggerTerm term T.tag)
     -- `SharedTermsDatabase::markNotified`: the trigger terms again
     if newly != 0 then
@@ -824,6 +853,7 @@ def assertFact (lit : Node) (fromSat : Bool := true) (to : Option Theory := none
                            used := if s.used.contains T then s.used else s.used.push T }
   if T == .THEORY_UF then modify fun s => { s with ufFacts := s.ufFacts.push lit }
   if T == .THEORY_DATATYPES then modify fun s => { s with dtFacts := s.dtFacts.push lit }
+  if T == .THEORY_SETS then modify fun s => { s with setsFacts := s.setsFacts.push lit }
   if T == .THEORY_ARITH then modify fun s => { s with arithFacts := s.arithFacts.push lit }
 
 /-- The SAT solver assigns `lit` and asserts it. -/
@@ -842,8 +872,9 @@ instance : Inhabited Key := ⟨⟨default⟩⟩
 def pushLevel : EngineM Unit :=
   modify fun s =>
     let sv : Saved := ⟨s.assignTrail.size, s.preregLog.size, s.ufFacts.size, s.ufHead,
-      s.dtFacts.size, s.dtHead, s.arithFacts.size, s.arithHead, s.factsAsserted, s.inConflict, s.theoryConflict, s.propagated.size, s.asserted.size,
-      s.sharedLog.size, s.registerLog.size, s.skActive.size, s.ufFunctionTerms.size, s.arithShared.size⟩
+      s.dtFacts.size, s.dtHead, s.setsFacts.size, s.setsHead, s.arithFacts.size, s.arithHead, s.factsAsserted, s.inConflict, s.theoryConflict, s.propagated.size, s.asserted.size,
+      s.sharedLog.size, s.registerLog.size, s.skActive.size, s.ufFunctionTerms.size, s.arithShared.size,
+      s.setsShared.size⟩
     { s with saved := s.saved.push sv, level := s.level + 1, ee := EE.push s.ee, arith := s.arith.push }
 
 /-- A purification skolem (as `--post-asserts` names it in a script read back). -/
@@ -948,12 +979,14 @@ def popTo (k : Nat) : EngineM Unit := do
     { s with skActive := s.skActive.take sv.skActive,
              ufFunctionTerms := s.ufFunctionTerms.take sv.ufFunctionTerms,
              arithShared := s.arithShared.take sv.arithShared,
+             setsShared := s.setsShared.take sv.setsShared,
              skActiveSet := gone.foldl (·.erase ⟨·⟩) s.skActiveSet }
   modify fun s => { s with
     assignment := asg, assignTrail := s.assignTrail.take sv.assignTrail,
     preregVisited := pv, preregLog := s.preregLog.take sv.preregLog,
     ufFacts := s.ufFacts.take sv.ufFacts, ufHead := sv.ufHead,
     dtFacts := s.dtFacts.take sv.dtFacts, dtHead := sv.dtHead,
+    setsFacts := s.setsFacts.take sv.setsFacts, setsHead := sv.setsHead,
     arithFacts := s.arithFacts.take sv.arithFacts, arithHead := sv.arithHead,
     factsAsserted := sv.factsAsserted, inConflict := sv.inConflict,
     theoryConflict := sv.theoryConflict, propagated := s.propagated.take sv.propagated,
@@ -1072,8 +1105,10 @@ partial def orientEqs (ids : Std.HashMap Key Nat) (n : Node) (decl : Std.HashMap
   match n with
   | .app (.kind .EQUAL) #[l, r] =>
     if l.typeHint == some .boolean then .app (.kind .EQUAL) #[orientEqs ids l decl, orientEqs ids r decl]
-    -- (an arithmetic equality is oriented by its normal form, by the rewriter)
+    -- (an arithmetic equality is oriented by its normal form, a set equality by
+    -- node order, by the rewriter)
     else if l.typeHint == some .integer || l.typeHint == some .real then n
+    else if (match l.typeHint with | some (.set _) => true | _ => false) then n
     else if EE.ageLt ids r l decl then Node.eqNode r l else n
   | .app (.kind k) cs =>
     if Cnf.isConnective n || k == .NOT then .app (.kind k) (cs.map (orientEqs ids · decl)) else n
@@ -1121,7 +1156,8 @@ def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (proof : O
     modify fun s => { s with decisionQueue := s.decisionQueue.push (Node.notNode (EE.mkAnd exp)) }
   else
     let lem₀ := lem
-    let lem := Telos.rewrite lem (← read).order
+    -- the lemma's nodes are created before its rewrite (cvc5's node ids)
+    let lem := Telos.rewrite lem ((← read).order.withLocal lem)
     let ids := (← get).ee.nodeIds
     let lem := if c.cvc5Order then orientEqs ids lem c.declOrder else lem
     -- the formula's proof, from the lemma's
@@ -1199,6 +1235,28 @@ def dtPostCheck (full : Bool) : EngineM Unit := do
     let d ← dt
     if (← conflict) || d.sentLemmas > 0 || d.sentFacts == 0 then break
 
+/-- The relevant terms of the theory of sets (`collectAssertedTerms`, with the
+shared terms): the subterms of its facts, and its shared terms. -/
+def setsRelevant : EngineM (Std.HashSet Key) := do
+  let s ← get
+  let rec go (acc : Std.HashSet Key) (t : Node) : Std.HashSet Key :=
+    if acc.contains ⟨t⟩ then acc else
+    let acc := acc.insert ⟨t⟩
+    match t with
+    | .app _ cs => cs.attach.foldl (fun acc ⟨c, _⟩ => go acc c) acc
+    | _ => acc
+  termination_by sizeOf t
+  decreasing_by all_goals (simp_wf; have := Array.sizeOf_lt_of_mem ‹_›; omega)
+  let acc := s.setsFacts.foldl (fun acc f => go acc (atomOf f).1) {}
+  return s.setsShared.foldl (fun acc t => acc.insert ⟨t⟩) acc
+
+/-- The theory of sets' `postCheck` at full effort, at the level of the engine:
+each lemma is sent, and its atoms preregistered, as it is produced. -/
+def setsPostCheck : EngineM Unit := do
+  let relevant ← setsRelevant
+  let ops : Sets.Ops EngineM := { run := fun x => withEEF x }
+  Sets.postCheck ops relevant (do return (← get).outputUsed || (← get).lemmasAdded)
+
 /-- `Theory::check` of one theory: for UF, its facts are asserted to the
 equality engine, until the engine is in conflict. -/
 def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
@@ -1214,6 +1272,14 @@ def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
       modify fun s => { s with dtHead := s.dtHead + 1 }
       withEEF (DT.assertFact fact)
     dtPostCheck (e == .full)
+  if T == .THEORY_SETS && (← read).setsSolver then
+    repeat
+      let s ← get
+      if s.inConflict || s.setsHead ≥ s.setsFacts.size then break
+      let fact := s.setsFacts[s.setsHead]!
+      modify fun s => { s with setsHead := s.setsHead + 1 }
+      withEEF (Sets.assertFact fact)
+    if e == .full && !(← get).inConflict then setsPostCheck
   if T == .THEORY_ARITH && (← read).arithSolver then
     -- `Theory::check`: `preCheck`, the facts (`preNotifyFact`), `postCheck`
     let newFacts := (← get).arithHead < (← get).arithFacts.size
@@ -1466,7 +1532,8 @@ def solve (lits : List Node) : EngineM Answer := do
   if (← read).ufSolver then
     let ctx ← eeCtx
     let dtOn := (← read).dtSolver
-    modify fun s => { s with ee := { EE.init ctx with dt := { enabled := dtOn } } }
+    let setsOn := (← read).setsSolver
+    modify fun s => { s with ee := { EE.init ctx with dt := { enabled := dtOn }, sets := { enabled := setsOn } } }
   if lits.contains Node.mkFalse then
     modify fun s => { s with cert := .ok (#[Node.mkFalse], .symm (.assume 0)) }
     return .unsat
@@ -1616,7 +1683,7 @@ def replay (c : Config) (inputs : List Input) : Array Event × Nat :=
   let act : EngineM Unit := do
     if c.ufSolver then
       let ctx ← eeCtx
-      modify fun s => { s with ee := { EE.init ctx with dt := { enabled := c.dtSolver } } }
+      modify fun s => { s with ee := { EE.init ctx with dt := { enabled := c.dtSolver }, sets := { enabled := c.setsSolver } } }
     for i in inputs do replayInput i
   let st := ((act.run c).run {}).2
   (st.events, st.unverifiedExplains)

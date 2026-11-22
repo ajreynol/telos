@@ -237,6 +237,60 @@ def dt_literal(rng):
     return atom if rng.random() < 0.65 else f"(not {atom})"
 
 
+SETS_PRELUDE = """(set-logic QF_UFFS)
+(declare-sort E 0)
+(declare-fun A () (Set E))
+(declare-fun B () (Set E))
+(declare-fun C () (Set E))
+(declare-fun D () (Set E))
+(declare-fun x () E)
+(declare-fun y () E)
+(declare-fun z () E)
+(declare-fun f (E) E)
+"""
+
+
+def sets_elem(rng, depth):
+    if depth == 0 or rng.random() < 0.8:
+        return rng.choice(["x", "y", "z"])
+    return f"(f {sets_elem(rng, depth - 1)})"
+
+
+def sets_term(rng, depth):
+    """A term of sort `(Set E)`."""
+    if depth == 0 or rng.random() < 0.4:
+        r = rng.random()
+        if r < 0.75:
+            return rng.choice(["A", "B", "C", "D"])
+        if r < 0.92:
+            return f"(set.singleton {sets_elem(rng, 1)})"
+        return "(as set.empty (Set E))"
+    op = rng.choice(["set.union", "set.inter", "set.minus"])
+    return f"({op} {sets_term(rng, depth - 1)} {sets_term(rng, depth - 1)})"
+
+
+def sets_literal(rng):
+    r = rng.random()
+    if r < 0.45:
+        atom = f"(set.member {sets_elem(rng, 1)} {sets_term(rng, 2)})"
+    elif r < 0.85:
+        atom = f"(= {sets_term(rng, 2)} {sets_term(rng, 2)})"
+    else:
+        atom = f"(= {sets_elem(rng, 1)} {sets_elem(rng, 1)})"
+    return atom if rng.random() < 0.65 else f"(not {atom})"
+
+
+def sets_benchmark(rng, size, clauses=False):
+    out = []
+    for _ in range(rng.randint(2, size)):
+        if clauses and rng.random() < 0.5:
+            k = rng.randint(2, 3)
+            out.append("(or " + " ".join(sets_literal(rng) for _ in range(k)) + ")")
+        else:
+            out.append(sets_literal(rng))
+    return SETS_PRELUDE + "".join(f"(assert {l})\n" for l in out) + "(check-sat)\n"
+
+
 # declared in alphabetical order, so that telos's order of variables (by name)
 # is cvc5's (by node id, which follows declaration)
 LRA_PRELUDE = """(set-logic QF_LRA)
@@ -660,7 +714,7 @@ def main():
     ap.add_argument("--sat", action="store_true",
                     help="solve with telos's SAT solver (--via-sat), cvc5 with --sat-solver=minisat")
     ap.add_argument("--size", type=int, default=6, help="the most literals of a random benchmark")
-    ap.add_argument("--theory", choices=["uf", "dt", "lra", "lia", "uflra", "uflia", "dtlia"], default="uf", help="the theory of the random benchmarks")
+    ap.add_argument("--theory", choices=["uf", "dt", "lra", "lia", "uflra", "uflia", "dtlia", "sets"], default="uf", help="the theory of the random benchmarks")
     ap.add_argument("--decision", choices=["internal", "justification", "stoponly"],
                     help="the SAT solver's decision mode, for both (otherwise the logic's)")
     ap.add_argument("--ite", action="store_true", help="arithmetic literals with ite terms")
@@ -679,13 +733,14 @@ def main():
             if a.bool:
                 prelude, lit = {"dt": (DT_PRELUDE, dt_literal), "lra": (LRA_PRELUDE, lra_literal),
                                   "lia": (LIA_PRELUDE, lra_literal), "uflra": (UFLRA_PRELUDE, uflra_literal),
-                                  "uflia": (UFLIA_PRELUDE, uflra_literal), "dtlia": (DTLIA_PRELUDE, dtlia_literal)}.get(
+                                  "uflia": (UFLIA_PRELUDE, uflra_literal), "dtlia": (DTLIA_PRELUDE, dtlia_literal),
+                                  "sets": (SETS_PRELUDE, sets_literal)}.get(
                     a.theory, (UF_PRELUDE, uf_literal))
                 p.write_text(bool_benchmark(prelude, lit, rng, a.size))
             else:
                 gen = {"dt": dt_benchmark, "lra": lra_benchmark, "lia": lia_benchmark,
                        "uflra": uflra_benchmark, "uflia": uflia_benchmark,
-                       "dtlia": dtlia_benchmark}.get(a.theory, uf_benchmark)
+                       "dtlia": dtlia_benchmark, "sets": sets_benchmark}.get(a.theory, uf_benchmark)
                 p.write_text(gen(rng, a.size, a.clauses or a.replay))
             files.append(p)
     counts = collections.Counter()

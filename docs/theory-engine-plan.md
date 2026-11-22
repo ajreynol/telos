@@ -1469,6 +1469,74 @@ Not yet:
 - the Diophantine solver's decomposition lemmas (`exportDioDecompositions` is
   off) and restarts after `maxCutsInContext` (65535) cuts.
 
+## Stage 8: sets (in progress)
+
+`Telos/Solver/Theory/Sets.lean` and `SetsState.lean` port cvc5's
+`TheorySetsPrivate` with its `SolverState`, `TermRegistry` and inference manager,
+in safe mode: no cardinality (`setsCardExp`), no relations (`relsExp`), no
+universe or complement (`setsExp`), no proxy lemmas. `set.map`, `set.filter`,
+`set.fold` and `set.choose` are not ported.
+
+### Design
+
+- **State in the equality engine**, as for datatypes (`EqualityEngine.sets`): the
+  theory reacts to `eqNotifyNewClass` (a singleton or the empty set is its
+  class's singleton), `eqNotifyMerge` (singletons, `SETS_SINGLETON_EQ` or
+  `SETS_EQ_CONFLICT`; members, `SETS_EQ_MEM` or `SETS_EQ_MEM_CONFLICT`) and
+  `eqNotifyDisequal`, which the engine now notifies (cvc5 notifies before the
+  disequality is asserted). The handlers' facts are asserted to the engine
+  while it propagates, and merged by that propagation.
+- **Context:** the singleton of a class (`CDO`), the number of valid members
+  (`d_members`) and the disequalities (`d_deq`, a `CDHashMap` iterated in
+  insertion order) are on a trail; the processed disequalities, the proxies and
+  the lemma cache are on the user context; the index of a check
+  (`SolverState::reset`) is rebuilt at each full check.
+- **The check runs in the theory engine's monad** (`Sets.Ops`, `setsPostCheck`):
+  cvc5 preregisters a lemma's atoms when it is sent, and the proxies'
+  lemmas (`SETS_PROXY`, `SETS_PROXY_SINGLETON`) are sent in the middle of
+  `checkBasic`. In safe mode the strategy is reset, `checkBasic` (registration,
+  downward and upward closure), and, if nothing was sent,
+  `checkDisequalities` (`SETS_DEQ`, with the skolem `@sets_deq_diff`).
+- **Every inference of the check is a lemma** (`assertInference` with
+  `inferType` 0); only the notifications assert internal facts.
+- **Relevant terms** (`collectAssertedTerms`): the subterms of the theory's
+  facts and its shared terms.
+- `std::map<Node, _>` iterations (members, the binary-operator index) are sorted
+  by the engine's node order (`EE.ageLt`).
+
+Changes outside the theory:
+- The equality engine's congruence now covers applications of builtin kinds
+  (`set.member`, `set.union`, …), with an internal operator node per kind
+  (`kindOperator`, cvc5's `getOperator()`).
+- The sets, Boolean and UF rewriters orient equalities and order the arguments
+  of `set.union` and `set.inter` by the node order (`NodeOrder`), as the
+  arithmetic rewriter does; set equalities in lemmas are not re-oriented by
+  `orientEqs`. A lemma's own nodes are numbered before its rewrite
+  (`NodeOrder.withLocal`, created before the nodes the rewrite makes). Fuzzing
+  the preprocessor (`fuzz-pp.py`, 200 each, identical to cvc5): uf 176 to 193,
+  mixed 81 to 93, sets 96 to 121, datatypes 156 to 158; `fuzz-solve.py`: dt
+  141 to 143, dt `--bool` 77 to 84, the others unchanged.
+- Sets go to the SAT solver (`useSat`), and empty sets print their sort names.
+
+### Results
+
+`fuzz-solve.py --sat --theory sets` (seed 1, 100 benchmarks): the events agree
+with cvc5's on 78, of which 26 also agree on the answer. The other 52 answer
+`unknown` where cvc5 answers `sat` (50: telos has no models of sets yet) or
+`unsat` (2: sets lemmas are not certified yet). The 22 that differ in events
+are mostly SAT decisions after a lemma, and the order of preprocessed
+equalities (the node order of preprocessing).
+
+### To do
+
+- Models: set values (`MVal`, `Model.ev` of the set operators), from the
+  members of each class (`collectModelValues`).
+- Certificates: the lemmas (`SETS_DOWN_CLOSURE`, `SETS_UP_CLOSURE`,
+  `SETS_DEQ`, the proxies) by CPC rules (`sets-*-member`, `sets_ext`,
+  `sets_singleton_inj`), and the notifications' facts in `EE.proveFact`.
+- The care graph for sets of sets (`SETS_CG_SPLIT`), `set.choose`.
+- Recorded tests in `test/solve/`.
+
 ## Order of work (all stages)
 
 1. **Equality engine.** Port `theory/uf/equality_engine.cpp` (about 3k lines)

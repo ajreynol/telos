@@ -114,10 +114,10 @@ def preRewrite (n : Node) : RewriteResponse n :=
   | none => .done n
 
 /-- cvc5's `TheoryUfRewriter::postRewrite`: also orients equalities. -/
-def postRewrite (n : Node) : RewriteResponse n :=
+def postRewrite (o : NodeOrder) (n : Node) : RewriteResponse n :=
   let r := (rewriteCommon n).orElse fun _ =>
     match n.getKind, n.getChildren with
-    | .EQUAL, #[a, b] => if b.lt a then byRule "eq-symm" n else none
+    | .EQUAL, #[a, b] => if o.lt b a then byRule "eq-symm" n else none
     | _, _ => none
   match r with
   | some ⟨m, h⟩ => ⟨.REWRITE_DONE, m, h⟩
@@ -135,8 +135,8 @@ def postRewrite (n : Node) : RewriteResponse n :=
 end UfRewriter
 
 /-- cvc5's `TheoryUfRewriter`. -/
-def TheoryRewriter.uf : TheoryRewriter where
+def TheoryRewriter.uf (o : NodeOrder := {}) : TheoryRewriter where
   preRewrite := UfRewriter.preRewrite
-  postRewrite := UfRewriter.postRewrite
+  postRewrite := UfRewriter.postRewrite o
 
 end Telos

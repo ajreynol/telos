@@ -465,6 +465,7 @@ def _root_.Telos.SkolemId.eoShape : SkolemId → AppShape
   | .INT_DIV_BY_ZERO => .spine (Term.UOp UserOp._at_int_div_by_zero) (.exactly 0)
   | .MOD_BY_ZERO => .spine (Term.UOp UserOp._at_mod_by_zero) (.exactly 0)
   | .DIV_BY_ZERO => .spine (Term.UOp UserOp._at_div_by_zero) (.exactly 0)
+  | .SETS_DEQ_DIFF => .spine (Term.UOp UserOp._at_sets_deq_diff) (.exactly 2)
 
 namespace Node
 

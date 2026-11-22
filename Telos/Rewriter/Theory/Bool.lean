@@ -149,7 +149,7 @@ def tt : Node := mkTrue
 def ff : Node := mkFalse
 
 /-- cvc5's `TheoryBoolRewriter::preRewrite`, without its final default. -/
-def rewriteCase (n : Node) : Result n :=
+def rewriteCase (o : NodeOrder) (n : Node) : Result n :=
   match n.getKind, n.getChildren with
   | .NOT, #[c] =>
     if c == tt || c == ff then done (byEvaluate n)
@@ -176,7 +176,7 @@ def rewriteCase (n : Node) : Result n :=
       | some r => some r
       | none =>
         -- sort
-        if b.lt a then again (byRule "eq-symm" n) else none
+        if o.lt b a then again (byRule "eq-symm" n) else none
   | .XOR, #[a, b] =>
     if a == tt then again (negated (steps ["bool-xor-comm", "bool-xor-true"]))
     else if b == tt then again (negated (byRule "bool-xor-true" n))
@@ -247,16 +247,16 @@ where
     else none
 
 /-- cvc5's `TheoryBoolRewriter::preRewrite`. -/
-def preRewrite (n : Node) : RewriteResponse n :=
-  match rewriteCase n with
+def preRewrite (o : NodeOrder) (n : Node) : RewriteResponse n :=
+  match rewriteCase o n with
   | some (st, ⟨m, h⟩) => ⟨st, m, h⟩
   | none => .done n
 
 end BoolRewriter
 
 /-- cvc5's `TheoryBoolRewriter`. Its post-rewrite is its pre-rewrite. -/
-def TheoryRewriter.bool : TheoryRewriter where
-  preRewrite := BoolRewriter.preRewrite
-  postRewrite := BoolRewriter.preRewrite
+def TheoryRewriter.bool (o : NodeOrder := {}) : TheoryRewriter where
+  preRewrite := BoolRewriter.preRewrite o
+  postRewrite := BoolRewriter.preRewrite o
 
 end Telos

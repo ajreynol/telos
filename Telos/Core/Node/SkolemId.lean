@@ -21,17 +21,21 @@ inductive SkolemId where
   | MOD_BY_ZERO
   /-- `@div_by_zero`, of type `(-> Real Real)`: the value of `(/ x 0.0)`. -/
   | DIV_BY_ZERO
+  /-- `(@sets_deq_diff A B)`, with cache values `A` and `B`, two sets: an element
+  in exactly one of them when they differ (the theory of sets' `SETS_DEQ`). -/
+  | SETS_DEQ_DIFF
   deriving DecidableEq, Repr, Inhabited, Hashable, Ord
 
 namespace SkolemId
 
 /-- All skolem identifiers (for reading CPC terms back). -/
-def all : List SkolemId := [.PURIFY, .INT_DIV_BY_ZERO, .MOD_BY_ZERO, .DIV_BY_ZERO]
+def all : List SkolemId := [.PURIFY, .INT_DIV_BY_ZERO, .MOD_BY_ZERO, .DIV_BY_ZERO, .SETS_DEQ_DIFF]
 
 /-- The number of cache values of a skolem with this identifier. -/
 def numCacheVals : SkolemId → Nat
   | .PURIFY => 1
   | .INT_DIV_BY_ZERO | .MOD_BY_ZERO | .DIV_BY_ZERO => 0
+  | .SETS_DEQ_DIFF => 2
 
 /-- The CPC name of the skolem's operator, as cvc5 prints it. -/
 def name : SkolemId → String
@@ -39,6 +43,7 @@ def name : SkolemId → String
   | .INT_DIV_BY_ZERO => "@int_div_by_zero"
   | .MOD_BY_ZERO => "@mod_by_zero"
   | .DIV_BY_ZERO => "@div_by_zero"
+  | .SETS_DEQ_DIFF => "@sets_deq_diff"
 
 end SkolemId
 

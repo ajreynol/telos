@@ -2,8 +2,10 @@ import Std.Data.HashMap
 import Std.Data.HashSet
 import Telos.Core.Node.Key
 import Telos.Core.Node.Order
+import Telos.Core.Node.NodeOrder
 import Telos.Solver.Event
 import Telos.Solver.Theory.DtState
+import Telos.Solver.Theory.SetsState
 
 /-!
 # The equality engine
@@ -242,6 +244,9 @@ structure EqualityEngine where
   /-- The state of the theory of datatypes, which reacts to the engine's
   notifications (`Telos/Solver/Theory/Datatypes.lean`). -/
   dt : DT.State := {}
+  /-- The state of the theory of sets, likewise
+  (`Telos/Solver/Theory/Sets.lean`). -/
+  sets : Sets.State := {}
   deriving Inhabited
 
 /-- What the engine reads from its owner. -/
@@ -261,6 +266,8 @@ structure Ctx where
   /-- The declared constants, by their order of declaration (cvc5's node ids
   for them). -/
   declOrder : Std.HashMap String Nat := {}
+  /-- cvc5's node ids, approximated, for the theories' rewrites. -/
+  order : NodeOrder := {}
 
 abbrev EEM := ReaderT Ctx (StateM EqualityEngine)
 
@@ -279,6 +286,11 @@ def notify (n : Note) : EEM Unit := do
 def modifyDt (f : DT.State → DT.State) : EEM Unit := do
   let dt ← modifyGet fun s => (s.dt, { s with dt := {} })
   modify fun s => { s with dt := f dt }
+
+/-- Update the state of the theory of sets in place. -/
+def modifySets (f : Sets.State → Sets.State) : EEM Unit := do
+  let st ← modifyGet fun s => (s.sets, { s with sets := {} })
+  modify fun s => { s with sets := f st }
 
 def find (ee : EqualityEngine) (id : Nat) : Nat := ee.enodes[id]!.find
 
@@ -661,12 +673,19 @@ the tester of `x` must not be the partial application of `C` to `x`. -/
 def operatorNode (k : Kind) (f : Node) : Node :=
   if k == .APPLY_TESTER then .app (.kind .APPLY_TESTER) #[f] else f
 
+/-- The operator of an application of a builtin kind (cvc5's `getOperator()`,
+a `BUILTIN` node of the kind): an internal node, whose name no input has. -/
+def kindOperator (k : Kind) : Node := .var s!"\u0000op {reprStr k}" .boolean
+
 /-- The operator node and the arguments of a congruence application, if `t` is
 one. -/
 def congruenceApp (t : Node) : EEM (Option (Node × Array Node)) := do
   match t with
   | .app (.node k f) cs =>
     if (← read).congruenceKinds k && cs.size > 0 then return some (operatorNode k f, cs)
+    else return none
+  | .app (.kind k) cs =>
+    if k != .EQUAL && (← read).congruenceKinds k && cs.size > 0 then return some (kindOperator k, cs)
     else return none
   | _ => return none
 
@@ -830,7 +849,8 @@ def assertEquality (eq : Node) (polarity : Bool) (reason : Node) : EEM Bool := d
     propagate
   else
     if (← hasTerm l) && (← hasTerm r) && (← areDisequal l r false) then return false
-    note (.disequal l r reason)
+    -- `eqNotifyDisequal`, before the disequality is asserted
+    notify (.disequal l r reason)
     assertEqualityInternal eq Node.mkFalse reason
     propagate
     if (← get).done then return true
@@ -994,8 +1014,9 @@ def counters (s : EqualityEngine) : Counters :=
 /-- Enter a new context level. -/
 def push (s : EqualityEngine) : EqualityEngine :=
   let dt := s.dt
-  let s := { s with dt := {} }
-  { s with saved := s.saved.push (counters s), dt := dt.push }
+  let sets := s.sets
+  let s := { s with dt := {}, sets := {} }
+  { s with saved := s.saved.push (counters s), dt := dt.push, sets := sets.push }
 
 /-- `undoMerge`: separate the class `c₂` from the class `c₁` it was merged
 into. -/
@@ -1099,8 +1120,9 @@ def popTo (s : EqualityEngine) (k : Nat) : EqualityEngine :=
     let c := s.saved[k]
     -- `s` is consumed by the update, so that `backtrack` updates in place
     let dt := s.dt
-    let s := backtrack { s with saved := s.saved.take k, dt := {} } c
-    { s with dt := dt.popTo k }
+    let sets := s.sets
+    let s := backtrack { s with saved := s.saved.take k, dt := {}, sets := {} } c
+    { s with dt := dt.popTo k, sets := sets.popTo k }
   else s
 
 end Telos.Solver.EE

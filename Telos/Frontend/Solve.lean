@@ -142,11 +142,12 @@ def hasDistinctAtom (out : List Node) : Bool :=
   out.any fun f => (formulaAtoms f #[]).any isDistinct
 
 /-- The assertions go to the SAT solver (`Solver.runSat`): they are not a
-conjunction of literals, or `viaSat` asks for it, or arithmetic is enabled
-(whose unate lemmas need the SAT solver), and the engine handles the theories. -/
+conjunction of literals, or `viaSat` asks for it, or arithmetic or sets are
+enabled (whose lemmas need the SAT solver), and the engine handles the
+theories. -/
 def useSat (cfg : Solver.Config) (out : List Node) (viaSat : Bool) : Bool :=
   cfg.satSupported && !hasDistinctAtom out &&
-    (viaSat || cfg.arithSolver || (literalsOf out matches .error _))
+    (viaSat || cfg.arithSolver || cfg.setsSolver || (literalsOf out matches .error _))
 
 /-- cvc5's node ids, approximated, for the rewriter (`inputOrder`) when
 imitating cvc5's order; else the structural order. -/

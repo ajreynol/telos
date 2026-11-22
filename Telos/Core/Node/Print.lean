@@ -277,6 +277,7 @@ def Node.toSmtLibTop (N : DtNames) (pc : Node → String) : Node → String
     let parts := es.map pc ++ (tl.map pc).toList
     "(" ++ String.intercalate " " ("tuple" :: parts) ++ ")"
   | .const (.dtSel T i j) => N.selName T i j
+  | .const (.emptySet T) => s!"(as set.empty {(TypeNode.set T).toSmtLibWith N})"
   | .const c => c.toSmtLib
   | .var n _ | .boundVar n _ => n
   | .skolem id #[] => id.name

@@ -21,12 +21,12 @@ namespace Telos
 /-- The rewriters of the theories other than arrays, with `strings` the strings
 rewriter and `o` the order of node ids (`NodeOrder`). -/
 def baseTheoryRewriterWith (strings : TheoryRewriter) (o : NodeOrder := {}) : TheoryId → TheoryRewriter
-  | .THEORY_BOOL => .bool
+  | .THEORY_BOOL => .bool o
   | .THEORY_ARITH => .arith o
-  | .THEORY_UF => .uf
+  | .THEORY_UF => .uf o
   | .THEORY_BV => .bv
   | .THEORY_STRINGS => strings
-  | .THEORY_SETS => .sets
+  | .THEORY_SETS => .sets o
   | .THEORY_DATATYPES => .datatypes
   | .THEORY_QUANTIFIERS => .quantifiers Rw.id
   | _ => .trivial

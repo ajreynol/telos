@@ -48,7 +48,7 @@ def rangeAfter : Nat → Option TypeNode → Option TypeNode
 def skolemType? : SkolemId → Option TypeNode
   | .INT_DIV_BY_ZERO | .MOD_BY_ZERO => some (.function .integer .integer)
   | .DIV_BY_ZERO => some (.function .real .real)
-  | .PURIFY => none
+  | .PURIFY | .SETS_DEQ_DIFF => none
 
 -- The match over `Kind` is large; its compilation needs more than the default.
 set_option maxHeartbeats 1000000 in
@@ -68,6 +68,11 @@ def typeHint : Node → Option TypeNode
     | .PURIFY, [t] =>
       have : t ∈ cs := by rw [Array.mem_def, h]; simp
       typeHint t
+    | .SETS_DEQ_DIFF, [a, _] =>
+      have : a ∈ cs := by rw [Array.mem_def, h]; simp
+      match typeHint a with
+      | some (.set E) => some E
+      | _ => n.getTypeF
     | _, _ => (skolemType? id).orElse fun _ => n.getTypeF
   | .app (.kind .ADD) ⟨c :: _⟩ | .app (.kind .MULT) ⟨c :: _⟩ | .app (.kind .SUB) ⟨c :: _⟩
   | .app (.kind .NEG) ⟨c :: _⟩ | .app (.kind .ABS) ⟨c :: _⟩ => typeHint c

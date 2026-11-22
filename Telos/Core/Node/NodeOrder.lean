@@ -35,6 +35,9 @@ structure NodeOrder where
   ids : Std.HashMap Key Nat := {}
   /-- The number of terms of the input (the first ids). -/
   inputSize : Nat := 0
+  /-- Terms created after all those of `ids`, numbered after them (`withLocal`):
+  a small table, so that extending the order does not copy `ids`. -/
+  fresh : Std.HashMap Key Nat := {}
   deriving Inhabited
 
 instance : Repr NodeOrder := ⟨fun o _ => s!"<NodeOrder: {o.decl.size} declared, {o.ids.size} terms>"⟩
@@ -91,7 +94,9 @@ def id? (o : NodeOrder) (t : Node) : Option Nat :=
     let r := if hasIntegralRat t then
         (o.ids.get? ⟨cvx t⟩) <|> ((o.ids.get? ⟨t⟩).filter (· < o.inputSize))
       else o.ids.get? ⟨t⟩
-    r.map (· + o.decl.size)
+    match r with
+    | some i => some (i + o.decl.size)
+    | none => (o.fresh.get? ⟨t⟩).map (· + o.decl.size + o.ids.size)
 
 /-- `a` has a smaller id than `b` (cvc5: `a.getId() < b.getId()`). -/
 def lt (o : NodeOrder) (a b : Node) : Bool :=
@@ -119,6 +124,26 @@ partial def visit (ids : Std.HashMap Key Nat) (t : Node) : Std.HashMap Key Nat :
 /-- Number `t`'s subterms not numbered yet (`visit`), as a node created after
 the ones numbered (by preprocessing, which creates its subterms first). -/
 def add (o : NodeOrder) (t : Node) : NodeOrder := { o with ids := visit o.ids t }
+
+/-- Number the subterms of `t` that `o` does not number, after all of its own,
+in `fresh` (which this replaces): a term built (a lemma, before its rewrite)
+after the nodes `o` numbers. An empty order stays empty (`Node.lt`). -/
+partial def withLocal (o : NodeOrder) (t : Node) : NodeOrder :=
+  if o.decl.isEmpty && o.ids.isEmpty then o else
+  let rec go (m : Std.HashMap Key Nat) (t : Node) : Std.HashMap Key Nat :=
+    if m.contains ⟨t⟩ || (o.ids.contains ⟨t⟩) then m else
+    let m := match t with
+      | .app op cs =>
+        let m := match op with
+          | .node _ f => go m f
+          | _ => m
+        cs.foldl go m
+      | .skolem _ cs => cs.foldl go m
+      | _ => m
+    match t with
+    | .var name _ => if o.decl.contains name then m else m.insert ⟨t⟩ m.size
+    | _ => m.insert ⟨t⟩ m.size
+  { o with fresh := go {} t }
 
 /-- The order of an input: the declared constants `decls`, in order, and the
 assertions `as`, in order. -/

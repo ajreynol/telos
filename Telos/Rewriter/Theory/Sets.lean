@@ -150,7 +150,7 @@ def evalOp (n : Node) : Option (Rw n) := do
   checkBy .sets_eval_op n (elementsToSet T es)
 
 /-- `set.union`, `set.inter` and `set.minus` (cvc5's `postRewrite`). -/
-def rewriteBinary (n : Node) : RewriteResponse n :=
+def rewriteBinary (o : NodeOrder) (n : Node) : RewriteResponse n :=
   match n.getKind, n.getChildren with
   | k, #[a, b] =>
     if a == b && k == .SET_MINUS then respond .REWRITE_DONE (byRule "sets-minus-self" n)
@@ -167,7 +167,7 @@ def rewriteBinary (n : Node) : RewriteResponse n :=
       | .SET_INTER => respond .REWRITE_AGAIN (byEmptyRule .sets_inter_emp2 a b b n)
       | _ => respond .REWRITE_AGAIN (byEmptyRule .sets_union_emp2 a b b n)
     else if isConstNode a && isConstNode b then respond .REWRITE_DONE (evalOp n)
-    else if k != .SET_MINUS && b.lt a then
+    else if k != .SET_MINUS && o.lt b a then
       respond .REWRITE_DONE (byRule (if k == .SET_INTER then "sets-inter-comm" else "sets-union-comm") n)
     else .done n
   | _, _ => .done n
@@ -186,13 +186,13 @@ def rewriteMember (n : Node) : RewriteResponse n :=
   | _ => .done n
 
 /-- Equalities of sets (cvc5's `preRewrite` and `postRewrite`). -/
-def rewriteEqual (pre : Bool) (n : Node) : RewriteResponse n :=
+def rewriteEqual (pre : Bool) (o : NodeOrder) (n : Node) : RewriteResponse n :=
   match n.getChildren with
   | #[a, b] =>
     if a == b then respond .REWRITE_DONE (byRule "eq-refl" n)
     else if pre then .done n
     else if isConstNode a && isConstNode b then respond .REWRITE_DONE (eqDistinctConsts a b n)
-    else if b.lt a then respond .REWRITE_DONE (byRule "eq-symm" n)
+    else if o.lt b a then respond .REWRITE_DONE (byRule "eq-symm" n)
     else .done n
   | _ => .done n
 
@@ -229,13 +229,13 @@ def rewriteIsSingleton (n : Node) : RewriteResponse n :=
     else respond .REWRITE_AGAIN_FULL (byRule "sets-is-singleton-elim" n)
   | _ => .done n
 
-def postRewrite (n : Node) : RewriteResponse n :=
+def postRewrite (o : NodeOrder) (n : Node) : RewriteResponse n :=
   if isConstNode n then .done n else
   match n.getKind with
   | .SET_MEMBER => rewriteMember n
   | .SET_SUBSET => respond .REWRITE_AGAIN_FULL (byRule "sets-subset-elim" n)
-  | .EQUAL => rewriteEqual false n
-  | .SET_MINUS | .SET_INTER | .SET_UNION => rewriteBinary n
+  | .EQUAL => rewriteEqual false o n
+  | .SET_MINUS | .SET_INTER | .SET_UNION => rewriteBinary o n
   | .SET_CHOOSE =>
     if (n.getChildren[0]?.map (·.getKind)) == some .SET_SINGLETON then
       respond .REWRITE_AGAIN (byRule "sets-choose-singleton" n)
@@ -244,9 +244,9 @@ def postRewrite (n : Node) : RewriteResponse n :=
   | .SET_IS_SINGLETON => rewriteIsSingleton n
   | _ => .done n
 
-def preRewrite (n : Node) : RewriteResponse n :=
+def preRewrite (o : NodeOrder) (n : Node) : RewriteResponse n :=
   match n.getKind with
-  | .EQUAL => rewriteEqual true n
+  | .EQUAL => rewriteEqual true o n
   | .SET_INSERT => respond .REWRITE_AGAIN (byRule "sets-insert-elim" n)
   | .SET_SUBSET => respond .REWRITE_AGAIN (byRule "sets-subset-elim" n)
   | _ => .done n
@@ -254,8 +254,8 @@ def preRewrite (n : Node) : RewriteResponse n :=
 end SetsRewriter
 
 /-- cvc5's `TheorySetsRewriter`. -/
-def TheoryRewriter.sets : TheoryRewriter where
-  preRewrite := SetsRewriter.preRewrite
-  postRewrite := SetsRewriter.postRewrite
+def TheoryRewriter.sets (o : NodeOrder := {}) : TheoryRewriter where
+  preRewrite := SetsRewriter.preRewrite o
+  postRewrite := SetsRewriter.postRewrite o
 
 end Telos
