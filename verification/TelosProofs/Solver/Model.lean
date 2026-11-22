@@ -375,8 +375,10 @@ omit [LogosFacts] in
 /-- The typed nil of a chain evaluates to `chainNil`'s value. -/
 theorem eval_typedNil (N : SmtModel) (k : Kind) (op : UserOp) (x : Node) (nv : MVal)
     (hop : (k = .ADD ∧ op = UserOp.plus) ∨ (k = .MULT ∧ op = UserOp.mult))
-    (h : Model.chainNil k (__smtx_typeof x.toSmt) = some nv) :
+    (h : Model.chainNil k x.smtTypeF = some nv) :
     __smtx_model_eval N (__eo_to_smt (typedNil op x.toEo)) = toVal nv := by
+  rw [Node.smtTypeF_eq] at h
+  change Model.chainNil k (__smtx_typeof x.toSmt) = some nv at h
   unfold typedNil
   have hx : __eo_to_smt x.toEo = x.toSmt := rfl
   rw [hx]

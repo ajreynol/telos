@@ -1,12 +1,13 @@
-import Telos.Core.Node.ToEo
+import Telos.Core.Node.SmtTypeFast
 
 /-!
 # Fast types, for strategies
 
 `Node.typeHint` is the type of a node, computed structurally for the common
-operators, and by Logos's type checker (`Node.getType`) otherwise. It agrees
-with `getType` on well-typed nodes of the theories telos supports, and is much
-cheaper: it does not translate the node.
+operators, and by `Node.getTypeF` (`getType`, computed by
+`Telos/Core/Node/SmtTypeFast.lean`) otherwise. It agrees with `getType` on
+well-typed nodes of the theories telos supports, and is much cheaper: it does
+not translate the node.
 
 It is only for strategy decisions (which rewrite to try, such as `isInt` in the
 arithmetic rewriter, and `theoryOf`). Nothing that is proved depends on it: a
@@ -57,17 +58,17 @@ def typeHint : Node → Option TypeNode
   | .const (.rational _) => some .real
   | .const (.bitVector w _) => some (.bitVector w)
   | .const (.emptySet T) => some (.set T)
-  | n@(.app (.node k (.const c)) _) => (dtTypeHint k c).orElse fun _ => n.getType
+  | n@(.app (.node k (.const c)) _) => (dtTypeHint k c).orElse fun _ => n.getTypeF
   -- `(f t₁ … tₙ)`: the range of `f`'s type after `n` arguments
   | n@(.app (.node .APPLY_UF f) cs) =>
-    (rangeAfter cs.size (typeHint f)).orElse fun _ => n.getType
+    (rangeAfter cs.size (typeHint f)).orElse fun _ => n.getTypeF
   | .var _ T | .boundVar _ T => some T
   | n@(.skolem id cs) =>
     match id, h : cs.toList with
     | .PURIFY, [t] =>
       have : t ∈ cs := by rw [Array.mem_def, h]; simp
       typeHint t
-    | _, _ => (skolemType? id).orElse fun _ => n.getType
+    | _, _ => (skolemType? id).orElse fun _ => n.getTypeF
   | .app (.kind .ADD) ⟨c :: _⟩ | .app (.kind .MULT) ⟨c :: _⟩ | .app (.kind .SUB) ⟨c :: _⟩
   | .app (.kind .NEG) ⟨c :: _⟩ | .app (.kind .ABS) ⟨c :: _⟩ => typeHint c
   | .app (.kind .ITE) ⟨[_, t, _]⟩ | .app (.kind .BITVECTOR_ITE) ⟨[_, t, _]⟩ => typeHint t
@@ -92,7 +93,7 @@ def typeHint : Node → Option TypeNode
     | .BITVECTOR_ROTATE_LEFT, _, [c] | .BITVECTOR_ROTATE_RIGHT, _, [c] =>
       have : c ∈ cs := by rw [Array.mem_def, h]; simp
       typeHint c
-    | _, _, _ => n.getType
+    | _, _, _ => n.getTypeF
   | n@(.app (.kind k) cs) =>
     match k with
     | .DIVISION | .DIVISION_TOTAL | .TO_REAL => some .real
@@ -122,15 +123,15 @@ def typeHint : Node → Option TypeNode
       | c :: _ =>
         have : c ∈ cs := by rw [Array.mem_def, h]; simp
         typeHint c
-      | [] => n.getType
+      | [] => n.getTypeF
     | .SET_UNION | .SET_INTER | .SET_MINUS | .SET_SINGLETON | .SET_CHOOSE | .SET_INSERT =>
       match h : cs.toList with
       | c :: _ =>
         have : c ∈ cs := by rw [Array.mem_def, h]; simp
         setTypeOfFirst k (typeHint c)
-      | [] => n.getType
-    | _ => n.getType
-  | n => n.getType
+      | [] => n.getTypeF
+    | _ => n.getTypeF
+  | n => n.getTypeF
 termination_by n => sizeOf n
 decreasing_by
   all_goals first

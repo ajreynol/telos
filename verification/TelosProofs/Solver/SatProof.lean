@@ -47,7 +47,8 @@ theorem trueIn_iff (N : SmtModel) (l : Node) :
 
 theorem boolVal_of_isBool {N : SmtModel} (hN : model_wf N) {l : Node} (h : isBool l = true) : BoolVal N l := by
   unfold isBool at h
-  exact LogosFacts.eval_bool N _ hN (by simpa using h)
+  rw [Node.smtTypeF_eq] at h
+  exact LogosFacts.eval_bool N _ hN (by simpa [Node.smtType] using h)
 
 omit [LogosFacts] in
 theorem eval_notNode (N : SmtModel) (x : Node) :
@@ -511,7 +512,8 @@ theorem theory_sat {N : SmtModel} (hN : model_wf N) {A : Array Node} {p : EqProo
   have hbA : ∀ a ∈ A.toList, isBool a = true := fun a ha =>
     (Array.all_eq_true_iff_forall_mem.1 hb) a (Array.mem_toList_iff.1 ha)
   refine checkConflict_sound A p hc (fun l hl => by
-    have := hbA l hl; unfold isBool at this; exact by simpa [HasBoolType, Node.toSmt] using this) N hN ?_
+    have := hbA l hl; unfold isBool at this; rw [Node.smtTypeF_eq] at this
+    exact by simpa [HasBoolType, Node.toSmt, Node.smtType] using this) N hN ?_
   intro a ha
   rcases lit_or_negate (boolVal_of_isBool hN (hbA a ha)) with h | h
   · exact h
@@ -602,7 +604,7 @@ theorem linCert_sound {N : SmtModel} (hN : model_wf N) : ∀ (p : LinCert) (A : 
         have := (Array.all_eq_true_iff_forall_mem.1 hall) c (Array.mem_toList_iff.1 hc)
         obtain ⟨e, he, hec⟩ := Array.any_eq_true'.1 this
         exact ⟨e, Array.mem_toList_iff.2 he, by simpa using hec⟩
-      have hsub' : ∀ e ∈ subs.toList, __smtx_typeof e.1.toSmt = SmtType.Bool ∧ e.2.check (A.push (negate e.1)) = true := by
+      have hsub' : ∀ e ∈ subs.toList, e.1.smtTypeF = SmtType.Bool ∧ e.2.check (A.push (negate e.1)) = true := by
         intro e he
         have := (Array.all_eq_true_iff_forall_mem.1 hsub) ⟨e, Array.mem_toList_iff.1 he⟩ (by simp)
         simpa using this

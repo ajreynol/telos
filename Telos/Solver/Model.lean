@@ -266,10 +266,10 @@ def combine (k : Kind) (cs : Array Node) (vs : List MVal) : Option MVal :=
   | .EQUAL, [a, b] => some (.bool (a == b))
   | .ITE, [.bool c, a, b] => some (if c then a else b)
   | .ADD, vs => if 2 ≤ vs.length then
-      (chainNil .ADD (__smtx_typeof (cs[0]?.getD default).toSmt)).bind fun nil => chainV plusV nil vs
+      (chainNil .ADD (cs[0]?.getD default).smtTypeF).bind fun nil => chainV plusV nil vs
     else none
   | .MULT, vs => if 2 ≤ vs.length then
-      (chainNil .MULT (__smtx_typeof (cs[0]?.getD default).toSmt)).bind fun nil => chainV multV nil vs
+      (chainNil .MULT (cs[0]?.getD default).smtTypeF).bind fun nil => chainV multV nil vs
     else none
   | .SUB, [a, b] => subV a b
   | .NEG, [a] => negV a

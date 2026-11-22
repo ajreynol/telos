@@ -8,6 +8,7 @@ import Telos.Core.Node.Key
 import Telos.Core.Node.Print
 import Telos.Core.Node.PrintLet
 import Telos.Core.Node.ToEo
+import Telos.Core.Node.SmtTypeFast
 import Telos.Core.Node.OfEo
 import Telos.Core.Node.FastType
 import Telos.Core.Static

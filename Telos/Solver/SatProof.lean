@@ -144,7 +144,7 @@ structure Cert where
   deriving Inhabited
 
 /-- A literal is a formula (its Logos translation has type `Bool`). -/
-def isBool (l : Node) : Bool := __smtx_typeof l.toSmt == .Bool
+def isBool (l : Node) : Bool := l.smtTypeF == .Bool
 
 /-- The children of a node. -/
 def children : Node → List Node

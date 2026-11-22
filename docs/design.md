@@ -940,6 +940,24 @@ tested:
      (`TelosFull/ChildArgs.lean` proves these fields). So the driver checks no
      child's type at run time where it rewrites, and non-clausal simplification
      substitutes below every operator.
+   - Types without translating to Logos: `Node.smtTypeF`
+     (`Telos/Core/Node/SmtTypeFast.lean`) computes `smtType` on the node, by
+     Logos's typing rule of each operator applied to the children's types, for
+     constants, `Bool`/`Int`/`Real` variables and the Boolean, equality, `ite`
+     and arithmetic kinds (`kindTy`); any other node falls back to `smtType`.
+     `smtTypeF_eq` proves the two equal, in `Telos` itself, since decisions
+     that carry their proof at run time need it. Run time uses it for
+     `WellTyped` (a higher-priority `Decidable` instance), the static steps'
+     side conditions (`ArithNormOk`, `ArithRelOk`, whose propositions are
+     unchanged), the solver's `isBool`, `isRealTerm` and `isIntTerm`, the
+     model's typed nils, and `typeHint`'s fallback (`getTypeF`). `big_lia`
+     (2,500 assertions): static side conditions 12.5ms to 3.6ms, the rewrite
+     pass 316ms to 280ms, about 7% end to end. To do: more kinds in `kindTy`
+     (`APPLY_UF`, purification skolems, arrays, bit-vectors, strings), then
+     static procedures for the most frequent RARE rules (`arith-leq-norm`,
+     `arith-elim-*`, `bool-double-not-elim`, `symm`, `evaluate`), whose
+     checker runs now cost the most (about 55ms on `big_lia`, mostly
+     translating in and out).
    - Conflicts without a CPC proof: when the circuit propagator finds a
      conflict, it records the assignment that found it (`conflictItem`), and
      non-clausal simplification is one `SemProc.learn` step from the

@@ -87,10 +87,10 @@ def diseqParts : Node → Option (Node × Node)
   | _ => none
 
 /-- A term of type `Real`. -/
-def isRealTerm (t : Node) : Bool := __smtx_typeof t.toSmt == SmtType.Real
+def isRealTerm (t : Node) : Bool := t.smtTypeF == SmtType.Real
 
 /-- A term of type `Int`. -/
-def isIntTerm (t : Node) : Bool := __smtx_typeof t.toSmt == SmtType.Int
+def isIntTerm (t : Node) : Bool := t.smtTypeF == SmtType.Int
 
 /-- A rational constant. -/
 def ratNode (q : Rat) : Node := .const (.rational q)
@@ -165,13 +165,13 @@ def LinCert.check (A : Array Node) : LinCert → Bool
         lt.check (A.push (Node.mkNode .LT #[a, b])) && gt.check (A.push (Node.mkNode .GT #[a, b]))
     | none => false
   | .cut l pos neg =>
-    __smtx_typeof l.toSmt == SmtType.Bool && pos.check (A.push l) && neg.check (A.push (negate l))
+    l.smtTypeF == SmtType.Bool && pos.check (A.push l) && neg.check (A.push (negate l))
   | .cases l subs =>
     match notAndParts l with
     | some cs =>
       A.contains l && (cs.all fun c => subs.any fun e => decide (e.1 = c)) &&
         subs.attach.all fun ⟨(c, p), _⟩ =>
-          __smtx_typeof c.toSmt == SmtType.Bool && p.check (A.push (negate c))
+          c.smtTypeF == SmtType.Bool && p.check (A.push (negate c))
     | none => false
 termination_by p => sizeOf p
 decreasing_by

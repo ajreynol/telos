@@ -34,7 +34,8 @@ def RVal (N : SmtModel) (t : Node) (r : ℝ) : Prop := __smtx_model_eval N t.toS
 theorem real_of_isRealTerm {N : SmtModel} (hN : model_wf N) {t : Node} (h : isRealTerm t = true) :
     ∃ r, RVal N t r := by
   unfold isRealTerm at h
-  exact LogosFacts.eval_real N _ hN (by simpa using h)
+  rw [Node.smtTypeF_eq] at h
+  exact LogosFacts.eval_real N _ hN (by simpa [Node.smtType] using h)
 
 omit [LogosFacts] in
 theorem toSmt_two {k : Kind} {op : UserOp} (hk : k.eoShape = .spine (Term.UOp op) (.exactly 2)) (a b : Node) :
@@ -70,7 +71,8 @@ theorem eval_mult2 {N : SmtModel} {x y : Node} {rx ry : ℝ} (hx : RVal N x rx) 
   unfold RVal Node.mkNode
   unfold Node.toSmt
   rw [toEo_typedChain (op := UserOp.mult) rfl _ (by simp)]
-  have hnil := eval_typedNil N .MULT UserOp.mult x (.rat 1) (.inr ⟨rfl, rfl⟩) (by rw [hT]; rfl)
+  have hnil := eval_typedNil N .MULT UserOp.mult x (.rat 1) (.inr ⟨rfl, rfl⟩)
+    (by rw [Node.smtTypeF_eq]; show Model.chainNil _ (__smtx_typeof _) = _; rw [hT]; rfl)
   have hl : (#[x, y].toList.map Node.toEo) = [x.toEo, y.toEo] := rfl
   have h0 : #[x, y][0] = x := rfl
   rw [hl, h0, eoRightAssocNil, eoRightAssocNil, eoRightAssocNil]
@@ -231,7 +233,8 @@ def IVal (N : SmtModel) (t : Node) (i : Int) : Prop := __smtx_model_eval N t.toS
 theorem int_of_isIntTerm {N : SmtModel} (hN : model_wf N) {t : Node} (h : isIntTerm t = true) :
     ∃ i, IVal N t i := by
   unfold isIntTerm at h
-  exact LogosFacts.eval_int N _ hN (by simpa using h)
+  rw [Node.smtTypeF_eq] at h
+  exact LogosFacts.eval_int N _ hN (by simpa [Node.smtType] using h)
 
 omit [LogosFacts] in
 theorem eval_isub {N : SmtModel} {a b : Node} {ia ib : Int} (ha : IVal N a ia) (hb : IVal N b ib) :
@@ -467,7 +470,7 @@ theorem checkFarkas_sound {A : Array Node} {cs : Array (Node × Rat)} (h : check
       have : tl ≠ [] := by rintro rfl; simp at hne
       simp [xs]; exact List.length_pos_of_ne_nil this
     have hnil := eval_typedNil N .ADD UserOp.plus (ratNode 0) (.rat 0) (.inl ⟨rfl, rfl⟩)
-      (by rw [typeof_ratNode]; rfl)
+      (by rw [Node.smtTypeF_eq]; show Model.chainNil _ (__smtx_typeof _) = _; rw [typeof_ratNode]; rfl)
     have h0 : xs[0] = ratNode 0 := by simp [xs]
     rw [← h0] at hnil
     have hnil' : __smtx_model_eval N (__eo_to_smt (typedNil UserOp.plus xs[0].toEo)) = SmtValue.Real 0 := by

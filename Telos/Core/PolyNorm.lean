@@ -198,8 +198,12 @@ def ArithNormOk (n : Node) (p : Poly) (m : Node) : Prop :=
     __smtx_typeof (__eo_to_smt (eqFormula n m)) = .Bool ∧
     (isReal n = true ∨ p.all (·.2.isInt) = true)
 
-instance (n : Node) (p : Poly) (m : Node) : Decidable (ArithNormOk n p m) := by
-  unfold ArithNormOk; infer_instance
+/-- Decided with `smtTypeF`, without translating to Logos (`smtTypeF_eq`). -/
+instance (n : Node) (p : Poly) (m : Node) : Decidable (ArithNormOk n p m) :=
+  let T := n.smtTypeF
+  decidable_of_iff ((T = .Int ∨ T = .Real) ∧ __smtx_typeof_eq T m.smtTypeF = .Bool ∧
+      (isReal n = true ∨ p.all (·.2.isInt) = true))
+    (by simp only [T, ArithNormOk, Node.typeof_eqFormula, Node.smtTypeF_eq])
 
 /-- The conditions under which `(= n m)` follows from the premise `(= a b)` by
 `arith_poly_norm_rel`, with the premise statically known to be an
@@ -215,7 +219,12 @@ def ArithRelOk (n m a b : Node) : Prop :=
     __smtx_typeof (__eo_to_smt (eqFormula n m)) = .Bool ∧
     __eo_prog_arith_poly_norm_rel (eqFormula n m) (Proof.pf (eqFormula a b)) = eqFormula n m
 
-instance (n m a b : Node) : Decidable (ArithRelOk n m a b) := by
-  unfold ArithRelOk; infer_instance
+/-- Decided with `smtTypeF`, without translating to Logos (`smtTypeF_eq`). -/
+instance (n m a b : Node) : Decidable (ArithRelOk n m a b) :=
+  let T := a.smtTypeF
+  decidable_of_iff ((T = .Int ∨ T = .Real) ∧ __smtx_typeof_eq T b.smtTypeF = .Bool ∧
+      List.Perm (polyOf a) (polyOf b) ∧ __smtx_typeof_eq n.smtTypeF m.smtTypeF = .Bool ∧
+      __eo_prog_arith_poly_norm_rel (eqFormula n m) (Proof.pf (eqFormula a b)) = eqFormula n m)
+    (by simp only [T, ArithRelOk, Node.typeof_eqFormula, Node.smtTypeF_eq])
 
 end Telos.Arith
