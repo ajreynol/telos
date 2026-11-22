@@ -1518,19 +1518,37 @@ Changes outside the theory:
   141 to 143, dt `--bool` 77 to 84, the others unchanged.
 - Sets go to the SAT solver (`useSat`), and empty sets print their sort names.
 
+### Models
+
+A set value is `MVal.sempty T` (the empty set of element type `T`) or
+`MVal.sins e s` (`s` with `e`): plain constructors, so that `MVal` keeps its
+derived instances. Its Logos value is the empty map updated to `true` at each
+element in turn, which is canonical (`toVal_props`, `SetMap`); an ill-typed set
+is `NotValue`. Values are compared as Logos compares them, `MVal.veq` (sets by
+their elements, the rest structurally), in `=`, `distinct` and the tables of
+functions, and `veq_iff` proves it is equality of the Logos values (by map
+extensionality, `map_ext_of_lookup_eq`). The evaluator computes `set.singleton`,
+`set.union`, `set.inter`, `set.minus`, `set.member` and the empty set
+(`Model.combine`), each proved against Logos's operation (`union_sound`, ...,
+from Logos's lookup lemmas). Nothing applies to an ill-typed set (Logos's
+application of anything to `NotValue` is `NotValue`). The builder gives a class
+of sets the values of its members' classes (`collectModelValues`, from the
+membership atoms that are true). Logos's map and set lemmas are new fields of
+`LogosFacts`, proved in `TelosFull/Main.lean`; `solve_sat_correct` still rests
+on the standard axioms only.
+
 ### Results
 
-`fuzz-solve.py --sat --theory sets` (seed 1, 100 benchmarks): the events agree
-with cvc5's on 78, of which 26 also agree on the answer. The other 52 answer
-`unknown` where cvc5 answers `sat` (50: telos has no models of sets yet) or
-`unsat` (2: sets lemmas are not certified yet). The 22 that differ in events
-are mostly SAT decisions after a lemma, and the order of preprocessed
-equalities (the node order of preprocessing).
+`fuzz-solve.py --sat --theory sets`, events and answers both as cvc5's: seed 1
+(100) 76, seed 2 (200) 144, seed 3 with clauses (200) 122, seed 4 with nested
+connectives (100) 41. Every answer that differs is an `unsat` telos answers
+`unknown` (sets lemmas are not certified yet). On 300 more random benchmarks,
+telos answers all 213 `sat` and 69 of the 87 `unsat`, never differently from
+cvc5. The event differences are mostly SAT decisions after a lemma, and the
+order of preprocessed equalities (the node order of preprocessing).
 
 ### To do
 
-- Models: set values (`MVal`, `Model.ev` of the set operators), from the
-  members of each class (`collectModelValues`).
 - Certificates: the lemmas (`SETS_DOWN_CLOSURE`, `SETS_UP_CLOSURE`,
   `SETS_DEQ`, the proxies) by CPC rules (`sets-*-member`, `sets_ext`,
   `sets_singleton_inj`), and the notifications' facts in `EE.proveFact`.

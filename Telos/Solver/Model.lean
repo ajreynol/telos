@@ -79,13 +79,26 @@ inductive MVal where
   | int (i : Int)
   /-- A real, rational (Logos's `Real` of a rational). -/
   | rat (q : Rat)
+  /-- The empty set of elements of Logos type `T` (Logos's `Set` of the map
+  with default `false`). -/
+  | sempty (T : SmtType)
+  /-- The set `s` with the element `e` (Logos's map `s` updated at `e` to
+  `true`). A set is compared with another by its elements, as Logos compares
+  them (`MVal.veq`), not structurally. -/
+  | sins (e s : MVal)
   deriving DecidableEq, Inhabited
 
 /-- The Logos type of constructor `i` of the datatype `s` of `dd`. -/
 def consType (s : native_String) (dd : SmtDatatypeDecl) (i : Nat) : SmtType :=
   __smtx_typeof_dt_cons_value_rec (SmtType.Datatype s dd) (__smtx_dt_resolve (__smtx_dd_lookup s dd) dd) i
 
-/-- The Logos type of a value. -/
+/-- Whether a value is a set. -/
+def MVal.isSet : MVal → Bool
+  | .sempty _ | .sins .. => true
+  | _ => false
+
+/-- The Logos type of a value; a set whose elements are not all of its element
+type has none. -/
 def MVal.ty : MVal → SmtType
   | .bool _ => .Bool
   | .uval s _ => .USort s
@@ -94,6 +107,59 @@ def MVal.ty : MVal → SmtType
   | .app f a => __smtx_typeof_apply_value f.ty a.ty
   | .int _ => .Int
   | .rat _ => .Real
+  | .sempty T => .Set T
+  | .sins e s =>
+    if s.isSet then
+      match s.ty with
+      | .Set T => if e.ty == T then .Set T else .None
+      | _ => .None
+    else .None
+
+/-- The elements of a set (of `sins`), in order of insertion, last first. -/
+def MVal.elems : MVal → List MVal
+  | .sins e s => e :: s.elems
+  | _ => []
+
+theorem MVal.sizeOf_lt_of_mem_elems : ∀ {s e : MVal}, e ∈ s.elems → sizeOf e < sizeOf s
+  | .sins a s, e, h => by
+    simp only [MVal.elems, List.mem_cons] at h
+    rcases h with rfl | h
+    · simp; omega
+    · have := MVal.sizeOf_lt_of_mem_elems h; simp; omega
+  | .sempty _, _, h | .bool _, _, h | .uval .., _, h | .fn .., _, h | .dtc .., _, h | .app .., _, h
+  | .int _, _, h | .rat _, _, h => by simp [MVal.elems] at h
+
+/-- **Equality of values, as Logos's** (`native_veq` of their Logos values):
+two well-typed sets are equal when they have the same element type and the
+same elements, two ill-typed ones are both `NotValue`; the others are
+compared structurally. -/
+def MVal.veq (a b : MVal) : Bool :=
+  if a.isSet || b.isSet then
+    if !(a.isSet && b.isSet) then false else
+    let wa := a.ty != .None
+    let wb := b.ty != .None
+    if wa && wb then
+      a.ty == b.ty &&
+        a.elems.attach.all (fun ⟨e, _⟩ => b.elems.attach.any fun ⟨f, _⟩ => MVal.veq e f) &&
+        b.elems.attach.all (fun ⟨f, _⟩ => a.elems.attach.any fun ⟨e, _⟩ => MVal.veq f e)
+    else !wa && !wb
+  else match a, b with
+    | .app f x, .app g y => MVal.veq f g && MVal.veq x y
+    | a, b => a == b
+termination_by sizeOf a + sizeOf b
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | (have := MVal.sizeOf_lt_of_mem_elems ‹_ ∈ a.elems›; have := MVal.sizeOf_lt_of_mem_elems ‹_ ∈ b.elems›; omega)
+    | omega
+
+/-- An ill-typed set, whose Logos value is `NotValue`: no function or
+constructor applies to it (Logos's application of anything to `NotValue` is
+`NotValue`). -/
+def MVal.notValue (v : MVal) : Bool := v.isSet && v.ty == .None
+
+/-- The set with the elements `es` added to `s`. -/
+def MVal.insAll (s : MVal) (es : List MVal) : MVal := es.foldr .sins s
 
 /-- Constructor `i` of `s` applied to `args`. -/
 def MVal.mkDt (s : native_String) (dd : SmtDatatypeDecl) (i : Nat) (args : List MVal) : MVal :=
@@ -170,12 +236,13 @@ def wrongSelType (s : native_String) (dd : SmtDatatypeDecl) (i j : Nat) : SmtTyp
 
 /-- Apply a function value to an argument. -/
 def apply (M : Model) (f a : MVal) : Option MVal :=
+  if a.notValue then none else
   match f with
   | .fn fid dom rng =>
     match M.funs[fid]? with
     | some t =>
       if t.dom == dom && t.rng == rng then
-        match t.entries.find? (·.1 == a) with
+        match t.entries.find? (·.1.veq a) with
         | some (_, v) => some v
         | none => some t.default
       else none
@@ -263,7 +330,7 @@ def combine (k : Kind) (cs : Array Node) (vs : List MVal) : Option MVal :=
   | .OR, vs => if 2 ≤ vs.length then (bools vs).map fun bs => .bool (bs.any id) else none
   | .IMPLIES, [.bool a, .bool b] => some (.bool (!a || b))
   | .XOR, [.bool a, .bool b] => some (.bool (a != b))
-  | .EQUAL, [a, b] => some (.bool (a == b))
+  | .EQUAL, [a, b] => some (.bool (a.veq b))
   | .ITE, [.bool c, a, b] => some (if c then a else b)
   | .ADD, vs => if 2 ≤ vs.length then
       (chainNil .ADD (cs[0]?.getD default).smtTypeF).bind fun nil => chainV plusV nil vs
@@ -278,7 +345,23 @@ def combine (k : Kind) (cs : Array Node) (vs : List MVal) : Option MVal :=
   | .GT, [a, b] => ltV b a
   | .GEQ, [a, b] => leqV b a
   | .TO_REAL, [.int i] => some (.rat i)
+  | .SET_SINGLETON, [x] => some (.sins x (.sempty x.ty))
+  | .SET_UNION, [a, b] => setOp a b fun _ => some (b.insAll a.elems)
+  | .SET_INTER, [a, b] => setOp a b fun T =>
+    some ((MVal.sempty T).insAll (a.elems.filter fun e => b.elems.any (e.veq ·)))
+  | .SET_MINUS, [a, b] => setOp a b fun T =>
+    some ((MVal.sempty T).insAll (a.elems.filter fun e => !b.elems.any (e.veq ·)))
+  | .SET_MEMBER, [x, s] =>
+    match s.ty with
+    | .Set _ => if s.isSet then some (.bool (s.elems.any (x.veq ·))) else none
+    | _ => none
   | _, _ => none
+where
+  /-- An operation on two well-typed sets of one type `T`. -/
+  setOp (a b : MVal) (f : SmtType → Option MVal) : Option MVal :=
+    match a.ty, b.ty with
+    | .Set T, .Set U => if a.isSet && b.isSet && T == U then f T else none
+    | _, _ => none
 
 /-- The CPC list of the arguments of a `distinct` (as `Node.toEo` writes it). -/
 def distinctList (cs : Array Node) : Term :=
@@ -294,7 +377,7 @@ def distinctTyped (cs : Array Node) : Bool :=
 /-- The values are pairwise distinct. -/
 def distinctVals : List MVal → Bool
   | [] => true
-  | v :: vs => vs.all (fun w => !(v == w)) && distinctVals vs
+  | v :: vs => vs.all (fun w => !(v.veq w)) && distinctVals vs
 
 mutual
   /-- Evaluate a node, memoized (the memo is threaded, so it is updated in
@@ -316,6 +399,7 @@ mutual
     | .const (.boolean b) => (some (.bool b), S)
     | .const (.integer i) => (some (.int i), S)
     | .const (.rational q) => (some (.rat q), S)
+    | .const (.emptySet T) => (if tyS T == .None then none else some (.sempty (tyS T)), S)
     | .var x T => (M.const x T, S)
     | .app (.kind .DISTINCT) cs =>
       if distinctTyped cs then
@@ -340,7 +424,7 @@ mutual
       | some (s, dd, i) =>
         match evList M n cs.toList S with
         | (none, S) => (none, S)
-        | (some vs, S) => (some (MVal.mkDt s dd i vs), S)
+        | (some vs, S) => (if vs.any (·.notValue) then none else some (MVal.mkDt s dd i vs), S)
     | .app (.node .APPLY_TESTER f@(.const (.dtCons ..))) cs =>
       match consOf? f, cs.toList with
       | some (s, dd, i), [x] =>
@@ -480,6 +564,7 @@ def defaultValue (T : SmtType) : Option MVal :=
   | .Int => some (.int 0)
   | .Real => some (.rat 0)
   | .Datatype .. => groundValue 16 T
+  | .Set E => some (.sempty E)
   | _ => none
 
 /-- The function and arguments of an application of a declared function. -/
@@ -535,7 +620,7 @@ def tableOf (f : String) (T : SmtType) (pre : List MVal) : StateM Builder (Optio
 def addToTable (fid : Nat) (a v : MVal) : StateM Builder Unit := do
   let funs ← modifyGet fun b => (b.model.funs, { b with model := { b.model with funs := #[] } })
   let funs := funs.modify fid fun t =>
-    if t.entries.any (·.1 == a) then t else { t with entries := t.entries ++ [(a, v)] }
+    if t.entries.any (·.1.veq a) then t else { t with entries := t.entries ++ [(a, v)] }
   modify fun b => { b with model := { b.model with funs } }
 
 /-- Record that `f` maps the arguments `args` to `v`. -/
@@ -699,6 +784,17 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
           | some v => fields := fields ++ [.inr v]
           | none => ok := false
     if ok then virtual := virtual.insert r (s, dd, c, fields)
+  -- the members of each class of sets (`getMembers`, from the membership
+  -- atoms that are true), by representative
+  let trueRep := id? Node.mkTrue
+  let mut members : Std.HashMap Nat (List Nat) := {}
+  for h : i in [0:n] do
+    if ee.isInternal[i]! then continue
+    if let .app (.kind .SET_MEMBER) #[x, S] := ee.nodes[i] then
+      if trueRep.isSome && some (find i) == trueRep then
+        if let (some xr, some sr) := (id? x, id? S) then
+          let ms := members.getD sr []
+          if !ms.contains xr then members := members.insert sr (ms ++ [xr])
   -- the values, from those of the classes without constructor terms (`fresh`)
   let rec value (fuel : Nat) (fresh : Std.HashMap Nat MVal) (r : Nat) : Option MVal :=
     match fuel with
@@ -718,6 +814,9 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
         match ee.nodes[r]!.typeHint.map fun T => __eo_to_smt_type T.toEo with
         | some (.Datatype ..) => fresh.get? r
         | some .Real | some .Int => arithOf.get? r
+        | some (.Set E) =>
+          -- a set: the values of its members (`collectModelValues`)
+          ((members.getD r []).mapM (value fuel fresh)).map (MVal.sempty E).insAll
         | _ => classValue ee r
   let reps := (List.range n).filter fun i => !ee.isInternal[i]! && find i == i
   let dtRep (r : Nat) : Option (native_String × SmtDatatypeDecl) :=

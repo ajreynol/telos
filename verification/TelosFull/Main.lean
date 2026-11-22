@@ -9,6 +9,9 @@ import Cpc.Proofs.TypePreservation.Full
 import Cpc.Proofs.RuleSupport.Cong.TrueSpine
 import Cpc.Proofs.RuleSupport.Cong.TypeSpine
 import Cpc.Proofs.Closed.Support
+import Cpc.Proofs.RuleSupport.SetsEvalOpSupport
+import Cpc.Proofs.Canonical.Ops
+import Cpc.Proofs.Canonical.Maps
 
 /-!
 # The unconditional theorem
@@ -69,6 +72,11 @@ theorem congTrueSpine_foldl (M : SmtModel) (hM : model_wf M) :
     · intro N hN hAgree
       exact (eo_interprets_true_iff N _).2 ⟨hxy.1, hxy.2 N hN (agrees_to hAgree)⟩
 
+/-- telos's default leaf of a map is Logos's. -/
+theorem mapLeaf_eq : ∀ m : SmtMap, mapLeaf m = Smtm.smt_map_default_leaf m
+  | SmtMap.cons _ _ m => by simp only [mapLeaf, Smtm.smt_map_default_leaf, mapLeaf_eq m]
+  | SmtMap.default _ _ => rfl
+
 instance logosFacts : LogosFacts where
   checker_sound cs P hT hC hP := (valid_iff P).2 (proven_from_empty_valid cs P hT hC hP)
   cong_spine head xs ys ht h :=
@@ -120,6 +128,21 @@ instance logosFacts : LogosFacts where
   dt_sel_arg := ChildArgs.dt_sel_arg
   dt_cons_args := ChildArgs.dt_cons_args
   type_default_ok _ huc T h := type_default_typed_canonical_of_type_wf huc T h
+  map_update_canonical uc _ _ _ hm hi he := Smtm.map_update_aux_canonical (uc := uc) hm hi he
+  map_lookup_update_same uc _ _ _ hm := Smtm.map_lookup_update_aux_same (uc := uc) hm
+  map_lookup_update_other uc _ _ _ _ hm hij := Smtm.map_lookup_update_aux_other (uc := uc) hm hij
+  map_ext uc _ _ h1 h2 hl hk :=
+    Smtm.map_ext_of_lookup_eq (uc := uc) h1 h2 (by rw [← mapLeaf_eq, ← mapLeaf_eq]; exact hl) hk
+  map_update_leaf ed m i e := by rw [mapLeaf_eq, mapLeaf_eq]; exact Smtm.map_update_aux_default_leaf ed m i e
+  map_update_default ed m i e := Smtm.map_update_aux_get_default ed m i e
+  map_update_typed _ _ _ _ _ hm hi he := Smtm.map_canon_insert_typed hm hi he
+  set_union_lookup uc m1 m2 A v h1 h2 h3 h4 h5 :=
+    SetsEvalOpSupport.set_union_lookup (uc := uc) m1 m2 A v h1 h2 h3 h4 h5
+  set_inter_lookup uc m1 m2 A v h1 h2 h3 h4 := SetsEvalOpSupport.set_inter_lookup (uc := uc) m1 m2 A v h1 h2 h3 h4
+  set_minus_lookup uc m1 m2 A v h1 h2 h3 h4 := SetsEvalOpSupport.set_minus_lookup (uc := uc) m1 m2 A v h1 h2 h3 h4
+  set_union_canonical uc _ _ h1 h2 := Smtm.model_eval_set_union_canonical (uc := uc) h1 h2
+  set_inter_canonical uc _ _ h1 h2 := Smtm.model_eval_set_inter_canonical (uc := uc) h1 h2
+  set_minus_canonical uc _ _ h1 h2 := Smtm.model_eval_set_minus_canonical (uc := uc) h1 h2
 
 /-- **Correctness of the rewriter.** Rewriting a well-typed node gives an
 equivalent node. -/

@@ -224,7 +224,6 @@ theorem bools_map (l : List Bool) : Model.bools (l.map MVal.bool) = some l := by
   | nil => rfl
   | cons b l ih => simp [Model.bools, ih]
 
-omit [LogosFacts] in
 /-- A connective of Boolean children has the value its kind gives them. -/
 theorem conn_sem {N : SmtModel} {k : Kind} {cs : Array Node} (hc : ∀ c ∈ cs.toList, BoolVal N c) {r : Bool}
     (h : Model.combine k cs (cs.toList.map fun c => MVal.bool (bval N c)) = some (.bool r)) :
@@ -303,7 +302,6 @@ theorem tv {N : SmtModel} {c : Node} : bval N c = true ↔ TrueIn N c.toEo := by
 omit [LogosFacts] in
 theorem tvf {N : SmtModel} {c : Node} : bval N c = false ↔ ¬ TrueIn N c.toEo := by simp [bval]
 
-omit [LogosFacts] in
 theorem and_sem {N : SmtModel} {cs : Array Node} (hc : ∀ c ∈ cs.toList, BoolVal N c) (h2 : 2 ≤ cs.size) :
     BoolVal N (.app (.kind .AND) cs) ∧ (TrueIn N (Node.app (.kind .AND) cs).toEo ↔ ∀ c ∈ cs.toList, TrueIn N c.toEo) := by
   have hm : (cs.toList.map fun c => MVal.bool (bval N c)) = (cs.toList.map (bval N)).map MVal.bool := by simp
@@ -317,7 +315,6 @@ theorem and_sem {N : SmtModel} {cs : Array Node} (hc : ∀ c ∈ cs.toList, Bool
   · intro h c hc; exact tv.1 (h _ (List.mem_map_of_mem hc))
   · intro h x hx; obtain ⟨c, hc, rfl⟩ := List.mem_map.1 hx; exact tv.2 (h c hc)
 
-omit [LogosFacts] in
 theorem or_sem {N : SmtModel} {cs : Array Node} (hc : ∀ c ∈ cs.toList, BoolVal N c) (h2 : 2 ≤ cs.size) :
     BoolVal N (.app (.kind .OR) cs) ∧ (TrueIn N (Node.app (.kind .OR) cs).toEo ↔ ∃ c ∈ cs.toList, TrueIn N c.toEo) := by
   have hm : (cs.toList.map fun c => MVal.bool (bval N c)) = (cs.toList.map (bval N)).map MVal.bool := by simp
@@ -331,7 +328,6 @@ theorem or_sem {N : SmtModel} {cs : Array Node} (hc : ∀ c ∈ cs.toList, BoolV
   · rintro ⟨x, hx, hxt⟩; obtain ⟨c, hc, rfl⟩ := List.mem_map.1 hx; exact ⟨c, hc, tv.1 hxt⟩
   · rintro ⟨c, hc, ht⟩; exact ⟨_, List.mem_map_of_mem hc, tv.2 ht⟩
 
-omit [LogosFacts] in
 theorem bin_sem {N : SmtModel} {k : Kind} {cs : Array Node} (hc : ∀ c ∈ cs.toList, BoolVal N c) (h2 : cs.size = 2)
     {f : Bool → Bool → Bool}
     (hf : ∀ a b, Model.combine k cs [.bool a, .bool b] = some (.bool (f a b))) :
@@ -341,7 +337,6 @@ theorem bin_sem {N : SmtModel} {k : Kind} {cs : Array Node} (hc : ∀ c ∈ cs.t
   rw [← combine_two h2] at e
   exact conn_sem hc e
 
-omit [LogosFacts] in
 open Classical in
 theorem ite_sem {N : SmtModel} {cs : Array Node} (hc : ∀ c ∈ cs.toList, BoolVal N c) (h3 : cs.size = 3) :
     BoolVal N (.app (.kind .ITE) cs) ∧ (TrueIn N (Node.app (.kind .ITE) cs).toEo ↔
@@ -461,7 +456,7 @@ theorem defClauses_sat {N : SmtModel} (hN : model_wf N) {n : Node} (hconn : isCo
         · rename_i _ _ _ hk
           obtain ⟨rfl, h2⟩ := hk
           have hs := (bin_sem (k := .EQUAL) hbv h2 (f := fun a b => a == b)
-            (fun a b => by cases a <;> cases b <;> rfl)).2
+            (fun a b => by cases a <;> cases b <;> simp [Model.combine])).2
           have l0 := L cs[0] (by simp); have l1 := L cs[1] (by simp)
           simp only [List.mem_cons, List.mem_singleton, List.not_mem_nil, or_false] at hd
           have e0 := bval_of_iff l0.2.1; have e0' := bval_of_iff_not l0.2.2.1
@@ -821,7 +816,7 @@ theorem input_sat {N : SmtModel} (hN : model_wf N) (f : Node) (neg : Bool) (ht :
                     simp [isConn, this, ← e, hty]
                   obtain ⟨hbv, hch⟩ := bin_children hN ht (by simp [isConnOrNot, hconn])
                   have hs := bval_of_iff_eq (bin_sem (k := .EQUAL) hbv h2 (f := fun a b => a == b)
-                    (fun a b => by cases a <;> cases b <;> rfl)).2
+                    (fun a b => by cases a <;> cases b <;> simp [Model.combine])).2
                   have hfb := bval_not_of hf
                   have l0 := child_lits hN (hch cs[0] (by simp)); have l1 := child_lits hN (hch cs[1] (by simp))
                   have e0 := bval_of_iff l0.2.1; have e0' := bval_of_iff_not l0.2.2.2

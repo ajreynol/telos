@@ -80,6 +80,11 @@ def NotTopLevelQuantifier (t : Term) : Prop :=
   (∀ xs body, t ≠ Term.Apply (Term.Apply (Term.UOp UserOp.forall) xs) body) ∧
   (∀ xs body, t ≠ Term.Apply (Term.Apply (Term.UOp UserOp.exists) xs) body)
 
+/-- The default leaf of a map (Logos's `smt_map_default_leaf`). -/
+def mapLeaf : SmtMap → SmtMap
+  | SmtMap.cons _ _ m => mapLeaf m
+  | SmtMap.default T e => SmtMap.default T e
+
 /-- The Logos theorems telos uses, restated. `TelosFull/Main.lean` proves the
 instance from Logos's proofs; the name of each Logos theorem is in its field's
 documentation. -/
@@ -186,6 +191,78 @@ class LogosFacts : Prop where
   type_default_ok : ∀ (uc : SmtUSortDom), usort_dom_wf uc → ∀ (T : SmtType),
     __smtx_type_wf T = true →
     __smtx_typeof_value (__smtx_type_default T) = T ∧ __smtx_value_canonical uc (__smtx_type_default T) = true
+  -- Maps and sets, for the values of sets in models (`Cpc/Proofs/Canonical/`,
+  -- `TypePreservation/Helpers.lean`, `RuleSupport/SetsEvalOpSupport.lean`).
+  /-- `map_update_aux_canonical`. -/
+  map_update_canonical : ∀ (uc : SmtUSortDom) (m : SmtMap) (i e : SmtValue),
+    __smtx_map_canonical uc m = true → __smtx_value_canonical uc i = true →
+    __smtx_value_canonical uc e = true →
+    __smtx_map_canonical uc (__smtx_map_update_aux (__smtx_map_get_default m) m i e) = true
+  /-- `map_lookup_update_aux_same`. -/
+  map_lookup_update_same : ∀ (uc : SmtUSortDom) (m : SmtMap) (i e : SmtValue),
+    __smtx_map_canonical uc m = true →
+    __smtx_map_lookup (__smtx_map_update_aux (__smtx_map_get_default m) m i e) i = e
+  /-- `map_lookup_update_aux_other`. -/
+  map_lookup_update_other : ∀ (uc : SmtUSortDom) (m : SmtMap) (i j e : SmtValue),
+    __smtx_map_canonical uc m = true → native_veq i j = false →
+    __smtx_map_lookup (__smtx_map_update_aux (__smtx_map_get_default m) m i e) j = __smtx_map_lookup m j
+  /-- `map_ext_of_lookup_eq`: canonical maps with the same default leaf and the
+  same lookups are equal. -/
+  map_ext : ∀ (uc : SmtUSortDom) (m1 m2 : SmtMap),
+    __smtx_map_canonical uc m1 = true → __smtx_map_canonical uc m2 = true →
+    mapLeaf m1 = mapLeaf m2 → (∀ v, __smtx_map_lookup m1 v = __smtx_map_lookup m2 v) → m1 = m2
+  /-- `map_update_aux_default_leaf`. -/
+  map_update_leaf : ∀ (ed : SmtValue) (m : SmtMap) (i e : SmtValue),
+    mapLeaf (__smtx_map_update_aux ed m i e) = mapLeaf m
+  /-- `map_update_aux_get_default`. -/
+  map_update_default : ∀ (ed : SmtValue) (m : SmtMap) (i e : SmtValue),
+    __smtx_map_get_default (__smtx_map_update_aux ed m i e) = __smtx_map_get_default m
+  /-- `map_canon_insert_typed`. -/
+  map_update_typed : ∀ (m : SmtMap) (A B : SmtType) (i e : SmtValue),
+    __smtx_typeof_map_value m = SmtType.Map A B → __smtx_typeof_value i = A → __smtx_typeof_value e = B →
+    __smtx_typeof_map_value (__smtx_map_update_aux (__smtx_map_get_default m) m i e) = SmtType.Map A B
+  /-- `SetsEvalOpSupport.set_union_lookup`. -/
+  set_union_lookup : ∀ (uc : SmtUSortDom) (m1 m2 : SmtMap) (A : SmtType) (v : SmtValue),
+    __smtx_typeof_map_value m1 = SmtType.Map A SmtType.Bool →
+    __smtx_typeof_map_value m2 = SmtType.Map A SmtType.Bool →
+    __smtx_map_canonical uc m1 = true → __smtx_map_canonical uc m2 = true →
+    __smtx_map_get_default m1 = SmtValue.Boolean false →
+    __smtx_map_lookup (__smtx_set_op_rec false m1
+        (SmtMap.default (__smtx_index_typeof_map (__smtx_typeof_map_value m1)) (SmtValue.Boolean false)) m2) v =
+      native_ite (native_veq (__smtx_map_lookup m1 v) (SmtValue.Boolean true)) (SmtValue.Boolean true)
+        (__smtx_map_lookup m2 v)
+  /-- `SetsEvalOpSupport.set_inter_lookup`. -/
+  set_inter_lookup : ∀ (uc : SmtUSortDom) (m1 m2 : SmtMap) (A : SmtType) (v : SmtValue),
+    __smtx_typeof_map_value m1 = SmtType.Map A SmtType.Bool →
+    __smtx_typeof_map_value m2 = SmtType.Map A SmtType.Bool →
+    __smtx_map_canonical uc m1 = true →
+    __smtx_map_get_default m1 = SmtValue.Boolean false →
+    __smtx_map_lookup (__smtx_set_op_rec true m1 m2
+        (SmtMap.default (__smtx_index_typeof_map (__smtx_typeof_map_value m1)) (SmtValue.Boolean false))) v =
+      native_ite (native_and (native_veq (__smtx_map_lookup m1 v) (SmtValue.Boolean true))
+          (native_veq (__smtx_map_lookup m2 v) (SmtValue.Boolean true)))
+        (SmtValue.Boolean true) (SmtValue.Boolean false)
+  /-- `SetsEvalOpSupport.set_minus_lookup`. -/
+  set_minus_lookup : ∀ (uc : SmtUSortDom) (m1 m2 : SmtMap) (A : SmtType) (v : SmtValue),
+    __smtx_typeof_map_value m1 = SmtType.Map A SmtType.Bool →
+    __smtx_typeof_map_value m2 = SmtType.Map A SmtType.Bool →
+    __smtx_map_canonical uc m1 = true →
+    __smtx_map_get_default m1 = SmtValue.Boolean false →
+    __smtx_map_lookup (__smtx_set_op_rec false m1 m2
+        (SmtMap.default (__smtx_index_typeof_map (__smtx_typeof_map_value m1)) (SmtValue.Boolean false))) v =
+      native_ite (native_and (native_veq (__smtx_map_lookup m1 v) (SmtValue.Boolean true))
+          (native_not (native_veq (__smtx_map_lookup m2 v) (SmtValue.Boolean true))))
+        (SmtValue.Boolean true) (SmtValue.Boolean false)
+  /-- `model_eval_set_union_canonical` (and for intersection and difference). -/
+  set_union_canonical : ∀ (uc : SmtUSortDom) (v1 v2 : SmtValue),
+    __smtx_value_canonical uc v1 = true → __smtx_value_canonical uc v2 = true →
+    __smtx_value_canonical uc (__smtx_model_eval_set_union v1 v2) = true
+  set_inter_canonical : ∀ (uc : SmtUSortDom) (v1 v2 : SmtValue),
+    __smtx_value_canonical uc v1 = true → __smtx_value_canonical uc v2 = true →
+    __smtx_value_canonical uc (__smtx_model_eval_set_inter v1 v2) = true
+  set_minus_canonical : ∀ (uc : SmtUSortDom) (v1 v2 : SmtValue),
+    __smtx_value_canonical uc v1 = true → __smtx_value_canonical uc v2 = true →
+    __smtx_value_canonical uc (__smtx_model_eval_set_minus v1 v2) = true
 
 /-! ## Facts that need no Logos proof -/
 

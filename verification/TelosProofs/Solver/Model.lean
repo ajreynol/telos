@@ -29,7 +29,13 @@ set_option linter.internalConstructors false
 
 variable [LogosFacts]
 
-/-- The Logos value of a value. -/
+/-- A canonical map updated at `i` to `e` (`__smtx_map_update_aux` with the
+map's default). -/
+noncomputable abbrev upd (m : SmtMap) (i e : SmtValue) : SmtMap :=
+  __smtx_map_update_aux (__smtx_map_get_default m) m i e
+
+/-- The Logos value of a value. A set is the empty map updated to `true` at
+each of its elements, in order; an ill-typed one is `NotValue`. -/
 noncomputable def toVal : MVal → SmtValue
   | .bool b => .Boolean b
   | .uval s i => .UValue s (i : ℝ)
@@ -38,21 +44,116 @@ noncomputable def toVal : MVal → SmtValue
   | .app f a => .Apply (toVal f) (toVal a)
   | .int i => .Numeral i
   | .rat q => .Real (q : ℝ)
+  | .sempty T => .Set (SmtMap.default T (.Boolean false))
+  | .sins e s =>
+    if s.isSet then
+      match s.ty with
+      | .Set T =>
+        if e.ty = T then
+          match toVal s with
+          | .Set m => .Set (upd m (toVal e) (.Boolean true))
+          | _ => .NotValue
+        else .NotValue
+      | _ => .NotValue
+    else .NotValue
 
-omit [LogosFacts] in
-theorem toVal_inj {a b : MVal} (h : toVal a = toVal b) : a = b := by
-  induction a generalizing b with
-  | app f a ihf iha =>
-    cases b <;> simp only [toVal, reduceCtorEq, SmtValue.Apply.injEq] at h
-    rw [ihf h.1, iha h.2]
-  | _ => cases b <;> simp_all [toVal]
+/-- The universe of the sorts of `toSmtModel`. -/
+abbrev univ : SmtUSortDom := fun _ => (Set.univ : Set ModelId)
 
-omit [LogosFacts] in
-theorem typeof_toVal (v : MVal) : __smtx_typeof_value (toVal v) = v.ty := by
-  induction v with
-  | app f a ihf iha => simp only [toVal, MVal.ty, __smtx_typeof_value, ihf, iha]
-  | dtc => rfl
-  | _ => simp [toVal, MVal.ty, __smtx_typeof_value]
+/-- **The map of a well-typed set**: canonical, of `Bool` values on `T`, with
+default `false`, whose lookup at `w` is whether `w` is (the Logos value of) one
+of the set's elements. -/
+structure SetMap (v : MVal) (T : SmtType) (m : SmtMap) : Prop where
+  val : toVal v = .Set m
+  canon : __smtx_map_canonical univ m = true
+  typed : __smtx_typeof_map_value m = .Map T .Bool
+  dflt : __smtx_map_get_default m = .Boolean false
+  leaf : mapLeaf m = .default T (.Boolean false)
+  lookup : ∀ w, __smtx_map_lookup m w = .Boolean (decide (∃ e ∈ v.elems, toVal e = w))
+
+theorem set_canonical_of {m : SmtMap} (hc : __smtx_map_canonical univ m = true)
+    (hd : __smtx_map_get_default m = .Boolean false) :
+    __smtx_value_canonical univ (.Set m) = true := by
+  simp [__smtx_value_canonical, hc, hd, native_and, native_veq]
+
+/-- **The values' types and canonicity, and the maps of sets.** -/
+theorem toVal_props : ∀ v : MVal,
+    __smtx_typeof_value (toVal v) = v.ty ∧ __smtx_value_canonical univ (toVal v) = true ∧
+      (∀ T, v.isSet = true → v.ty = .Set T → ∃ m, SetMap v T m)
+  | .bool _ | .int _ | .rat _ | .dtc .. => by
+    refine ⟨?_, ?_, fun _ h => by simp [MVal.isSet] at h⟩ <;> simp [toVal, MVal.ty, __smtx_typeof_value, __smtx_value_canonical] <;> rfl
+  | .uval .. | .fn .. => by
+    refine ⟨?_, ?_, fun _ h => by simp [MVal.isSet] at h⟩ <;>
+      simp [toVal, MVal.ty, __smtx_typeof_value, __smtx_value_canonical, native_usort_mem]
+  | .app f a => by
+    obtain ⟨hf1, hf2, -⟩ := toVal_props f
+    obtain ⟨ha1, ha2, -⟩ := toVal_props a
+    refine ⟨?_, ?_, fun _ h => by simp [MVal.isSet] at h⟩
+    · simp only [toVal, MVal.ty, __smtx_typeof_value, hf1, ha1]
+    · simp only [toVal, __smtx_value_canonical, hf2, ha2, native_and, Bool.and_self]
+  | .sempty T => by
+    have hm : SetMap (.sempty T) T (SmtMap.default T (.Boolean false)) :=
+      ⟨rfl, by simp [__smtx_map_canonical, __smtx_map_default_canonical, __smtx_value_canonical,
+          __smtx_typeof_value, __smtx_type_default, native_ite, native_veq, native_and],
+        rfl, rfl, rfl, fun w => by simp [__smtx_map_lookup, MVal.elems]⟩
+    refine ⟨?_, set_canonical_of hm.canon hm.dflt, fun U _ hU => ?_⟩
+    · simp [toVal, MVal.ty, __smtx_typeof_value, __smtx_typeof_map_value, __smtx_map_to_set_type]
+    · simp only [MVal.ty, SmtType.Set.injEq] at hU; subst hU; exact ⟨_, hm⟩
+  | .sins e s => by
+    obtain ⟨he1, he2, -⟩ := toVal_props e
+    obtain ⟨-, -, hs3⟩ := toVal_props s
+    -- the well-typed case
+    have key : ∀ T, s.isSet = true → s.ty = .Set T → e.ty = T → ∃ m, SetMap (.sins e s) T m := by
+      intro T hsSet hsT heT
+      obtain ⟨m, hm⟩ := hs3 T hsSet hsT
+      refine ⟨upd m (toVal e) (.Boolean true), ⟨?_, ?_, ?_, ?_, ?_, ?_⟩⟩
+      · simp only [toVal, hsSet, hsT, heT, ite_true, hm.val]
+      · exact LogosFacts.map_update_canonical univ m _ _ hm.canon he2 (by simp [__smtx_value_canonical])
+      · exact LogosFacts.map_update_typed m T .Bool _ _ hm.typed (he1.trans heT) rfl
+      · rw [LogosFacts.map_update_default, hm.dflt]
+      · rw [LogosFacts.map_update_leaf, hm.leaf]
+      · intro w
+        by_cases hw : toVal e = w
+        · subst hw
+          rw [LogosFacts.map_lookup_update_same univ m _ _ hm.canon]
+          simp [MVal.elems]
+        · rw [LogosFacts.map_lookup_update_other univ m _ _ _ hm.canon (by simp [native_veq, hw]), hm.lookup w]
+          simp [MVal.elems, hw]
+    -- the type of `sins e s`, and its value when it is not a set
+    by_cases hw : ∃ T, s.isSet = true ∧ s.ty = .Set T ∧ e.ty = T
+    · obtain ⟨T, hsSet, hsT, heT⟩ := hw
+      obtain ⟨m, hm⟩ := key T hsSet hsT heT
+      have hty : (MVal.sins e s).ty = .Set T := by simp [MVal.ty, hsSet, hsT, heT]
+      refine ⟨?_, ?_, fun U _ hU => ?_⟩
+      · rw [hm.val, hty]; simp [__smtx_typeof_value, hm.typed, __smtx_map_to_set_type]
+      · rw [hm.val]; exact set_canonical_of hm.canon hm.dflt
+      · rw [hty] at hU; simp only [SmtType.Set.injEq] at hU; subst hU; exact ⟨m, hm⟩
+    · have hnv : toVal (.sins e s) = .NotValue := by
+        simp only [toVal]
+        split
+        · rename_i hsSet
+          split
+          · rename_i T hsT
+            split
+            · rename_i heT; exact absurd ⟨T, hsSet, hsT, heT⟩ hw
+            · rfl
+          · rfl
+        · rfl
+      have hty : (MVal.sins e s).ty = .None := by
+        simp only [MVal.ty]
+        split
+        · rename_i hsSet
+          split
+          · rename_i T hsT
+            split
+            · rename_i heT; exact absurd ⟨T, hsSet, hsT, by simpa using heT⟩ hw
+            · rfl
+          · rfl
+        · rfl
+      refine ⟨?_, ?_, fun U _ hU => by rw [hty] at hU; cases hU⟩
+      · rw [hnv, hty]; rfl
+      · rw [hnv]; rfl
+termination_by v => sizeOf v
 
 /-- The function of a model's identifier. -/
 noncomputable def tableFun (M : Model) (e : ModelId) (A B : SmtType) (i : SmtValue) : SmtValue :=
@@ -84,12 +185,10 @@ theorem usort_dom_wf_univ : usort_dom_wf (fun _ => (Set.univ : Set ModelId)) := 
   refine ⟨Set.mem_univ _, fun _ n => ⟨(n : ℝ), Set.mem_univ _, ?_⟩⟩
   simp
 
-omit [LogosFacts] in
+theorem typeof_toVal (v : MVal) : __smtx_typeof_value (toVal v) = v.ty := (toVal_props v).1
+
 theorem canonical_toVal (v : MVal) :
-    __smtx_value_canonical (fun _ => (Set.univ : Set ModelId)) (toVal v) = true := by
-  induction v with
-  | app f a ihf iha => simp only [toVal, __smtx_value_canonical, ihf, iha, native_and, Bool.and_self]
-  | _ => simp [toVal, __smtx_value_canonical, native_usort_mem]
+    __smtx_value_canonical (fun _ => (Set.univ : Set ModelId)) (toVal v) = true := (toVal_props v).2.1
 
 theorem default_ok {T : SmtType} (h : __smtx_type_wf T = true) :
     __smtx_typeof_value (__smtx_type_default T) = T ∧
@@ -232,18 +331,388 @@ theorem eval_eq' (M : SmtModel) (a b : SmtTerm) :
     __smtx_model_eval M (SmtTerm.eq a b) = __smtx_model_eval_eq (__smtx_model_eval M a) (__smtx_model_eval M b) := by
   rw [__smtx_model_eval.eq_def]
 
-omit [LogosFacts] in
-theorem eval_eq_toVal (a b : MVal) :
-    __smtx_model_eval_eq (toVal a) (toVal b) = SmtValue.Boolean (a == b) := by
-  have e : __smtx_model_eval_eq (toVal a) (toVal b) = SmtValue.Boolean (native_veq (toVal a) (toVal b)) := by
-    cases a <;> cases b <;> rfl
-  rw [e]
+/-! ### Equality of values -/
+
+/-- The Logos value of a set is a set's, or `NotValue`; of anything else,
+neither. -/
+theorem toVal_set_shape (v : MVal) (h : v.isSet = true) :
+    (∃ m, toVal v = .Set m) ∨ toVal v = .NotValue := by
+  cases v <;> simp [MVal.isSet] at h
+  · exact .inl ⟨_, rfl⟩
+  · rename_i e s
+    simp only [toVal]
+    split
+    · split
+      · split
+        · split
+          · exact .inl ⟨_, rfl⟩
+          · exact .inr rfl
+        · exact .inr rfl
+      · exact .inr rfl
+    · exact .inr rfl
+
+theorem toVal_nonset_shape (v : MVal) (h : v.isSet = false) :
+    (∀ m, toVal v ≠ .Set m) ∧ toVal v ≠ .NotValue := by
+  cases v <;> simp_all [MVal.isSet, toVal]
+
+theorem toVal_not_reglan (v : MVal) (r : SmtRegLan) : toVal v ≠ .RegLan r := by
+  by_cases h : v.isSet = true
+  · rcases toVal_set_shape v h with ⟨m, hm⟩ | hm <;> rw [hm] <;> simp
+  · cases v <;> simp_all [MVal.isSet, toVal]
+
+/-- A set's type is a set type, or none. -/
+theorem set_ty_shape (v : MVal) (h : v.isSet = true) : (∃ T, v.ty = .Set T) ∨ v.ty = .None := by
+  cases v <;> simp [MVal.isSet] at h
+  · exact .inl ⟨_, rfl⟩
+  · simp only [MVal.ty]
+    split
+    · split
+      · split
+        · exact .inl ⟨_, rfl⟩
+        · exact .inr rfl
+      · exact .inr rfl
+    · exact .inr rfl
+
+/-- A set translates to a Logos set exactly when it is well typed. -/
+theorem toVal_set_none (v : MVal) (hT : v.ty = .None) : toVal v = .NotValue ∨ v.isSet = false := by
+  cases v with
+  | sempty T => simp [MVal.ty] at hT
+  | sins e s =>
+    left
+    simp only [MVal.ty] at hT
+    simp only [toVal]
+    split
+    · rename_i hsSet
+      simp only [hsSet, ↓reduceIte] at hT
+      split
+      · rename_i T hsT
+        rw [hsT] at hT
+        split
+        · rename_i heT; simp [heT] at hT
+        · rfl
+      · rfl
+    · rfl
+  | _ => right; rfl
+
+/-- Two sets' maps have the same lookups exactly when the sets have the same
+elements (as Logos values). -/
+theorem lookups_iff {a b : MVal} {T U : SmtType} {ma mb : SmtMap} (ha : SetMap a T ma) (hb : SetMap b U mb) :
+    (∀ w, __smtx_map_lookup ma w = __smtx_map_lookup mb w) ↔
+      (∀ e ∈ a.elems, ∃ f ∈ b.elems, toVal e = toVal f) ∧ (∀ f ∈ b.elems, ∃ e ∈ a.elems, toVal f = toVal e) := by
+  simp only [ha.lookup, hb.lookup, SmtValue.Boolean.injEq, decide_eq_decide]
+  constructor
+  · intro h
+    refine ⟨fun e he => ?_, fun f hf => ?_⟩
+    · obtain ⟨f, hf, hfe⟩ := (h (toVal e)).1 ⟨e, he, rfl⟩
+      exact ⟨f, hf, hfe.symm⟩
+    · obtain ⟨e, he, hef⟩ := (h (toVal f)).2 ⟨f, hf, rfl⟩
+      exact ⟨e, he, hef.symm⟩
+  · intro ⟨h1, h2⟩ w
+    constructor
+    · rintro ⟨e, he, rfl⟩
+      obtain ⟨f, hf, hef⟩ := h1 e he
+      exact ⟨f, hf, hef.symm⟩
+    · rintro ⟨f, hf, rfl⟩
+      obtain ⟨e, he, hfe⟩ := h2 f hf
+      exact ⟨e, he, hfe.symm⟩
+
+/-- **`veq` is Logos's equality of values.** -/
+theorem veq_iff (a b : MVal) : MVal.veq a b = true ↔ toVal a = toVal b := by
+  by_cases hab : (a.isSet || b.isSet) = true
+  · rw [MVal.veq.eq_def]
+    simp only [hab, ↓reduceIte]
+    by_cases hboth : (a.isSet && b.isSet) = true
+    · simp only [hboth, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
+      have ha : a.isSet = true := by simp_all
+      have hb : b.isSet = true := by simp_all
+      by_cases hwa : a.ty = .None <;> by_cases hwb : b.ty = .None
+      · -- both ill typed: both `NotValue`
+        have h1 := (toVal_set_none a hwa).resolve_right (by simp [ha])
+        have h2 := (toVal_set_none b hwb).resolve_right (by simp [hb])
+        simp [hwa, hwb, h1, h2]
+      · rcases set_ty_shape b hb with ⟨U, hU⟩ | hU
+        · obtain ⟨mb, hmb⟩ := (toVal_props b).2.2 U hb hU
+          have h1 := (toVal_set_none a hwa).resolve_right (by simp [ha])
+          simp [hwa, hwb, h1, hmb.val]
+        · exact absurd hU hwb
+      · rcases set_ty_shape a ha with ⟨T, hT⟩ | hT
+        · obtain ⟨ma, hma⟩ := (toVal_props a).2.2 T ha hT
+          have h2 := (toVal_set_none b hwb).resolve_right (by simp [hb])
+          simp [hwa, hwb, h2, hma.val]
+        · exact absurd hT hwa
+      · rcases set_ty_shape a ha with ⟨T, hT⟩ | hT
+        · rcases set_ty_shape b hb with ⟨U, hU⟩ | hU
+          · obtain ⟨ma, hma⟩ := (toVal_props a).2.2 T ha hT
+            obtain ⟨mb, hmb⟩ := (toVal_props b).2.2 U hb hU
+            simp only [hT, hU, hma.val, hmb.val]
+            simp only [show (T.Set != SmtType.None) = true from rfl, show (U.Set != SmtType.None) = true from rfl,
+              Bool.and_self, ↓reduceIte, Bool.and_eq_true, beq_iff_eq, SmtType.Set.injEq, List.all_eq_true,
+              List.any_eq_true, List.mem_attach, true_and, Subtype.forall, Subtype.exists, SmtValue.Set.injEq,
+              forall_const]
+            -- the elements, by `veq_iff` on them
+            have IH1 : ∀ e ∈ a.elems, ∀ f ∈ b.elems, MVal.veq e f = true ↔ toVal e = toVal f :=
+              fun e _ f _ => veq_iff e f
+            have IH2 : ∀ f ∈ b.elems, ∀ e ∈ a.elems, MVal.veq f e = true ↔ toVal f = toVal e :=
+              fun f _ e _ => veq_iff f e
+            constructor
+            · rintro ⟨⟨rfl, h1⟩, h2⟩
+              apply LogosFacts.map_ext univ ma mb hma.canon hmb.canon (by rw [hma.leaf, hmb.leaf])
+              refine (lookups_iff hma hmb).2 ⟨fun e he => ?_, fun f hf => ?_⟩
+              · obtain ⟨f, hf, hv⟩ := h1 e he
+                exact ⟨f, hf, (IH1 e he f hf).1 hv⟩
+              · obtain ⟨e, he, hv⟩ := h2 f hf
+                exact ⟨e, he, (IH2 f hf e he).1 hv⟩
+            · intro hm
+              subst hm
+              have hTU : T = U := by
+                have := hma.typed.symm.trans hmb.typed
+                simpa using this
+              subst hTU
+              obtain ⟨h1, h2⟩ := (lookups_iff hma hmb).1 (fun _ => rfl)
+              refine ⟨⟨rfl, fun e he => ?_⟩, fun f hf => ?_⟩
+              · obtain ⟨f, hf, hv⟩ := h1 e he
+                exact ⟨f, hf, (IH1 e he f hf).2 hv⟩
+              · obtain ⟨e, he, hv⟩ := h2 f hf
+                exact ⟨e, he, (IH2 f hf e he).2 hv⟩
+          · exact absurd hU hwb
+        · exact absurd hT hwa
+    · -- one set, one not
+      simp only [hboth, Bool.not_false, ↓reduceIte, Bool.false_eq_true, false_iff]
+      intro he
+      by_cases ha : a.isSet = true
+      · have hb : b.isSet = false := by simp_all
+        obtain ⟨h1, h2⟩ := toVal_nonset_shape b hb
+        rcases toVal_set_shape a ha with ⟨m, hm⟩ | hm
+        · exact h1 m (he.symm.trans hm)
+        · exact h2 (he.symm.trans hm)
+      · have ha' : a.isSet = false := by simpa using ha
+        have hb : b.isSet = true := by simp_all
+        obtain ⟨h1, h2⟩ := toVal_nonset_shape a ha'
+        rcases toVal_set_shape b hb with ⟨m, hm⟩ | hm
+        · exact h1 m (he.trans hm)
+        · exact h2 (he.trans hm)
+  · have ha : a.isSet = false := by simp_all
+    have hb : b.isSet = false := by simp_all
+    cases a <;> cases b <;> simp [MVal.isSet] at ha hb
+    case app.app f x g y =>
+      rw [MVal.veq.eq_def]
+      simp only [MVal.isSet, Bool.or_self, Bool.false_eq_true, ↓reduceIte, Bool.and_eq_true]
+      rw [veq_iff f g, veq_iff x y]
+      simp [toVal]
+    all_goals (rw [MVal.veq.eq_def]; simp [MVal.isSet, toVal])
+termination_by sizeOf a + sizeOf b
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | (have := MVal.sizeOf_lt_of_mem_elems ‹_ ∈ a.elems›; have := MVal.sizeOf_lt_of_mem_elems ‹_ ∈ b.elems›; omega)
+    | omega
+
+/-! ### Sets -/
+
+theorem sins_ty {e s : MVal} {T : SmtType} (h : (MVal.sins e s).ty = .Set T) :
+    s.isSet = true ∧ s.ty = .Set T ∧ e.ty = T := by
+  simp only [MVal.ty] at h
+  split at h
+  · rename_i hs
+    split at h
+    · rename_i U hU
+      split at h
+      · rename_i he; simp only [SmtType.Set.injEq] at h; subst h; exact ⟨hs, hU, by simpa using he⟩
+      · cases h
+    · cases h
+  · cases h
+
+/-- The elements of a well-typed set have its element type. -/
+theorem elems_ty : ∀ {v : MVal} {T : SmtType}, v.isSet = true → v.ty = .Set T → ∀ e ∈ v.elems, e.ty = T
+  | .sempty _, _, _, _, e, he => by simp [MVal.elems] at he
+  | .sins a s, T, _, h, e, he => by
+    obtain ⟨hs, hsT, haT⟩ := sins_ty h
+    simp only [MVal.elems, List.mem_cons] at he
+    rcases he with rfl | he
+    · exact haT
+    · exact elems_ty hs hsT e he
+
+theorem insAll_props {s : MVal} {T : SmtType} (hs : s.isSet = true) (hT : s.ty = .Set T) :
+    ∀ (es : List MVal), (∀ e ∈ es, e.ty = T) →
+      (s.insAll es).isSet = true ∧ (s.insAll es).ty = .Set T ∧ (s.insAll es).elems = es ++ s.elems
+  | [], _ => by simpa [MVal.insAll] using ⟨hs, hT⟩
+  | e :: es, h => by
+    obtain ⟨h1, h2, h3⟩ := insAll_props hs hT es (fun x hx => h x (List.mem_cons_of_mem _ hx))
+    have he := h e (List.mem_cons_self ..)
+    refine ⟨rfl, ?_, ?_⟩
+    · show (MVal.sins e (s.insAll es)).ty = _
+      simp [MVal.ty, h1, h2, he]
+    · show (MVal.sins e (s.insAll es)).elems = _
+      simp [MVal.elems, h3]
+
+/-- `__smtx_set_op_rec` keeps the default leaf of its accumulator. -/
+theorem set_op_rec_leaf (b : native_Bool) : ∀ (m1 m2 acc : SmtMap),
+    mapLeaf (__smtx_set_op_rec b m1 m2 acc) = mapLeaf acc
+  | SmtMap.default _ _, _, _ => by simp [__smtx_set_op_rec]
+  | SmtMap.cons e _ m1, m2, acc => by
+    simp only [__smtx_set_op_rec]
+    rw [set_op_rec_leaf b m1 m2]
+    unfold native_ite
+    split <;> simp [LogosFacts.map_update_leaf]
+
+/-- The map of a canonical set value. -/
+theorem canon_of_value {m : SmtMap} (h : __smtx_value_canonical univ (.Set m) = true) :
+    __smtx_map_canonical univ m = true := by
+  simp [__smtx_value_canonical, native_and] at h; exact h.1
+
+/-- **A Logos set operation, on maps of sets, has the map of a set** with the
+expected lookups. -/
+theorem set_result {r : MVal} {T : SmtType} {m : SmtMap} (hr : SetMap r T m) {m' : SmtMap}
+    (hc : __smtx_map_canonical univ m' = true) (hl : mapLeaf m' = .default T (.Boolean false))
+    (hk : ∀ v, __smtx_map_lookup m' v = __smtx_map_lookup m v) : SmtValue.Set m' = toVal r := by
+  rw [hr.val, LogosFacts.map_ext univ m' m hc hr.canon (by rw [hl, hr.leaf]) hk]
+
+theorem singleton_sound {x r : MVal} (h : some (MVal.sins x (.sempty x.ty)) = some r) :
+    __smtx_model_eval_set_singleton (toVal x) = toVal r := by
+  cases h
+  simp only [toVal, MVal.isSet, MVal.ty, ite_true]
+  simp [__smtx_model_eval_set_singleton, upd, __smtx_map_update_aux, __smtx_map_update_aux_no_default,
+    __smtx_map_get_default, native_ite, native_veq, typeof_toVal]
+
+theorem setOp_sound {a b r : MVal} {f : SmtType → Option MVal} (h : Model.combine.setOp a b f = some r)
+    {op : SmtValue → SmtValue → SmtValue}
+    (hop : ∀ T ma mb, a.isSet = true → b.isSet = true → a.ty = .Set T → b.ty = .Set T →
+      SetMap a T ma → SetMap b T mb → ∀ r', f T = some r' → op (.Set ma) (.Set mb) = toVal r') :
+    op (toVal a) (toVal b) = toVal r := by
+  unfold Model.combine.setOp at h
+  split at h
+  · rename_i T U hT hU
+    split at h
+    · rename_i hc
+      simp only [Bool.and_eq_true, beq_iff_eq] at hc
+      obtain ⟨⟨ha, hb⟩, rfl⟩ := hc
+      obtain ⟨ma, hma⟩ := (toVal_props a).2.2 T ha hT
+      obtain ⟨mb, hmb⟩ := (toVal_props b).2.2 T hb hU
+      rw [hma.val, hmb.val]
+      exact hop T ma mb ha hb hT hU hma hmb r h
+    · cases h
+  · cases h
+
+theorem union_sound {a b r : MVal} (h : Model.combine.setOp a b (fun _ => some (b.insAll a.elems)) = some r) :
+    __smtx_model_eval_set_union (toVal a) (toVal b) = toVal r := by
+  refine setOp_sound h (fun T ma mb ha hb hT hU hma hmb r' hr' => ?_)
+  cases hr'
+  obtain ⟨hi, hty, hel⟩ := insAll_props hb hU a.elems (elems_ty ha hT)
+  obtain ⟨mr, hmr⟩ := (toVal_props _).2.2 T hi hty
+  have hcan := LogosFacts.set_union_canonical univ _ _ (set_canonical_of hma.canon hma.dflt)
+    (set_canonical_of hmb.canon hmb.dflt)
+  simp only [__smtx_model_eval_set_union, __smtx_set_union] at hcan ⊢
+  refine set_result hmr (canon_of_value hcan) (by rw [set_op_rec_leaf, hmb.leaf]) (fun v => ?_)
+  rw [LogosFacts.set_union_lookup univ ma mb T v hma.typed hmb.typed hma.canon hmb.canon hma.dflt,
+    hma.lookup, hmb.lookup, hmr.lookup, hel]
+  by_cases h1 : ∃ e ∈ a.elems, toVal e = v <;> simp [native_ite, native_veq, h1, List.mem_append, or_and_right,
+    exists_or]
+
+theorem any_veq_iff (e : MVal) (l : List MVal) :
+    l.any (e.veq ·) = true ↔ ∃ f ∈ l, toVal f = toVal e := by
+  simp only [List.any_eq_true]
+  constructor
+  · rintro ⟨f, hf, hv⟩; exact ⟨f, hf, ((veq_iff e f).1 hv).symm⟩
+  · rintro ⟨f, hf, hfe⟩; exact ⟨f, hf, (veq_iff e f).2 hfe.symm⟩
+
+/-- An intersection or a difference: the elements of `a` kept by `keep`
+(whether they are in `b`), into the empty set. -/
+theorem filter_sound {a b r : MVal} {T : SmtType} (keep : Bool → Bool)
+    (ha : a.isSet = true) (hT : a.ty = .Set T)
+    (hr : (MVal.sempty T).insAll (a.elems.filter fun e => keep (b.elems.any (e.veq ·))) = r)
+    {m' : SmtMap} (hc : __smtx_map_canonical univ m' = true) (hl : mapLeaf m' = .default T (.Boolean false))
+    (hk : ∀ v, __smtx_map_lookup m' v =
+      .Boolean (decide ((∃ e ∈ a.elems, toVal e = v) ∧ keep (decide (∃ f ∈ b.elems, toVal f = v)) = true))) :
+    SmtValue.Set m' = toVal r := by
+  subst hr
+  have hes : ∀ e ∈ a.elems.filter (fun e => keep (b.elems.any (e.veq ·))), e.ty = T :=
+    fun e he => elems_ty ha hT e (List.mem_of_mem_filter he)
+  obtain ⟨hi, hty, hel⟩ := insAll_props (s := .sempty T) rfl rfl _ hes
+  obtain ⟨mr, hmr⟩ := (toVal_props _).2.2 T hi hty
+  refine set_result hmr hc hl (fun v => ?_)
+  rw [hk, hmr.lookup, hel]
   congr 1
-  simp only [native_veq]
-  by_cases h : a = b
-  · subst h; simp
-  · have : toVal a ≠ toVal b := fun e => h (toVal_inj e)
-    simp [h, this]
+  rw [decide_eq_decide]
+  simp only [MVal.elems, List.append_nil, List.mem_filter]
+  constructor
+  · rintro ⟨⟨e, he, rfl⟩, hkp⟩
+    refine ⟨e, ⟨he, ?_⟩, rfl⟩
+    have : b.elems.any (e.veq ·) = decide (∃ f ∈ b.elems, toVal f = toVal e) := by
+      rw [Bool.eq_iff_iff, any_veq_iff, decide_eq_true_eq]
+    rw [this]; exact hkp
+  · rintro ⟨e, ⟨he, hkp⟩, rfl⟩
+    refine ⟨⟨e, he, rfl⟩, ?_⟩
+    have : b.elems.any (e.veq ·) = decide (∃ f ∈ b.elems, toVal f = toVal e) := by
+      rw [Bool.eq_iff_iff, any_veq_iff, decide_eq_true_eq]
+    rw [← this]; exact hkp
+
+theorem inter_sound {a b r : MVal}
+    (h : Model.combine.setOp a b
+      (fun T => some ((MVal.sempty T).insAll (a.elems.filter fun e => b.elems.any (e.veq ·)))) = some r) :
+    __smtx_model_eval_set_inter (toVal a) (toVal b) = toVal r := by
+  refine setOp_sound h (fun T ma mb ha _ hT _ hma hmb r' hr' => ?_)
+  have hcan := LogosFacts.set_inter_canonical univ _ _ (set_canonical_of hma.canon hma.dflt)
+    (set_canonical_of hmb.canon hmb.dflt)
+  simp only [__smtx_model_eval_set_inter, __smtx_set_inter] at hcan ⊢
+  refine filter_sound id ha hT (Option.some.inj hr') (canon_of_value hcan)
+    (by rw [set_op_rec_leaf, hma.typed]; rfl) (fun v => ?_)
+  rw [LogosFacts.set_inter_lookup univ ma mb T v hma.typed hmb.typed hma.canon hma.dflt, hma.lookup, hmb.lookup]
+  by_cases h1 : ∃ e ∈ a.elems, toVal e = v <;> by_cases h2 : ∃ f ∈ b.elems, toVal f = v <;>
+    simp [native_ite, native_veq, native_and, h1, h2]
+
+theorem minus_sound {a b r : MVal}
+    (h : Model.combine.setOp a b
+      (fun T => some ((MVal.sempty T).insAll (a.elems.filter fun e => !b.elems.any (e.veq ·)))) = some r) :
+    __smtx_model_eval_set_minus (toVal a) (toVal b) = toVal r := by
+  refine setOp_sound h (fun T ma mb ha _ hT _ hma hmb r' hr' => ?_)
+  have hcan := LogosFacts.set_minus_canonical univ _ _ (set_canonical_of hma.canon hma.dflt)
+    (set_canonical_of hmb.canon hmb.dflt)
+  simp only [__smtx_model_eval_set_minus, __smtx_set_minus] at hcan ⊢
+  refine filter_sound (! ·) ha hT (Option.some.inj hr') (canon_of_value hcan)
+    (by rw [set_op_rec_leaf, hma.typed]; rfl) (fun v => ?_)
+  rw [LogosFacts.set_minus_lookup univ ma mb T v hma.typed hmb.typed hma.canon hma.dflt, hma.lookup, hmb.lookup]
+  by_cases h1 : ∃ e ∈ a.elems, toVal e = v <;> by_cases h2 : ∃ f ∈ b.elems, toVal f = v <;>
+    simp [native_ite, native_veq, native_and, native_not, h1, h2]
+
+theorem member_sound {x s r : MVal}
+    (h : (match s.ty with
+      | .Set _ => if s.isSet then some (MVal.bool (s.elems.any (x.veq ·))) else none
+      | _ => none) = some r) :
+    __smtx_model_eval_set_member (toVal x) (toVal s) = toVal r := by
+  split at h
+  · rename_i T hT
+    split at h
+    · rename_i hs
+      cases h
+      obtain ⟨m, hm⟩ := (toVal_props s).2.2 T hs hT
+      simp only [__smtx_model_eval_set_member, __smtx_map_select, hm.val, hm.lookup, toVal]
+      congr 1
+      rw [Bool.eq_iff_iff, decide_eq_true_eq, any_veq_iff]
+    · cases h
+  · cases h
+
+/-- Only an ill-typed set is `NotValue`. -/
+theorem toVal_ne_notValue (v : MVal) (h : v.notValue = false) : toVal v ≠ .NotValue := by
+  by_cases hs : v.isSet = true
+  · have hT : v.ty ≠ .None := by simpa [MVal.notValue, hs] using h
+    rcases set_ty_shape v hs with ⟨T, hT'⟩ | hT'
+    · obtain ⟨m, hm⟩ := (toVal_props v).2.2 T hs hT'
+      rw [hm.val]; simp
+    · exact absurd hT' hT
+  · exact (toVal_nonset_shape v (by simpa using hs)).2
+
+theorem eval_eq_of_not_reglan (v w : SmtValue) (h : ∀ r, v ≠ .RegLan r) :
+    __smtx_model_eval_eq v w = SmtValue.Boolean (native_veq v w) := by
+  cases v <;> simp_all [__smtx_model_eval_eq]
+
+theorem eval_eq_toVal (a b : MVal) :
+    __smtx_model_eval_eq (toVal a) (toVal b) = SmtValue.Boolean (a.veq b) := by
+  rw [eval_eq_of_not_reglan _ _ (toVal_not_reglan a)]
+  congr 1
+  by_cases h : a.veq b = true
+  · simp [native_veq, (veq_iff a b).1 h, h]
+  · have : toVal a ≠ toVal b := fun e => h ((veq_iff a b).2 e)
+    simp [native_veq, this, h]
 
 /-- Each node has the value of its value in the model. -/
 abbrev ValsIn (N : SmtModel) (l : List Node) (vs : List MVal) : Prop :=
@@ -404,7 +873,6 @@ theorem toSmt_un {k : Kind} {op : UserOp} (hk : k.eoShape = .spine (Term.UOp op)
   rw [Node.toEo_app, toList_one h]
   simp [Op.eoShape, hk, AppShape.toEo, Arity.accepts]
 
-omit [LogosFacts] in
 /-- **A connective has its value.** -/
 theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List MVal} {r : MVal}
     (hv : ValsIn N cs.toList vs) (h : Model.combine k cs vs = some r) :
@@ -517,7 +985,19 @@ theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List 
           simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact ltV_sound h)
        | (rw [toSmt_bin (op := UserOp.geq) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.geq) x) y)
             = SmtTerm.geq (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
-          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact leqV_sound h))
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact leqV_sound h)
+       | (rw [toSmt_bin (op := UserOp.set_union) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.set_union) x) y)
+            = SmtTerm.set_union (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact union_sound h)
+       | (rw [toSmt_bin (op := UserOp.set_inter) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.set_inter) x) y)
+            = SmtTerm.set_inter (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact inter_sound h)
+       | (rw [toSmt_bin (op := UserOp.set_minus) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.set_minus) x) y)
+            = SmtTerm.set_minus (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact minus_sound h)
+       | (rw [toSmt_bin (op := UserOp.set_member) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.set_member) x) y)
+            = SmtTerm.set_member (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact member_sound h))
     | (have hs : cs.size = 1 := by simpa using hlen
        rw [toList_one hs] at hv
        obtain ⟨h0, -⟩ := List.forall₂_cons.1 hv
@@ -529,9 +1009,11 @@ theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List 
             = SmtTerm.to_real (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
           simp only; rw [← Node.toSmt, h0]
           try (obtain rfl := Option.some.inj h)
-          simp [toVal, __smtx_model_eval_to_real, native_int_to_real, Rat.cast_intCast]))
+          simp [toVal, __smtx_model_eval_to_real, native_int_to_real, Rat.cast_intCast])
+       | (rw [toSmt_un (op := UserOp.set_singleton) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.set_singleton) x)
+            = SmtTerm.set_singleton (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, h0]; exact singleton_sound h))
 
-omit [LogosFacts] in
 theorem combine_sound (M : Model) {k : Kind} {cs : Array Node} {vs : List MVal} {r : MVal}
     (hv : Vals M cs.toList vs) (h : Model.combine k cs vs = some r) :
     __smtx_model_eval (toSmtModel M) (Node.app (.kind k) cs).toSmt = toVal r :=
@@ -571,13 +1053,12 @@ theorem typedNil_cons (x : Term) :
   · exact Or.inl rfl
   · exact Or.inr ⟨_, rfl⟩
 
-omit [LogosFacts] in
 theorem eval_pairs (M : Model) (T : Term) (s : SmtTerm) (sv : MVal)
     (hs : __smtx_model_eval (toSmtModel M) s = toVal sv) : ∀ (xs : List Term) (vs : List MVal),
     List.Forall₂ (fun x v => __smtx_model_eval (toSmtModel M) (__eo_to_smt x) = toVal v) xs vs →
     __smtx_model_eval (toSmtModel M)
         (__eo_to_smt_distinct_pairs s (tl (Term.Apply (Term.UOp UserOp._at__at_TypedList_nil) T) xs)) =
-      SmtValue.Boolean (vs.all fun w => !(sv == w))
+      SmtValue.Boolean (vs.all fun w => !(sv.veq w))
   | [], [], .nil => by
     simp only [tl, eoRightAssocNil, __eo_to_smt_distinct_pairs]
     exact eval_true _
@@ -587,9 +1068,8 @@ theorem eval_pairs (M : Model) (T : Term) (s : SmtTerm) (sv : MVal)
     have := eval_pairs M T s sv hs xs vs hr
     simp only [tl] at this
     rw [this]
-    cases hb : (sv == v) <;> simp [hb, __smtx_model_eval_not, __smtx_model_eval_and, native_and, native_not]
+    cases hb : (sv.veq v) <;> simp [hb, __smtx_model_eval_not, __smtx_model_eval_and, native_and, native_not]
 
-omit [LogosFacts] in
 theorem eval_distinct (M : Model) (T : Term) : ∀ (xs : List Term) (vs : List MVal),
     List.Forall₂ (fun x v => __smtx_model_eval (toSmtModel M) (__eo_to_smt x) = toVal v) xs vs →
     __smtx_model_eval (toSmtModel M)
@@ -606,7 +1086,6 @@ theorem eval_distinct (M : Model) (T : Term) : ∀ (xs : List Term) (vs : List M
     rw [eval_and, hp, hd]
     simp [Model.distinctVals, __smtx_model_eval_and, native_and]
 
-omit [LogosFacts] in
 /-- **A `distinct` has its value.** -/
 theorem distinct_sound (M : Model) {cs : Array Node} {vs : List MVal}
     (hv : Vals M cs.toList vs) (hty : Model.distinctTyped cs = true) (h2 : 2 ≤ vs.length) :
@@ -681,11 +1160,13 @@ theorem eval_apply_of {g x : SmtTerm} (M : SmtModel)
       __smtx_model_eval_apply M (__smtx_model_eval M g) (__smtx_model_eval M x) := by
   rcases hg with ⟨s, T, rfl⟩ | ⟨a, b, rfl⟩ <;> rw [__smtx_model_eval.eq_def]
 
-omit [LogosFacts] in
 /-- **An application of a function value has its value.** -/
 theorem apply_sound {M : Model} {f a g : MVal} (h : M.apply f a = some g) :
     __smtx_model_eval_apply (toSmtModel M) (toVal f) (toVal a) = toVal g := by
   unfold Model.apply at h
+  split at h
+  · cases h
+  rename_i hna
   split at h
   · rename_i fid dom rng
     split at h
@@ -696,7 +1177,10 @@ theorem apply_sound {M : Model} {f a g : MVal} (h : M.apply f a = some g) :
         obtain ⟨rfl, rfl⟩ := hty
         have e1 : __smtx_model_eval_apply (toSmtModel M) (toVal (.fn fid t.dom t.rng)) (toVal a) =
             native_eval_fun_apply (toSmtModel M) ((fid : ℝ) + 1) t.dom t.rng (toVal a) := by
-          cases a <;> rfl
+          have hnv := toVal_ne_notValue a (by simpa using hna)
+          simp only [toVal]
+          generalize toVal a = w at hnv ⊢
+          cases w <;> simp_all [__smtx_model_eval_apply]
         have hne : ((fid : ℝ) + 1) ≠ native_default_fun_id := by
           simp only [native_default_fun_id]; positivity
         have hex : ∃ k : ℕ, ((fid : ℝ) + 1) = (k : ℝ) + 1 := ⟨fid, rfl⟩
@@ -705,23 +1189,22 @@ theorem apply_sound {M : Model} {f a g : MVal} (h : M.apply f a = some g) :
           have := Classical.choose_spec hex
           have h2 : ((Classical.choose hex : ℕ) : ℝ) = fid := by linarith
           exact_mod_cast h2
-        have hp : (fun p : MVal × MVal => decide (toVal p.1 = toVal a)) = (fun p => p.1 == a) := by
+        have hp : (fun p : MVal × MVal => decide (toVal p.1 = toVal a)) = (fun p => p.1.veq a) := by
           funext p
-          by_cases e : p.1 = a
-          · simp [e]
-          · have : toVal p.1 ≠ toVal a := fun h => e (toVal_inj h)
+          by_cases e : p.1.veq a = true
+          · simp [e, (veq_iff _ _).1 e]
+          · have : toVal p.1 ≠ toVal a := fun h => e ((veq_iff _ _).2 h)
             simp [e, this]
         rw [e1]
         simp only [native_eval_fun_apply, model_fun_lookup, toSmtModel, tableFun]
         simp only [hne, hex, ↓reduceIte, ↓reduceDIte, hc, ht, and_self, hp]
-        cases hf : t.entries.find? (·.1 == a) with
+        cases hf : t.entries.find? (·.1.veq a) with
         | none => simp only [hf] at h ⊢; cases h; rfl
         | some p => rcases p with ⟨_, w⟩; simp only [hf] at h ⊢; cases h; rfl
       · cases h
     · cases h
   · cases h
 
-omit [LogosFacts] in
 theorem applyAll_sound {M : Model} : ∀ (vs : List MVal) (ts : List SmtTerm) (h : SmtTerm) (f r : MVal),
     List.Forall₂ (fun t v => __smtx_model_eval (toSmtModel M) t = toVal v) ts vs →
     ((∃ s T, h = SmtTerm.UConst s T) ∨ ∃ a b, h = SmtTerm.Apply a b) →
@@ -827,19 +1310,29 @@ theorem toSmt_selector (f x : Node) (cs : Array Node) (hcs : cs.toList = [x]) {a
     List.map_cons, List.map_nil, List.length_cons, List.length_nil, beq_self_eq_true, ↓reduceIte, List.foldl, hf]
   rfl
 
-omit [LogosFacts] in
 theorem toVal_head (v : MVal) : __smtx_apply_head_value (toVal v) = toVal v.head := by
   induction v with
   | app f a ihf _ => simp only [toVal, __smtx_apply_head_value, MVal.head, ihf]
+  | sins e s =>
+    rcases toVal_set_shape (.sins e s) rfl with ⟨m, hm⟩ | hm <;> simp only [MVal.head, hm, __smtx_apply_head_value]
   | _ => rfl
 
 omit [LogosFacts] in
-theorem veq_toVal (a b : MVal) : native_veq (toVal a) (toVal b) = (a == b) := by
-  simp only [native_veq]
-  by_cases h : a = b
-  · subst h; simp
-  · have : toVal a ≠ toVal b := fun e => h (toVal_inj e)
-    simp [h, this]
+/-- Booleans are compared as Booleans. -/
+@[simp] theorem veq_bool (a b : Bool) : (MVal.bool a).veq (.bool b) = (a == b) := by
+  rw [MVal.veq.eq_def]; simp [MVal.isSet]
+
+/-- Comparing with a constructor is structural. -/
+theorem veq_dtc (v : MVal) (s : native_String) (dd : SmtDatatypeDecl) (i : Nat) :
+    v.veq (.dtc s dd i) = (v == .dtc s dd i) := by
+  rw [MVal.veq.eq_def]
+  cases v <;> simp [MVal.isSet]
+
+theorem veq_toVal (a b : MVal) : native_veq (toVal a) (toVal b) = a.veq b := by
+  by_cases h : a.veq b = true
+  · simp [native_veq, (veq_iff a b).1 h, h]
+  · have : toVal a ≠ toVal b := fun e => h ((veq_iff a b).2 e)
+    simp [native_veq, this, h]
 
 omit [LogosFacts] in
 theorem toVal_argNth : ∀ (v : MVal) (n npos : Nat) {w : MVal}, v.argNth n npos = some w →
@@ -857,29 +1350,30 @@ theorem toVal_argNth : ∀ (v : MVal) (n npos : Nat) {w : MVal}, v.argNth n npos
   | .bool _, _, _, _, h | .uval .., _, _, _, h | .fn .., _, _, _, h | .dtc .., _, _, _, h => by
     simp [MVal.argNth] at h
 
-omit [LogosFacts] in
 theorem eval_apply_cons_toVal (M : SmtModel) (hv a : MVal)
-    (h : (∃ s dd i, hv = .dtc s dd i) ∨ ∃ f x, hv = .app f x) :
+    (h : (∃ s dd i, hv = .dtc s dd i) ∨ ∃ f x, hv = .app f x) (ha : a.notValue = false) :
     __smtx_model_eval_apply M (toVal hv) (toVal a) = SmtValue.Apply (toVal hv) (toVal a) := by
-  rcases h with ⟨_, _, _, rfl⟩ | ⟨_, _, rfl⟩ <;> cases a <;> rfl
+  have hnv := toVal_ne_notValue a ha
+  generalize toVal a = w at hnv ⊢
+  rcases h with ⟨_, _, _, rfl⟩ | ⟨_, _, rfl⟩ <;> cases w <;> simp_all [toVal, __smtx_model_eval_apply]
 
-omit [LogosFacts] in
 /-- **A constructor applied to arguments has its value.** -/
 theorem eval_chain (M : Model) : ∀ (vs : List MVal) (ts : List SmtTerm) (h : SmtTerm) (hv : MVal),
     List.Forall₂ (fun t v => __smtx_model_eval (toSmtModel M) t = toVal v) ts vs →
     ((∃ s dd i, h = SmtTerm.DtCons s dd i) ∨ ∃ a b, h = SmtTerm.Apply a b) →
     ((∃ s dd i, hv = .dtc s dd i) ∨ ∃ f x, hv = .app f x) →
-    __smtx_model_eval (toSmtModel M) h = toVal hv →
+    __smtx_model_eval (toSmtModel M) h = toVal hv → (∀ v ∈ vs, v.notValue = false) →
     __smtx_model_eval (toSmtModel M) (ts.foldl SmtTerm.Apply h) = toVal (vs.foldl .app hv)
-  | [], [], _, _, .nil, _, _, hh => hh
-  | v :: vs, t :: ts, h, hv, .cons ht hr, hs, hvs, hh => by
+  | [], [], _, _, .nil, _, _, hh, _ => hh
+  | v :: vs, t :: ts, h, hv, .cons ht hr, hs, hvs, hh, hna => by
     simp only [List.foldl]
     refine eval_chain M vs ts _ _ hr (Or.inr ⟨_, _, rfl⟩) (Or.inr ⟨_, _, rfl⟩) ?_
+      (fun w hw => hna w (List.mem_cons_of_mem _ hw))
     have e : __smtx_model_eval (toSmtModel M) (SmtTerm.Apply h t) =
         __smtx_model_eval_apply (toSmtModel M) (__smtx_model_eval (toSmtModel M) h)
           (__smtx_model_eval (toSmtModel M) t) := by
       rcases hs with ⟨_, _, _, rfl⟩ | ⟨_, _, rfl⟩ <;> rw [__smtx_model_eval.eq_def]
-    rw [e, hh, ht, eval_apply_cons_toVal _ _ _ hvs]
+    rw [e, hh, ht, eval_apply_cons_toVal _ _ _ hvs (hna v (List.mem_cons_self ..))]
     rfl
 
 omit [LogosFacts] in
@@ -920,7 +1414,6 @@ theorem evList_sound (M : Model) (n : Nat) (IH : EvOk M n) : ∀ (l : List Node)
       | none => exact ⟨hS2, fun vs h => by cases h⟩
       | some vs => exact ⟨hS2, fun vs' h => by cases h; exact .cons (hv1 v rfl) (hv2 vs rfl)⟩
 
-omit [LogosFacts] in
 theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model.Memo) (hS : MemoOk M S) :
     MemoOk M (M.evNode n t S).2 ∧ ∀ v, (M.evNode n t S).1 = some v → __smtx_model_eval (toSmtModel M) t.toSmt = toVal v := by
   unfold Model.evNode
@@ -934,6 +1427,22 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
     exact ⟨hS, fun v h => by
       cases h; simpa [Node.toSmt, Node.toEo, Const.toEo, toVal, native_rat_to_real] using
         eval_rational_term (toSmtModel M) q⟩
+  · rename_i T
+    refine ⟨hS, fun v h => ?_⟩
+    dsimp only at h
+    split at h
+    · cases h
+    · rename_i hT
+      cases h
+      have hT' : tyS T ≠ SmtType.None := by simpa using hT
+      have e : (Node.const (.emptySet T)).toSmt = SmtTerm.set_empty (tyS T) := by
+        simp only [Node.toSmt, Node.toEo, Const.toEo]
+        rw [show (TypeNode.set T).toEo = Term.Apply (Term.UOp UserOp.Set) T.toEo from rfl]
+        simp only [__eo_to_smt, __eo_to_smt_type]
+        simp only [tyS] at hT'
+        simp [__smtx_typeof_guard, native_ite, native_Teq, hT', __eo_to_smt_set_empty, tyS]
+      rw [e, __smtx_model_eval.eq_def]
+      rfl
   · exact ⟨hS, fun v h => eval_var h⟩
   · rename_i cs
     split
@@ -1003,11 +1512,18 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
       | none => exact ⟨hS1, fun v h => by cases h⟩
       | some vs =>
         refine ⟨hS1, fun v h => ?_⟩
+        dsimp only at h
+        split at h
+        · cases h
+        rename_i hna
         cases h
         rw [toSmt_cons _ cs (he ▸ DHead.dtcons a d idx), hsmt]
         refine eval_chain M vs _ _ _ ((List.forall₂_map_left_iff).2 (hv1 vs rfl))
-          (Or.inl ⟨_, _, _, rfl⟩) (Or.inl ⟨_, _, _, rfl⟩) ?_
-        rw [__smtx_model_eval.eq_def]; rfl
+          (Or.inl ⟨_, _, _, rfl⟩) (Or.inl ⟨_, _, _, rfl⟩) ?_ ?_
+        · rw [__smtx_model_eval.eq_def]; rfl
+        · intro w hw
+          simp only [List.any_eq_true, not_exists, not_and, Bool.not_eq_true] at hna
+          exact hna w hw
   · -- a tester applied
     rename_i _ T idx cs
     split
@@ -1027,7 +1543,7 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
         show __smtx_model_eval _ (SmtTerm.Apply (SmtTerm.DtTester sc ddc ic) _) = _
         rw [__smtx_model_eval.eq_def]
         simp only [__smtx_model_eval_dt_tester, hv1 w rfl, toVal_head]
-        rw [show SmtValue.DtCons sc ddc ic = toVal (.dtc sc ddc ic) from rfl, veq_toVal]
+        rw [show SmtValue.DtCons sc ddc ic = toVal (.dtc sc ddc ic) from rfl, veq_toVal, veq_dtc]
         rfl
     · exact ⟨hS, fun v h => by cases h⟩
   · -- a selector applied
@@ -1049,7 +1565,7 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
         rw [toSmt_selector _ x cs hcs he, hsmt]
         rw [__smtx_model_eval.eq_def]
         simp only [__smtx_model_eval_dt_sel, hv1 w rfl, toVal_head, native_ite]
-        rw [show SmtValue.DtCons sc ddc ic = toVal (.dtc sc ddc ic) from rfl, veq_toVal]
+        rw [show SmtValue.DtCons sc ddc ic = toVal (.dtc sc ddc ic) from rfl, veq_toVal, veq_dtc]
         split at h
         · rename_i hh
           simp only [hh, ↓reduceIte]
@@ -1078,7 +1594,6 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
       rw [hsmt, __smtx_model_eval.eq_def]; rfl
   · exact ⟨hS, fun v h => by cases h⟩
 
-omit [LogosFacts] in
 /-- **The evaluation is sound**, at every fuel. -/
 theorem ev_sound (M : Model) : ∀ n, EvOk M n
   | 0 => fun t S hS => by
