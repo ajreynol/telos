@@ -379,7 +379,9 @@ def runSat (c : Config) (formulas : List Node) : Result :=
     let arithOk := c.arithSolver && e.arith.unsupported.isNone && e.arith.qflraStatus == .sat
     let solved := e.used.isEmpty || ((c.eeSolver || arithOk) &&
       e.used.all fun T => [.THEORY_UF, .THEORY_DATATYPES, .THEORY_SETS].contains T ||
-        (T == .THEORY_ARITH && arithOk))
+        (T == .THEORY_ARITH && arithOk) ||
+        -- strings, unless their last full-effort check was incomplete
+        (T == .THEORY_STRINGS && c.stringsSolver && !e.ee.strings.incomplete))
     { answer := if solved then .sat else .unknown, events := e.events, ee := e.ee,
       asserted := e.asserted ++ bools, arithModel := if arithOk then Arith.modelValues e.arith else #[] }
   | .unsat =>

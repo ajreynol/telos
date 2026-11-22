@@ -205,7 +205,7 @@ def theoryEvents (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Bo
   let (out, r) ← solveScript sc u eeEvents preprocess withProof cvc5Order viaSat
   -- the skolems of the input, then those that lemmas introduced
   let σ := (namedSkolems sc.dtNames (out ++ r.events.toList.flatMap Event.nodes)).map fun (k, v, _) => (k, v)
-  let lines := r.events.toList.map fun e => (e.map (substSkolems σ)).print sc.dtNames
+  let lines := (r.events.toList.map fun e => (e.map (substSkolems σ)).print sc.dtNames).filter (· != "")
   let proof := if !withProof then none else
     match r.cert with
     | some (A, p) => some (renderRefutation sc.names sc.decls A p)

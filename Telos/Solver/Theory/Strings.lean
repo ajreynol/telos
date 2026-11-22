@@ -42,6 +42,13 @@ created after those numbered). -/
 def rw (n : Node) : EEM Node := do
   return Telos.rewrite n (← numbered n)
 
+/-- `utils::flattenOp` for `AND`: the conjuncts of `n` added to `acc`, left to
+right, without duplicates. -/
+partial def flattenAnd (n : Node) (acc : Array Node) : Array Node :=
+  match n with
+  | .app (.kind .AND) cs => cs.foldl (fun a c => flattenAnd c a) acc
+  | _ => if acc.contains n then acc else acc.push n
+
 /-! ## The inference manager -/
 
 /-- `TheoryInferenceManager::trustedLemma`, with the cache of the lemmas sent
@@ -275,6 +282,20 @@ def interpretedKind (k : Kind) : Bool := congruenceKind k
 
 /-! ## Facts -/
 
+/-- `notifyFact`: a pending conflict is sent (`processConflict`; the
+minimization of a prefix conflict needs regular expressions). -/
+def processPendingConflict : EEM Unit := do
+  if (← get).teConflict then return
+  let some (id, premises) := (← st).pendingConflict | return
+  let mut exp : Array Node := #[]
+  for p in premises do
+    for a in ← explainLit p do
+      exp := flattenAnd a exp
+  let conf := EE.mkAnd exp
+  modifyStrings fun s => { s with conflict := some (id, conf) }
+  note (.conflict stringsTheory id conf)
+  modify fun s => { s with teConflict := true }
+
 /-- `preNotifyFact` and `Theory::check`'s processing of one fact: a
 disequality of strings is recorded, the fact asserted to the engine. -/
 def assertFact (fact : Node) : EEM Unit := do
@@ -287,18 +308,7 @@ def assertFact (fact : Node) : EEM Unit := do
   match atom with
   | .app (.kind .EQUAL) _ => let _ ← assertEquality atom pol fact
   | _ => let _ ← assertPredicate atom pol fact
-  -- `notifyFact`: a pending conflict is sent (`processConflict`; the
-  -- minimization of a prefix conflict needs regular expressions)
-  if (← get).teConflict then return
-  let some (id, premises) := (← st).pendingConflict | return
-  let mut exp : Array Node := #[]
-  for p in premises do
-    for a in ← explainLit p do
-      if !exp.contains a then exp := exp.push a
-  let conf := EE.mkAnd exp
-  modifyStrings fun s => { s with conflict := some (id, conf) }
-  note (.conflict stringsTheory id conf)
-  modify fun s => { s with teConflict := true }
+  processPendingConflict
 
 /-! ## Registration (`TermRegistry`) -/
 
@@ -312,12 +322,6 @@ structure Ops (m : Type → Type) where
   /-- `Valuation::hasSatValue`. -/
   hasSatValue : Node → m Bool
 
-/-- How the length of a term is registered (`LengthStatus`). -/
-inductive LengthStatus where
-  | split
-  | ignore
-  deriving DecidableEq
-
 section
 variable {m : Type → Type} [Monad m] (ops : Ops m)
 
@@ -328,6 +332,13 @@ def registerTermAtomic (n : Node) (s : LengthStatus) : m Unit := do
   ops.run (modifyStrings fun st => { st with lengthLemmaTerms := st.lengthLemmaTerms.insert ⟨n⟩ })
   if s == .ignore || n.isConst then return
   let len := mkLen n
+  if s == .geqOne then
+    let lem := Node.mkNode .AND #[Node.notNode (Node.eqNode n emptyWord), Node.mkNode .GT #[len, intConst 0]]
+    let _ ← ops.run (trustedLemma lem "STRINGS_REGISTER_TERM_ATOMIC")
+    return
+  if s == .one then
+    let _ ← ops.run (trustedLemma (Node.eqNode len (intConst 1)) "STRINGS_REGISTER_TERM_ATOMIC")
+    return
   let lenZ := Node.eqNode len (intConst 0)
   let emp := Node.eqNode n emptyWord
   let lem := Node.mkNode .OR #[Node.mkNode .AND #[lenZ, emp], Node.mkNode .GT #[len, intConst 0]]

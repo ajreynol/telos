@@ -86,7 +86,14 @@ inductive MVal where
   `true`). A set is compared with another by its elements, as Logos compares
   them (`MVal.veq`), not structurally. -/
   | sins (e s : MVal)
+  /-- A string, of code points (Logos's `Seq` of `Char`s). -/
+  | str (w : List Nat)
   deriving DecidableEq, Inhabited
+
+/-- A character as Logos has it: one that is not valid (`native_char_valid`)
+is `0`. The model's strings are of valid characters; the clamp makes every
+`str` a well-typed Logos string. -/
+def MVal.clampChar (c : Nat) : Nat := if c < 196608 then c else 0
 
 /-- The Logos type of constructor `i` of the datatype `s` of `dd`. -/
 def consType (s : native_String) (dd : SmtDatatypeDecl) (i : Nat) : SmtType :=
@@ -107,6 +114,7 @@ def MVal.ty : MVal → SmtType
   | .app f a => __smtx_typeof_apply_value f.ty a.ty
   | .int _ => .Int
   | .rat _ => .Real
+  | .str _ => .Seq .Char
   | .sempty T => .Set T
   | .sins e s =>
     if s.isSet then
@@ -127,7 +135,7 @@ theorem MVal.sizeOf_lt_of_mem_elems : ∀ {s e : MVal}, e ∈ s.elems → sizeOf
     · simp; omega
     · have := MVal.sizeOf_lt_of_mem_elems h; simp; omega
   | .sempty _, _, h | .bool _, _, h | .uval .., _, h | .fn .., _, h | .dtc .., _, h | .app .., _, h
-  | .int _, _, h | .rat _, _, h => by simp [MVal.elems] at h
+  | .int _, _, h | .rat _, _, h | .str _, _, h => by simp [MVal.elems] at h
 
 /-- **Equality of values, as Logos's** (`native_veq` of their Logos values):
 two well-typed sets are equal when they have the same element type and the
@@ -145,6 +153,7 @@ def MVal.veq (a b : MVal) : Bool :=
     else !wa && !wb
   else match a, b with
     | .app f x, .app g y => MVal.veq f g && MVal.veq x y
+    | .str x, .str y => x.map MVal.clampChar == y.map MVal.clampChar
     | a, b => a == b
 termination_by sizeOf a + sizeOf b
 decreasing_by
@@ -314,6 +323,12 @@ def chainNil : Kind → SmtType → Option MVal
   | .ADD, .Real => some (.rat 0)
   | .MULT, .Int => some (.int 1)
   | .MULT, .Real => some (.rat 1)
+  | .STRING_CONCAT, .Seq .Char => some (.str [])
+  | _, _ => none
+
+/-- The concatenation of two strings. -/
+def concatV : MVal → MVal → Option MVal
+  | .str a, .str b => some (.str (a ++ b))
   | _, _ => none
 
 /-- A right-associated chain of a binary operation, ending in `nil`. -/
@@ -338,6 +353,9 @@ def combine (k : Kind) (cs : Array Node) (vs : List MVal) : Option MVal :=
   | .MULT, vs => if 2 ≤ vs.length then
       (chainNil .MULT (cs[0]?.getD default).smtTypeF).bind fun nil => chainV multV nil vs
     else none
+  | .STRING_CONCAT, vs => if 2 ≤ vs.length then
+      (chainNil .STRING_CONCAT (cs[0]?.getD default).smtTypeF).bind fun nil => chainV concatV nil vs
+    else none
   | .SUB, [a, b] => subV a b
   | .NEG, [a] => negV a
   | .LT, [a, b] => ltV a b
@@ -345,6 +363,7 @@ def combine (k : Kind) (cs : Array Node) (vs : List MVal) : Option MVal :=
   | .GT, [a, b] => ltV b a
   | .GEQ, [a, b] => leqV b a
   | .TO_REAL, [.int i] => some (.rat i)
+  | .STRING_LENGTH, [.str w] => some (.int w.length)
   | .SET_SINGLETON, [x] => some (.sins x (.sempty x.ty))
   | .SET_UNION, [a, b] => setOp a b fun _ => some (b.insAll a.elems)
   | .SET_INTER, [a, b] => setOp a b fun T =>
@@ -399,6 +418,7 @@ mutual
     | .const (.boolean b) => (some (.bool b), S)
     | .const (.integer i) => (some (.int i), S)
     | .const (.rational q) => (some (.rat q), S)
+    | .const (.string w) => (if w.all (fun c => decide (c < 196608)) then some (.str w) else none, S)
     | .const (.emptySet T) => (if tyS T == .None then none else some (.sempty (tyS T)), S)
     | .var x T => (M.const x T, S)
     | .app (.kind .DISTINCT) cs =>
@@ -565,6 +585,7 @@ def defaultValue (T : SmtType) : Option MVal :=
   | .Real => some (.rat 0)
   | .Datatype .. => groundValue 16 T
   | .Set E => some (.sempty E)
+  | .Seq .Char => some (.str [])
   | _ => none
 
 /-- The function and arguments of an application of a declared function. -/
@@ -736,6 +757,63 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
     let v : MVal := if isInt then .int k else .rat k
     arithOf := arithOf.insert i v
     usedArith := usedArith.push v
+  -- the strings (`TheoryStrings::collectModelValues`): a class with a
+  -- constant has it; a class whose normal form (of the last full-effort
+  -- check) is one non-constant component, or which has none, is atomic, and
+  -- has a string of its length (the value of its length term's class) of its
+  -- own; another has the concatenation of the values of its normal form's
+  -- components
+  let mut strConst : Std.HashMap Nat (List Nat) := {}
+  let mut lenClass : Std.HashMap Nat Nat := {}
+  for h : i in [0:n] do
+    if ee.isInternal[i]! then continue
+    match ee.nodes[i] with
+    | .const (.string w) => strConst := strConst.insert (find i) w
+    | .app (.kind .STRING_LENGTH) #[a] =>
+      if let some r := id? a then lenClass := lenClass.insert r (find i)
+    | _ => pure ()
+  let strNf (r : Nat) : Option (Array Node) :=
+    (ee.strings.chk.normalForms.get? ⟨ee.nodes[r]!⟩).map (·.nf)
+  let isAtomic (r : Nat) : Bool :=
+    !strConst.contains r && match strNf r with
+      | none => true
+      | some nf => nf.size == 1 && !nf[0]!.isConst
+  let lenOf (r : Nat) : Option Nat :=
+    match (lenClass.get? r).bind arithOf.get? with
+    | some (.int k) => some k.toNat
+    | _ => none
+  let mut usedStr : Array (List Nat) := strConst.fold (fun acc _ w => acc.push w) #[]
+  let mut strOf : Std.HashMap Nat (List Nat) := strConst
+  for h : i in [0:n] do
+    if ee.isInternal[i]! || find i != i || ee.nodes[i].typeHint != some .string || !isAtomic i then continue
+    -- the first string, by length then in order, of letters from `a`
+    let start := (lenOf i).getD 0
+    let mut found : Option (List Nat) := none
+    for L in [start : start + 8] do
+      if found.isSome then break
+      let count := 26 ^ L
+      for k in [0 : min count 4096] do
+        let w := (List.range L).map fun j => 97 + (k / 26 ^ (L - 1 - j)) % 26
+        if !usedStr.contains w then
+          found := some w
+          break
+      if (lenOf i).isSome then break
+    if let some w := found then
+      strOf := strOf.insert i w
+      usedStr := usedStr.push w
+  -- the other classes: their normal forms' components, in turn
+  let mut strChanged := true
+  while strChanged do
+    strChanged := false
+    for h : i in [0:n] do
+      if ee.isInternal[i]! || find i != i || ee.nodes[i].typeHint != some .string || strOf.contains i then continue
+      let some nf := strNf i | continue
+      let ws := nf.toList.mapM fun c => match c with
+        | .const (.string w) => some w
+        | _ => (id? c).bind strOf.get?
+      if let some ws := ws then
+        strOf := strOf.insert i ws.flatten
+        strChanged := true
   -- a constructor term of each class, and the constructors its testers exclude
   let mut cons : Std.HashMap Nat Nat := {}
   let mut excluded : Std.HashMap Nat (List Nat) := {}
@@ -814,6 +892,7 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
         match ee.nodes[r]!.typeHint.map fun T => __eo_to_smt_type T.toEo with
         | some (.Datatype ..) => fresh.get? r
         | some .Real | some .Int => arithOf.get? r
+        | some (.Seq .Char) => (strOf.get? r).map .str
         | some (.Set E) =>
           -- a set: the values of its members (`collectModelValues`)
           ((members.getD r []).mapM (value fuel fresh)).map (MVal.sempty E).insAll

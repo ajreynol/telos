@@ -8,7 +8,7 @@ import Telos.Solver.EqualityEngine
 import Telos.Solver.Theory.UF
 import Telos.Solver.Theory.Datatypes
 import Telos.Solver.Theory.Sets
-import Telos.Solver.Theory.Strings
+import Telos.Solver.Theory.StringsSolver
 import Telos.Solver.EqBuild
 import Telos.Solver.Explain
 import Telos.Solver.Model
@@ -274,6 +274,7 @@ structure Saved where
   ufFunctionTerms : Nat
   arithShared : Nat
   setsShared : Nat
+  stringsShared : Nat
   deriving Inhabited
 
 /-- An undo entry of the shared terms database and the propagation marks (cvc5's
@@ -409,6 +410,8 @@ became active (its local assertions). -/
   arithShared : Array Node := #[]
   /-- The shared terms of the theory of sets (`Theory::d_sharedTerms`). -/
   setsShared : Array Node := #[]
+  /-- The shared terms of the theory of strings (`shared_terms_begin`). -/
+  stringsShared : Array Node := #[]
   /-- The lemmas the builtin theory sent (the combination splits), rewritten
   (its inference manager's cache). -/
   builtinLemmas : Std.HashSet Key := {}
@@ -560,6 +563,7 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
                                    outputUsed := true, lemmasAdded := true }
       modify fun s => { s with inConflict := true, theoryConflict := true }
     | .fact T id lit exp => emit (.fact (← level) T id lit exp)
+    | .skolem k => emit (.skolem k)
     | .lemma T id lem =>
       emit (.lemma (← level) T id lem)
       if (← read).satMode then
@@ -738,6 +742,7 @@ def preNotifySharedFact (atom : Node) : EngineM Unit := do
       let sets := T == .THEORY_SETS && (← read).setsSolver
       if sets then modify fun s => { s with setsShared := s.setsShared.push term }
       let strs := T == .THEORY_STRINGS && (← read).stringsSolver
+      if strs then modify fun s => { s with stringsShared := s.stringsShared.push term }
       if (← read).eeSolver && (T == .THEORY_UF || T == .THEORY_DATATYPES || arith || sets || strs) then
         withEE (EE.addTriggerTerm term T.tag)
     -- `SharedTermsDatabase::markNotified`: the trigger terms again
@@ -812,7 +817,7 @@ def pushLevel : EngineM Unit :=
     let sv : Saved := ⟨s.assignTrail.size, s.preregLog.size, s.ufFacts.size, s.ufHead,
       s.dtFacts.size, s.dtHead, s.setsFacts.size, s.setsHead, s.stringsFacts.size, s.stringsHead, s.arithFacts.size, s.arithHead, s.factsAsserted, s.inConflict, s.theoryConflict, s.propagated.size, s.asserted.size,
       s.sharedLog.size, s.registerLog.size, s.skActive.size, s.ufFunctionTerms.size, s.arithShared.size,
-      s.setsShared.size⟩
+      s.setsShared.size, s.stringsShared.size⟩
     { s with saved := s.saved.push sv, level := s.level + 1, ee := EE.push s.ee, arith := s.arith.push }
 
 /-- A purification skolem (as `--post-asserts` names it in a script read back). -/
@@ -918,6 +923,7 @@ def popTo (k : Nat) : EngineM Unit := do
              ufFunctionTerms := s.ufFunctionTerms.take sv.ufFunctionTerms,
              arithShared := s.arithShared.take sv.arithShared,
              setsShared := s.setsShared.take sv.setsShared,
+             stringsShared := s.stringsShared.take sv.stringsShared,
              skActiveSet := gone.foldl (·.erase ⟨·⟩) s.skActiveSet }
   modify fun s => { s with
     assignment := asg, assignTrail := s.assignTrail.take sv.assignTrail,
@@ -1193,9 +1199,11 @@ and remembered with the level. -/
 partial def notifySatLiteral (atom : Node) : EngineM Unit := do
   -- the CNF stream creates the atom's negation with its literal (`newLiteral`)
   let o := (← read).order
-  modify fun s => { s with satLiterals := s.satLiterals.push (atom, s.level),
-                           ee := { s.ee with freshIds := o.numberFresh s.ee.freshIds (Node.notNode atom) } }
+  modify fun s => { s with ee := { s.ee with freshIds := o.numberFresh s.ee.freshIds (Node.notNode atom) } }
+  -- (`TheoryPreregistrar::notifySatLiteral`: preregistered, then cached; the
+  -- literals of a lemma its preregistration sends come first)
   tePreRegister atom
+  modify fun s => { s with satLiterals := s.satLiterals.push (atom, s.level) }
 
 /-- Give a lemma (rewritten, as cvc5's `TheoryPreprocessor` does), or the
 negation of a conflict's explanation, to the CNF stream. -/
@@ -1353,6 +1361,40 @@ def setsPostCheck : EngineM Unit := do
   let ops : Sets.Ops EngineM := { run := fun x => withEEF x }
   Sets.postCheck ops relevant (do return (← get).outputUsed || (← get).lemmasAdded)
 
+/-- The relevant terms of the theory of strings (`collectAssertedTerms`, with
+the shared terms): the terms of its facts and shared terms, and their subterms
+under the negations, equalities and terms of the theory (`collectTerms`). -/
+def stringsRelevant : EngineM (Std.HashSet Key) := do
+  let s ← get
+  let rec go (acc : Std.HashSet Key) (t : Node) : Std.HashSet Key :=
+    if acc.contains ⟨t⟩ then acc else
+    let acc := acc.insert ⟨t⟩
+    match t with
+    | .app _ cs =>
+      let k := t.getKind
+      if k == .NOT || k == .EQUAL || Telos.theoryOf t == .THEORY_STRINGS then
+        cs.attach.foldl (fun acc ⟨c, _⟩ => go acc c) acc
+      else acc
+    | _ => acc
+  termination_by sizeOf t
+  decreasing_by all_goals (simp_wf; have := Array.sizeOf_lt_of_mem ‹_›; omega)
+  let acc := s.stringsFacts.foldl go {}
+  return s.stringsShared.foldl go acc
+
+/-- The theory of strings' `postCheck` (at every effort; the strategy at full
+effort), at the level of the engine: each lemma is sent, and its atoms
+preregistered, as it is produced. -/
+def stringsPostCheck (full : Bool) : EngineM Unit := do
+  let c ← read
+  let relevant ← if full then stringsRelevant else pure {}
+  let ops : Strings.Ops EngineM := {
+    run := fun x => do let a ← withEE x; flushLemmas; pure a
+    hasSatValue := hasSatValue
+    phase := fun n pol => do
+      emit (.phase (← level) n pol)
+      if c.satMode then withCnf (Cnf.preferPhase n pol) }
+  Strings.postCheck ops full relevant (do return (← get).outputUsed || (← get).lemmasAdded)
+
 /-- `Theory::check` of one theory: for UF, its facts are asserted to the
 equality engine, until the engine is in conflict. -/
 def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
@@ -1375,6 +1417,7 @@ def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
       let fact := s.stringsFacts[s.stringsHead]!
       modify fun s => { s with stringsHead := s.stringsHead + 1 }
       withEEF (Strings.assertFact fact)
+    if !(← get).inConflict then stringsPostCheck (e == .full)
   if T == .THEORY_SETS && (← read).setsSolver then
     repeat
       let s ← get

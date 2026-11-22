@@ -56,6 +56,68 @@ noncomputable def toVal : MVal → SmtValue
         else .NotValue
       | _ => .NotValue
     else .NotValue
+  | .str w => .Seq (native_pack_string (w.map MVal.clampChar))
+
+/-! ### Strings -/
+
+omit [LogosFacts] in
+theorem clampChar_valid (c : Nat) : native_char_valid (MVal.clampChar c) = true := by
+  unfold MVal.clampChar native_char_valid
+  split <;> simp_all
+
+omit [LogosFacts] in
+theorem clamp_all (w : List Nat) : ∀ c ∈ w.map MVal.clampChar, native_char_valid c = true := by
+  intro c hc
+  obtain ⟨d, -, rfl⟩ := List.mem_map.1 hc
+  exact clampChar_valid d
+
+omit [LogosFacts] in
+theorem pack_chars_typeof : ∀ (w : List Nat), (∀ c ∈ w, native_char_valid c = true) →
+    __smtx_typeof_seq_value (native_pack_seq SmtType.Char (w.map SmtValue.Char)) = .Seq .Char
+  | [], _ => rfl
+  | c :: w, h => by
+    have ih := pack_chars_typeof w (fun d hd => h d (List.mem_cons_of_mem _ hd))
+    have hc := h c (List.mem_cons_self ..)
+    simp only [List.map_cons, native_pack_seq, __smtx_typeof_seq_value, ih, __smtx_typeof_value, hc,
+      native_ite, native_Teq, ↓reduceIte]
+    rfl
+
+omit [LogosFacts] in
+theorem pack_chars_canonical (uc : SmtUSortDom) : ∀ (w : List Nat), (∀ c ∈ w, native_char_valid c = true) →
+    __smtx_seq_canonical uc (native_pack_seq SmtType.Char (w.map SmtValue.Char)) = true
+  | [], _ => rfl
+  | c :: w, h => by
+    have ih := pack_chars_canonical uc w (fun d hd => h d (List.mem_cons_of_mem _ hd))
+    have hc := h c (List.mem_cons_self ..)
+    simp only [List.map_cons, native_pack_seq, __smtx_seq_canonical, __smtx_value_canonical, hc, ih, native_and,
+      Bool.and_self]
+
+omit [LogosFacts] in
+theorem unpack_pack (T : SmtType) : ∀ l, native_unpack_seq (native_pack_seq T l) = l
+  | [] => rfl
+  | v :: l => by simp only [native_pack_seq, native_unpack_seq, unpack_pack T l]
+
+omit [LogosFacts] in
+theorem elem_pack (T : SmtType) : ∀ l, __smtx_elem_typeof_seq_value (native_pack_seq T l) = T
+  | [] => rfl
+  | v :: l => by simp only [native_pack_seq, __smtx_elem_typeof_seq_value, elem_pack T l]
+
+omit [LogosFacts] in
+theorem pack_inj (T : SmtType) (l1 l2 : List SmtValue) : native_pack_seq T l1 = native_pack_seq T l2 ↔ l1 = l2 := by
+  constructor
+  · intro h
+    have := congrArg native_unpack_seq h
+    simpa only [unpack_pack] using this
+
+  · rintro rfl; rfl
+
+omit [LogosFacts] in
+theorem concatV_sound {a b r : MVal} (h : Model.concatV a b = some r) :
+    __smtx_model_eval_str_concat (toVal a) (toVal b) = toVal r := by
+  cases a <;> cases b <;> simp only [Model.concatV, reduceCtorEq, Option.some.injEq] at h
+  subst h
+  simp only [toVal, __smtx_model_eval_str_concat, native_pack_string, unpack_pack, elem_pack, native_seq_concat,
+    List.map_append]
 
 /-- The universe of the sorts of `toSmtModel`. -/
 abbrev univ : SmtUSortDom := fun _ => (Set.univ : Set ModelId)
@@ -82,6 +144,12 @@ theorem toVal_props : ∀ v : MVal,
       (∀ T, v.isSet = true → v.ty = .Set T → ∃ m, SetMap v T m)
   | .bool _ | .int _ | .rat _ | .dtc .. => by
     refine ⟨?_, ?_, fun _ h => by simp [MVal.isSet] at h⟩ <;> simp [toVal, MVal.ty, __smtx_typeof_value, __smtx_value_canonical] <;> rfl
+  | .str w => by
+    refine ⟨?_, ?_, fun _ h => by simp [MVal.isSet] at h⟩
+    · simp only [toVal, MVal.ty, __smtx_typeof_value, native_pack_string]
+      exact pack_chars_typeof _ (clamp_all w)
+    · simp only [toVal, __smtx_value_canonical, native_pack_string]
+      exact pack_chars_canonical _ _ (clamp_all w)
   | .uval .. | .fn .. => by
     refine ⟨?_, ?_, fun _ h => by simp [MVal.isSet] at h⟩ <;>
       simp [toVal, MVal.ty, __smtx_typeof_value, __smtx_value_canonical, native_usort_mem]
@@ -499,6 +567,13 @@ theorem veq_iff (a b : MVal) : MVal.veq a b = true ↔ toVal a = toVal b := by
       simp only [MVal.isSet, Bool.or_self, Bool.false_eq_true, ↓reduceIte, Bool.and_eq_true]
       rw [veq_iff f g, veq_iff x y]
       simp [toVal]
+    case str.str x y =>
+      rw [MVal.veq.eq_def]
+      simp only [MVal.isSet, Bool.or_self, Bool.false_eq_true, ↓reduceIte, beq_iff_eq, toVal,
+        native_pack_string, SmtValue.Seq.injEq, pack_inj]
+      constructor
+      · intro h; rw [h]
+      · intro h; exact List.map_injective_iff.2 (fun a b e => by cases e; rfl) h
     all_goals (rw [MVal.veq.eq_def]; simp [MVal.isSet, toVal])
 termination_by sizeOf a + sizeOf b
 decreasing_by
@@ -858,6 +933,26 @@ theorem eval_typedNil (N : SmtModel) (k : Kind) (op : UserOp) (x : Node) (nv : M
       simp [typedNilOfType, eval_numeral_term, eval_rational_term, toVal, native_rat_to_real, native_mk_rational]
 
 omit [LogosFacts] in
+/-- The nil of a chain of `str.++` evaluates to the empty string. -/
+theorem eval_typedNil_concat (N : SmtModel) (x : Node) (nv : MVal)
+    (h : Model.chainNil .STRING_CONCAT x.smtTypeF = some nv) :
+    __smtx_model_eval N (__eo_to_smt (typedNil UserOp.str_concat x.toEo)) = toVal nv := by
+  rw [Node.smtTypeF_eq] at h
+  change Model.chainNil .STRING_CONCAT (__smtx_typeof x.toSmt) = some nv at h
+  unfold typedNil
+  have hx : __eo_to_smt x.toEo = x.toSmt := rfl
+  rw [hx]
+  revert h
+  cases __smtx_typeof x.toSmt <;> simp only [Model.chainNil, reduceCtorEq, false_implies]
+  rename_i E
+  cases E <;> simp only [reduceCtorEq, false_implies, Option.some.injEq]
+  intro h
+  subst h
+  simp only [typedNilOfType]
+  rw [show __eo_to_smt (Term.String []) = SmtTerm.String [] from rfl, __smtx_model_eval.eq_def]
+  rfl
+
+omit [LogosFacts] in
 theorem toSmt_bin {k : Kind} {op : UserOp} (hk : k.eoShape = .spine (Term.UOp op) (.exactly 2))
     {cs : Array Node} (h : cs.size = 2) :
     (Node.app (.kind k) cs).toSmt = __eo_to_smt (Term.Apply (Term.Apply (Term.UOp op) cs[0].toEo) cs[1].toEo) := by
@@ -960,6 +1055,19 @@ theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List 
         (fun _ _ => by rw [__smtx_model_eval.eq_def]) (fun _ _ _ => multV_sound) _ nv
         (eval_typedNil N .MULT UserOp.mult cs[0] nv (.inr ⟨rfl, rfl⟩) hnv) _ _ _ (vals_map hv) hc
     · cases h
+  · -- `str.++`
+    split at h
+    · rename_i h2
+      obtain ⟨nv, hnv, hc⟩ := Option.bind_eq_some_iff.1 h
+      have hs : 2 ≤ cs.size := by omega
+      have h0 : (cs[0]?.getD default) = cs[0] := by simp [Array.getElem?_eq_getElem (by omega : 0 < cs.size)]
+      rw [h0] at hnv
+      unfold Node.toSmt
+      rw [toEo_typedChain (op := UserOp.str_concat) rfl cs hs]
+      exact eval_opChain N UserOp.str_concat Model.concatV SmtTerm.str_concat __smtx_model_eval_str_concat
+        (fun _ _ => rfl) (fun _ _ => by rw [__smtx_model_eval.eq_def]) (fun _ _ _ => concatV_sound) _ nv
+        (eval_typedNil_concat N cs[0] nv hnv) _ _ _ (vals_map hv) hc
+    · cases h
   all_goals first
     | (cases h; done)
     | skip
@@ -1012,7 +1120,12 @@ theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List 
           simp [toVal, __smtx_model_eval_to_real, native_int_to_real, Rat.cast_intCast])
        | (rw [toSmt_un (op := UserOp.set_singleton) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.set_singleton) x)
             = SmtTerm.set_singleton (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
-          simp only; rw [← Node.toSmt, h0]; exact singleton_sound h))
+          simp only; rw [← Node.toSmt, h0]; exact singleton_sound h)
+       | (rw [toSmt_un (op := UserOp.str_len) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.str_len) x)
+            = SmtTerm.str_len (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, h0]
+          obtain rfl := Option.some.inj h
+          simp [toVal, __smtx_model_eval_str_len, native_seq_len, native_pack_string, unpack_pack]))
 
 theorem combine_sound (M : Model) {k : Kind} {cs : Array Node} {vs : List MVal} {r : MVal}
     (hv : Vals M cs.toList vs) (h : Model.combine k cs vs = some r) :
@@ -1315,6 +1428,7 @@ theorem toVal_head (v : MVal) : __smtx_apply_head_value (toVal v) = toVal v.head
   | app f a ihf _ => simp only [toVal, __smtx_apply_head_value, MVal.head, ihf]
   | sins e s =>
     rcases toVal_set_shape (.sins e s) rfl with ⟨m, hm⟩ | hm <;> simp only [MVal.head, hm, __smtx_apply_head_value]
+  | str w => simp [toVal, MVal.head, __smtx_apply_head_value]
   | _ => rfl
 
 omit [LogosFacts] in
@@ -1427,6 +1541,26 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
     exact ⟨hS, fun v h => by
       cases h; simpa [Node.toSmt, Node.toEo, Const.toEo, toVal, native_rat_to_real] using
         eval_rational_term (toSmtModel M) q⟩
+  · rename_i w
+    refine ⟨hS, fun v h => ?_⟩
+    dsimp only at h
+    split at h
+    · rename_i hw
+      cases h
+      have hid : w.map MVal.clampChar = w := by
+        rw [List.all_eq_true] at hw
+        conv_rhs => rw [← List.map_id w]
+        apply List.map_congr_left
+        intro c hc
+        have := hw c hc
+        simp only [decide_eq_true_eq] at this
+        simp [MVal.clampChar, this]
+      have e : (Node.const (.string w)).toSmt = SmtTerm.String w := by
+        simp only [Node.toSmt, Node.toEo, Const.toEo]
+        rfl
+      rw [e, __smtx_model_eval.eq_def]
+      simp only [toVal, hid]
+    · cases h
   · rename_i T
     refine ⟨hS, fun v h => ?_⟩
     dsimp only at h

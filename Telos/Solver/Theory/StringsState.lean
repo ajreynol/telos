@@ -39,16 +39,91 @@ structure EqcInfo where
   secondBound : Option Node := none
   deriving Inhabited
 
+/-- How the length of a term is registered (`LengthStatus`). -/
+inductive LengthStatus where
+  | split
+  | geqOne
+  | one
+  | ignore
+  deriving DecidableEq, Inhabited
+
 /-- A pending lemma or fact of the inference manager (`InferInfo`, sent as a
 lemma or asserted as a fact). -/
 structure Inference where
   id : String
   conc : Node
-  /-- The explanation, as literals. -/
+  /-- The premises (`d_premises`). -/
   exp : Array Node := #[]
-  /-- The part of the explanation that is not in the equality engine
+  /-- The part of the premises that is not explained by the equality engine
   (`d_noExplain`). -/
   noExplain : Array Node := #[]
+  /-- `d_idRev`. -/
+  idRev : Bool := false
+  /-- The skolems to register when the lemma is sent (`d_skolems`). -/
+  skolems : Array (Node × LengthStatus) := #[]
+  /-- The phases to prefer when the lemma is sent (`d_pendingPhase`). -/
+  phases : Array (Node × Bool) := #[]
+  /-- The normal forms to record as a pair (`d_nfPair`). -/
+  nfPair : Option (Node × Node) := none
+  deriving Inhabited
+
+/-- The base solver's information of a class (`BaseEqcInfo`). -/
+structure BaseEqcInfo where
+  bestContent : Option Node := none
+  bestScore : Nat := 0
+  base : Option Node := none
+  exp : Option Node := none
+  deriving Inhabited
+
+/-- A normal form (`NormalForm`): the components `nf` of the term `base`,
+explained by `exp`, each literal relevant from index `expDep.1` (forwards) and
+`expDep.2` (backwards). -/
+structure NormalForm where
+  base : Node
+  nf : Array Node := #[]
+  isRev : Bool := false
+  exp : Array Node := #[]
+  expDep : Std.HashMap Key (Nat × Nat) := {}
+  deriving Inhabited
+
+/-- A possible inference of the core solver (`CoreInferInfo`). -/
+structure CoreInferInfo where
+  infer : Inference
+  index : Nat := 0
+  rev : Bool := false
+  deriving Inhabited
+
+/-- The data of a full-effort check, computed afresh by each (the base and core
+solvers' maps). -/
+structure Check where
+  /-- `BaseSolver::d_eqcInfo`. -/
+  baseInfo : Std.HashMap Key BaseEqcInfo := {}
+  /-- `d_termIndex`: the signature (the operator applied to the
+  representatives of the arguments, without the empty ones of a
+  concatenation) of each term indexed, and its term. -/
+  termIndex : Std.HashMap Key Node := {}
+  /-- The trie of concatenations: the children of each prefix (as a
+  signature), in order of insertion. -/
+  concatChildren : Std.HashMap Key (Array Node) := {}
+  /-- `d_stringLikeEqc`. -/
+  stringLikeEqc : Array Node := #[]
+  /-- `d_flat_form`, `d_flat_form_index`. -/
+  flatForm : Std.HashMap Key (Array Node) := {}
+  flatFormIndex : Std.HashMap Key (Array Nat) := {}
+  /-- `d_eqc`: the concatenations of each class. -/
+  eqcConcats : Std.HashMap Key (Array Node) := {}
+  /-- `d_strings_eqc`, in an acyclic order. -/
+  stringsEqc : Array Node := #[]
+  /-- `d_normal_form`. -/
+  normalForms : Std.HashMap Key NormalForm := {}
+  /-- `d_pinfers`. -/
+  pinfers : Array CoreInferInfo := #[]
+  /-- `d_modelUnsoundId` is set. -/
+  modelUnsound : Bool := false
+  /-- `d_rlvDeq`. -/
+  rlvDeq : Array Node := #[]
+  /-- The relevant terms (`getRelevantTermSet`). -/
+  relevant : Std.HashSet Key := {}
   deriving Inhabited
 
 /-- An entry of the trail. -/
@@ -56,6 +131,8 @@ inductive Undo where
   | prereg (k : Key)
   | eqcInfo (k : Key) (old : Option EqcInfo)
   | pendingConflict
+  | congruent (k : Key)
+  | nfPair (k : Key) (old : Option (Array Node))
   deriving Inhabited
 
 structure State where
@@ -80,9 +157,20 @@ structure State where
   lengthLemmaTerms : Std.HashSet Key := {}
   /-- `d_inputVars` (user context). -/
   inputVars : Std.HashSet Key := {}
-  /-- The inference manager's pending facts and lemmas. -/
+  /-- The inference manager's pending facts and lemmas, and phases
+  (`d_pendingReqPhase`). -/
   pendingFacts : Array Inference := #[]
   pendingLemmas : Array Inference := #[]
+  pendingPhases : Array (Node × Bool) := #[]
+  /-- `BaseSolver::d_congruent` (context dependent). -/
+  congruent : Std.HashSet Key := {}
+  /-- `CoreSolver::d_nfPairs` (context dependent). -/
+  nfPairs : Std.HashMap Key (Array Node) := {}
+  /-- The data of the current full-effort check. -/
+  chk : Check := {}
+  /-- A step was incomplete (`setModelUnsound`) in the last full-effort check:
+  a `sat` answer is not justified. -/
+  incomplete : Bool := false
   /-- `d_numCurrentFacts`, `d_numCurrentLemmas` since the last `reset`. -/
   sentFacts : Nat := 0
   sentLemmas : Nat := 0
@@ -121,6 +209,22 @@ def addPrereg (s : State) (n : Node) : State :=
   let s := { s with preregistered := {}, trail := #[] }
   { s with preregistered := m.insert ⟨n⟩, trail := tr.push (.prereg ⟨n⟩) }
 
+/-- Mark a term congruent, on the trail. -/
+def addCongruent (s : State) (n : Node) : State :=
+  if s.congruent.contains ⟨n⟩ then s else
+  let m := s.congruent
+  let tr := s.trail
+  let s := { s with congruent := {}, trail := #[] }
+  { s with congruent := m.insert ⟨n⟩, trail := tr.push (.congruent ⟨n⟩) }
+
+/-- Set the normal form pairs of a term, on the trail. -/
+def setNfPairs (s : State) (n : Node) (v : Array Node) : State :=
+  let old := s.nfPairs.get? ⟨n⟩
+  let m := s.nfPairs
+  let tr := s.trail
+  let s := { s with nfPairs := {}, trail := #[] }
+  { s with nfPairs := m.insert ⟨n⟩ v, trail := tr.push (.nfPair ⟨n⟩ old) }
+
 /-- `setPendingConflict`: the first one only, on the trail. -/
 def setPendingConflict (s : State) (id : String) (premises : Array Node) : State :=
   if s.pendingConflict.isSome then s else
@@ -135,8 +239,10 @@ def popTo (s : State) (k : Nat) : State := Id.run do
   let mut pre := s.preregistered
   let mut eqc := s.eqcInfo
   let mut pend := s.pendingConflict
+  let mut cong := s.congruent
+  let mut nfp := s.nfPairs
   let trail := s.trail
-  let s := { s with preregistered := {}, eqcInfo := {}, trail := #[] }
+  let s := { s with preregistered := {}, eqcInfo := {}, trail := #[], congruent := {}, nfPairs := {} }
   for i in [0:trail.size - tsize] do
     match trail[trail.size - 1 - i]! with
     | .prereg k => pre := pre.erase k
@@ -144,7 +250,12 @@ def popTo (s : State) (k : Nat) : State := Id.run do
       | some v => eqc.insert k v
       | none => eqc.erase k
     | .pendingConflict => pend := none
+    | .congruent k => cong := cong.erase k
+    | .nfPair k old => nfp := match old with
+      | some v => nfp.insert k v
+      | none => nfp.erase k
   return { s with preregistered := pre, eqcInfo := eqc, pendingConflict := pend, trail := trail.take tsize,
+                  congruent := cong, nfPairs := nfp,
                   functionTerms := s.functionTerms.take fsize,
                   disequalities := s.disequalities.take dsize, saved := s.saved.take k }
 

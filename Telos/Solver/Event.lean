@@ -108,12 +108,15 @@ inductive Event where
   | eeNewClass (level : Nat) (t : Node)
   | eeMerge (level : Nat) (t₁ t₂ : Node)
   | eeDiseq (level : Nat) (t₁ t₂ reason : Node)
+  /-- A skolem was created (not printed: it numbers the skolems in the order
+  cvc5 creates them). -/
+  | skolem (k : Node)
   deriving Inhabited
 
 /-- The nodes of an event. -/
 def Event.nodes : Event → List Node
   | .prereg _ t | .assert _ _ t | .lemma _ _ _ t | .conflict _ _ _ t | .propagate _ _ t
-  | .phase _ t _ | .eeNewClass _ t => [t]
+  | .phase _ t _ | .eeNewClass _ t | .skolem t => [t]
   | .fact _ _ _ l e | .explain _ l e | .eeMerge _ l e => [l, e]
   | .eeDiseq _ a b r => [a, b, r]
   | .check .. | .pop _ | .modelUnsound .. | .refutationUnsound .. => []
@@ -131,6 +134,7 @@ def Event.map (f : Node → Node) : Event → Event
   | .eeNewClass k t => .eeNewClass k (f t)
   | .eeMerge k a b => .eeMerge k (f a) (f b)
   | .eeDiseq k a b r => .eeDiseq k (f a) (f b) (f r)
+  | .skolem t => .skolem (f t)
   | e => e
 
 /-- The event as cvc5 prints it, without the newline. -/
@@ -150,5 +154,6 @@ def Event.print (N : DtNames) : Event → String
   | .eeNewClass k t => s!"(ee-new-class {k} {t.toSmtLibLet N})"
   | .eeMerge k a b => s!"(ee-merge {k} {a.toSmtLibLet N} {b.toSmtLibLet N})"
   | .eeDiseq k a b r => s!"(ee-diseq {k} {a.toSmtLibLet N} {b.toSmtLibLet N} {r.toSmtLibLet N})"
+  | .skolem _ => ""
 
 end Telos.Solver

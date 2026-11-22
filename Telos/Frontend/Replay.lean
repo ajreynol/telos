@@ -177,7 +177,10 @@ def replayScript (input trace : String) (eeEvents : Bool := false) : Except Stri
     replay { theories, termBased := opts.termBased, eeEvents,
              arith := arithOptionsOf (sc.logic.getD "ALL") } inputs
   let text := Profile.time "replay" (fun _ => "print events") fun _ =>
-    String.join (events.toList.map fun e => (e.map (substSkolems names)).print sc.dtNames ++ "\n")
+    String.join (events.toList.filterMap fun e =>
+      match (e.map (substSkolems names)).print sc.dtNames with
+      | "" => none
+      | l => some (l ++ "\n"))
   return (text, unverified)
 
 end Telos.Frontend

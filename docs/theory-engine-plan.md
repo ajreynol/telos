@@ -1578,7 +1578,7 @@ preprocessed equalities (the node order of preprocessing). Recorded tests:
 - The care graph for sets of sets (`SETS_CG_SPLIT`), `set.choose`.
 - The remaining event differences.
 
-## Stage 9: strings (planned)
+## Stage 9: strings (in progress: stage 1, word equations with lengths)
 
 cvc5's theory of strings (`src/theory/strings/`, about 29k lines with its
 rewriter, of which telos has the rewriter and the preprocessing reductions) in
@@ -1614,6 +1614,62 @@ Stages, each with its fuzz generator, events, models and certificates:
 3. **Regular expressions** (`regexp_solver.cpp`, `regexp_operation.cpp`): the
    unfolding of memberships, intersection and inclusion.
 4. **Sequences**: `seq.unit`, `seq.nth`, `seq.update` (`array_solver.cpp`).
+
+**Status of stage 1.** Ported (`Telos/Solver/Theory/Strings.lean`, the term
+registry and the eager solver; `StringsSolver.lean`, the full-effort check;
+`StringsState.lean`):
+- preregistration and registration, with phases, the trigger predicates of
+  atoms without a SAT value, and the preregistration queue of the theory
+  engine (a lemma sent during a preregistration has its atoms preregistered
+  after it);
+- the eager solver (constant prefixes and suffixes, arithmetic bounds, pending
+  merge conflicts);
+- the inference manager: conflicts, facts (asserted with the conjunction of
+  their premises as the reason, after registering their terms), lemmas (their
+  premises explained by the equality engine but those of `noExplain`;
+  skolems registered and phases preferred when sent), splits;
+  `stringInferSym`;
+- the base solver: `checkInit` (congruence modulo empty components,
+  `STRINGS_I_NORM`, `STRINGS_I_NORM_S`, the oldest variable of a class) and
+  the constant classes (`STRINGS_I_CONST_MERGE`, `STRINGS_I_CONST_CONFLICT`,
+  `STRINGS_I_CYCLE_CONFLICT`);
+- the core solver: cycles (`STRINGS_I_CYCLE`, `STRINGS_I_CYCLE_E`), flat forms
+  (`STRINGS_F_*`), normal forms (`STRINGS_NORMAL_FORM`, `STRINGS_N_*`, the
+  possible inferences `STRINGS_LEN_SPLIT`, `STRINGS_LEN_SPLIT_EMP`,
+  `STRINGS_INFER_EMP`, `STRINGS_SSPLIT_CST(_PROP)`, `STRINGS_SSPLIT_VAR(_PROP)`
+  ranked as `pickInferInfo` does), disequalities (`STRINGS_DEQ_*`) and length
+  normalization (`STRINGS_LEN_NORM`); the skolems as purification skolems of
+  their terms (`SkolemCache::normalizeStringSkolem`), each recorded when
+  created (a hidden event), so that skolems are numbered as cvc5 numbers them;
+- models: a string class is its constant, or, if atomic (its normal form is
+  one non-constant component), a string of the arithmetic value of its length
+  of its own, or else the concatenation of its normal form's components'
+  values; `MVal.str`, with `str.++` and `str.len`, in the model evaluator and
+  its soundness proof (`verification/TelosProofs/Solver/Model.lean`; invalid
+  characters are clamped in the Logos value, and a literal with one is not
+  evaluated).
+
+Not yet, and so the check is incomplete (a `sat` answer is then `unknown`):
+looping word equations (`processLoop` needs regular expressions, stage 3),
+extended functions and regular expressions (any relevant term of a later
+stage). Approximated: `stringCheckEntailLen`'s arithmetic entailment (by the
+rewriter only); the cardinality of the alphabet is not checked (it only
+matters for more than 196608 classes of one length).
+
+Not certified yet: the strings lemmas and conflicts, so an `unsat` that needs
+one is `unknown` (next: `STRINGS_REGISTER_TERM(_ATOMIC)`, as for sets, then the
+core inferences with CPC's `concat_*` rules, as `InferProofCons` builds them).
+
+Testing: `fuzz-solve.py --theory strings` (QF_SLIA word equations with
+lengths). With the SAT solver, seed 1, 100 benchmarks: 64 the same events as
+cvc5. Of the others, most differ in the preprocessed input (rewrites of word
+equations telos's rewriter lacks, such as `(= "" (str.++ y y))` and the
+cancellation of common components, and the order of the variables of length
+equations), or in the orientation of shared equalities between numerals and
+length terms (cvc5's node ids: the solvers' constants are created after the
+input's terms, before the preprocessing's); 4 `unsat` are `unknown` (not
+certified), and cvc5 times out on 1 (a looping word equation, on which telos
+answers `unknown`).
 
 ## Order of work (all stages)
 

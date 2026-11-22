@@ -291,6 +291,48 @@ def sets_benchmark(rng, size, clauses=False):
     return SETS_PRELUDE + "".join(f"(assert {l})\n" for l in out) + "(check-sat)\n"
 
 
+STRINGS_PRELUDE = """(set-logic QF_SLIA)
+(declare-fun w () String)
+(declare-fun x () String)
+(declare-fun y () String)
+(declare-fun z () String)
+"""
+
+
+def strings_term(rng, depth):
+    """A term of sort String: a variable, a constant, or a concatenation."""
+    if depth == 0 or rng.random() < 0.55:
+        if rng.random() < 0.7:
+            return rng.choice(["w", "x", "y", "z"])
+        return rng.choice(['""', '"a"', '"b"', '"ab"', '"ba"', '"aab"'])
+    k = rng.choice([2, 2, 3])
+    return "(str.++ " + " ".join(strings_term(rng, depth - 1) for _ in range(k)) + ")"
+
+
+def strings_literal(rng):
+    r = rng.random()
+    if r < 0.5:
+        atom = f"(= {strings_term(rng, 2)} {strings_term(rng, 2)})"
+    elif r < 0.75:
+        atom = f"(= (str.len {strings_term(rng, 1)}) {rng.randint(0, 4)})"
+    elif r < 0.9:
+        atom = f"(= (str.len {strings_term(rng, 1)}) (str.len {strings_term(rng, 1)}))"
+    else:
+        atom = f"(> (str.len {strings_term(rng, 1)}) (str.len {strings_term(rng, 1)}))"
+    return atom if rng.random() < 0.7 else f"(not {atom})"
+
+
+def strings_benchmark(rng, size, clauses=False):
+    out = []
+    for _ in range(rng.randint(2, size)):
+        if clauses and rng.random() < 0.5:
+            k = rng.randint(2, 3)
+            out.append("(or " + " ".join(strings_literal(rng) for _ in range(k)) + ")")
+        else:
+            out.append(strings_literal(rng))
+    return STRINGS_PRELUDE + "".join(f"(assert {l})\n" for l in out) + "(check-sat)\n"
+
+
 # declared in alphabetical order, so that telos's order of variables (by name)
 # is cvc5's (by node id, which follows declaration)
 LRA_PRELUDE = """(set-logic QF_LRA)
@@ -714,7 +756,7 @@ def main():
     ap.add_argument("--sat", action="store_true",
                     help="solve with telos's SAT solver (--via-sat), cvc5 with --sat-solver=minisat")
     ap.add_argument("--size", type=int, default=6, help="the most literals of a random benchmark")
-    ap.add_argument("--theory", choices=["uf", "dt", "lra", "lia", "uflra", "uflia", "dtlia", "sets"], default="uf", help="the theory of the random benchmarks")
+    ap.add_argument("--theory", choices=["uf", "dt", "lra", "lia", "uflra", "uflia", "dtlia", "sets", "strings"], default="uf", help="the theory of the random benchmarks")
     ap.add_argument("--decision", choices=["internal", "justification", "stoponly"],
                     help="the SAT solver's decision mode, for both (otherwise the logic's)")
     ap.add_argument("--ite", action="store_true", help="arithmetic literals with ite terms")
@@ -734,13 +776,15 @@ def main():
                 prelude, lit = {"dt": (DT_PRELUDE, dt_literal), "lra": (LRA_PRELUDE, lra_literal),
                                   "lia": (LIA_PRELUDE, lra_literal), "uflra": (UFLRA_PRELUDE, uflra_literal),
                                   "uflia": (UFLIA_PRELUDE, uflra_literal), "dtlia": (DTLIA_PRELUDE, dtlia_literal),
-                                  "sets": (SETS_PRELUDE, sets_literal)}.get(
+                                  "sets": (SETS_PRELUDE, sets_literal),
+                                  "strings": (STRINGS_PRELUDE, strings_literal)}.get(
                     a.theory, (UF_PRELUDE, uf_literal))
                 p.write_text(bool_benchmark(prelude, lit, rng, a.size))
             else:
                 gen = {"dt": dt_benchmark, "lra": lra_benchmark, "lia": lia_benchmark,
                        "uflra": uflra_benchmark, "uflia": uflia_benchmark,
-                       "dtlia": dtlia_benchmark, "sets": sets_benchmark}.get(a.theory, uf_benchmark)
+                       "dtlia": dtlia_benchmark, "sets": sets_benchmark,
+                       "strings": strings_benchmark}.get(a.theory, uf_benchmark)
                 p.write_text(gen(rng, a.size, a.clauses or a.replay))
             files.append(p)
     counts = collections.Counter()

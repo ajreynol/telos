@@ -139,6 +139,9 @@ inductive Note where
   /-- A shared equality (or disequality) for the theory with tag `tag`
   (`SharedSolver::propagateSharedEquality`), after its propagation. -/
   | sharedEq (tag : Nat) (lit : Node)
+  /-- A skolem a theory created (for naming skolems in the order cvc5 creates
+  them). -/
+  | skolem (k : Node)
   deriving Inhabited
 
 /-- The context-dependent counters of the engine, saved at each push. -/
