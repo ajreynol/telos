@@ -16,6 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: bash scripts/check-hygiene.sh
+      - run: python3 scripts/test-inventory.py
+      - run: python3 scripts/loc-summary.py
 
   build:
     runs-on: ubuntu-latest
@@ -35,6 +37,10 @@ jobs:
           key: build-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lakefile.toml', 'lake-manifest.json') }}-${{ github.sha }}
           restore-keys: build-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lakefile.toml', 'lake-manifest.json') }}-
       - run: lake build
+      - name: Runtime inventory and compiler regression checks
+        run: |
+          python3 scripts/test-inventory.py
+          python3 scripts/logos-runtime.py --no-build
       - name: Rule table is in sync with the pinned Logos signature
         run: python3 scripts/gen-rules.py --check
       - name: Example scripts give the expected output

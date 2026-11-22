@@ -1656,20 +1656,58 @@ stage). Approximated: `stringCheckEntailLen`'s arithmetic entailment (by the
 rewriter only); the cardinality of the alphabet is not checked (it only
 matters for more than 196608 classes of one length).
 
-Not certified yet: the strings lemmas and conflicts, so an `unsat` that needs
-one is `unknown` (next: `STRINGS_REGISTER_TERM(_ATOMIC)`, as for sets, then the
-core inferences with CPC's `concat_*` rules, as `InferProofCons` builds them).
+Certificates (an `unsat` that needs an uncertified step is `unknown`):
+- the lemmas (`Telos/Solver/StringsLemma.lean`): `STRINGS_REGISTER_TERM`
+  (`skolem_intro`, congruence and the rewriter, as cvc5's
+  `MACRO_SR_PRED_INTRO`), `STRINGS_REGISTER_TERM_ATOMIC` (`string_length_pos`;
+  the lemmas of the skolems of length at least one, or one, have no proof, as
+  in cvc5), the splits on a literal (the rewriter), and the core inferences
+  sent as lemmas;
+- the core inferences, as lemmas, internal facts (on the paths of the proof
+  builder, `EqBuild.proveFact`) and conflicts (`EE.conflictOfStrings`, from
+  the premises before their explanation): `Telos/Solver/StringsCore.lean`, a
+  port of `InferProofCons` for them. The main equality, with the other
+  equalities substituted and rewritten, then `concat_eq`, the constants at the
+  heads split as the rule needs, and the rule (`concat_csplit`,
+  `concat_cprop`, `concat_split`, `concat_lprop`, `concat_unify`), its length
+  premise from the length constraint (or `string_length_non_empty`); its
+  conclusion is related to the solver's (purification skolems of terms with
+  the same rewrite are equal). The other inferences (the base solver's, the
+  prefix conflicts) by substitution and rewriting alone. Each conclusion is
+  read back from Logos, and the proof is checked when it is made;
+- in the proof builder, the merges of applications of constant arguments with
+  their values (eager evaluation), and of distinct values (the rewriter).
+
+Theory combination, for all theories: the explanation of a conflict or a
+propagation of the SAT solver goes through the literals the other theories
+propagated (`explainAllSteps`); each step is a clause of the certificate with
+its own justification (the linear solver's certificate of its explanation, or
+the proof builder's), and the clause of the conflict follows from them by unit
+propagation (it is put first among the learned clauses). A literal is
+explained by the theory that propagated it (`d_propagationMap`: the shared
+solver's literals asserted to arithmetic are the equality engine's, and a SAT
+propagation is explained by its propagator), which fixed explanations that
+dropped such literals (and so conflict clauses that did not follow). The
+clause of an arithmetic lemma that the engine rewrites (oriented equalities)
+follows from the lemma's literals as the certificate has them, by their
+rewrites.
 
 Testing: `fuzz-solve.py --theory strings` (QF_SLIA word equations with
-lengths). With the SAT solver, seed 1, 100 benchmarks: 64 the same events as
+lengths). With the SAT solver, seed 1, 100 benchmarks: 68 the same events as
 cvc5. Of the others, most differ in the preprocessed input (rewrites of word
 equations telos's rewriter lacks, such as `(= "" (str.++ y y))` and the
 cancellation of common components, and the order of the variables of length
 equations), or in the orientation of shared equalities between numerals and
 length terms (cvc5's node ids: the solvers' constants are created after the
-input's terms, before the preprocessing's); 4 `unsat` are `unknown` (not
-certified), and cvc5 times out on 1 (a looping word equation, on which telos
-answers `unknown`).
+input's terms, before the preprocessing's); cvc5 times out on 1 (a looping word
+equation, on which telos answers `unknown`). On 300 larger benchmarks (seed 11,
+half with disjunctions), every answer agrees with cvc5's but 2 `unsat` that
+are `unknown`: their prefix conflicts, `(= "" (str.++ y "a"))`, need the
+rewrites of word equations telos lacks (or `len ≥ 0`).
+
+Not yet: the deep chains of skolems of some splits are slow (a benchmark that
+cvc5 solves in a second times out; the terms are trees whose size doubles with
+each skolem, though shared in memory).
 
 ## Order of work (all stages)
 

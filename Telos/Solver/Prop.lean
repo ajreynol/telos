@@ -63,42 +63,64 @@ def satCheck (e : Effort) : EngineM Unit := do
   check e
   flushLemmas
 
-/-- The explanation of a propagated literal: the verified explanation
-(`EE.explainLitV`), or else the equality engine's; and the certificate of the
-clause it makes (the literal, or the negation of a reason), which refutes the
-reasons with the literal's negation. -/
-def satExplainQuiet (lit : Node) : EngineM (Array Node × Option SatProof.Just) := do
-  let c ← read
-  if c.arithSolver && c.theoryOf (atomOf lit).1 == .THEORY_ARITH then
-    -- the linear solver's explanation, and its certificate
-    let exp ← explainAll #[lit] false
-    let cert ← withArith (Arith.explainCert lit)
-    return (exp, cert.map (.arith (exp.push (negate lit)) ·))
-  let exp ← match EE.explainLitV (← exCtx) lit with
-    | some exp => pure exp
-    | none =>
-      modify fun s => { s with unverifiedExplains := s.unverifiedExplains + 1 }
-      explain lit
-  let s ← get
-  -- (from the literals of the clause only)
-  let lits := exp.push (negate lit)
-  return (exp, (EE.conflictOfPropagation s.ee lits exp lit (negate lit)).toOption.map fun (A, q) => .theory A q)
-
-/-- `TheoryEngine::getExplanation`, as the SAT solver asks for it. -/
-def satExplain (lit : Node) : EngineM (Array Node × Option SatProof.Just) := do
-  let (exp, cert) ← satExplainQuiet lit
-  emit (.explain (← level) lit (EE.mkAnd exp))
-  return (exp, cert)
-
-/-! ## The SAT solver's side -/
-
 /-- Where a clause given to the SAT solver comes from. -/
 inductive BaseTag where
   /-- The CNF stream. -/
   | cnf (tag : Cnf.ClauseTag)
   /-- An explanation of a theory propagation, with its certificate. -/
   | theory (cert : Option SatProof.Just)
+  /-- A clause that follows by unit propagation from these clauses, with their
+  certificates (`stepClauses`). -/
+  | derived (aux : Array (Array Node × Option SatProof.Just))
   deriving Inhabited
+
+/-- The explanation of a propagated literal: the verified explanation
+(`EE.explainLitV`), or else the equality engine's; and the certificate of the
+clause it makes (the literal, or the negation of a reason), which refutes the
+reasons with the literal's negation. -/
+def satExplainQuiet (lit : Node) : EngineM (Array Node × BaseTag) := do
+  let c ← read
+  -- (the theory that propagated it explains it)
+  let byArith := match (← get).propagator.get? ⟨lit⟩ with
+    | some T => T == .THEORY_ARITH
+    | none => c.theoryOf (atomOf lit).1 == .THEORY_ARITH
+  if c.arithSolver && byArith then
+    -- the linear solver's explanation, and its certificate
+    let (exp, steps) ← explainAllSteps #[lit] false true
+    let cert ← withArith (Arith.explainCert lit)
+    if steps.isEmpty then return (exp, .theory (cert.map (.arith (exp.push (negate lit)) ·)))
+    -- the certificate is over the linear solver's own explanation, which the
+    -- steps give from the literals of the clause
+    let e₀ ← withArith (Arith.explain lit)
+    let main := ((e₀.map negate).push lit, cert.map (.arith (e₀.push (negate lit)) ·))
+    return (exp, .derived (#[main] ++ (← stepClauses exp steps)))
+  let (exp, steps) ← match EE.explainLitV (← exCtx) lit with
+    | some exp => pure (exp, #[])
+    | none =>
+      modify fun s => { s with unverifiedExplains := s.unverifiedExplains + 1 }
+      if !c.eeSolver then pure (#[], #[]) else explainAllSteps #[lit] false true
+  let s ← get
+  -- (from the literals of the clause only, and those the linear solver
+  -- explained)
+  let ariths := steps.filter (·.arith)
+  let lits := exp ++ ariths.map (·.lit)
+  let r := EE.conflictOfPropagation s.ee (lits.push (negate lit)) lits lit (negate lit)
+  let cert := r.toOption.map
+    fun (A, q) => SatProof.Just.theory A q
+  if ariths.isEmpty then return (exp, .theory cert)
+  let main := match cert with
+    | some j@(.theory A _) => (A.map negate, some j)
+    | _ => ((lits.map negate).push lit, none)
+  return (exp, .derived (#[main] ++ (← stepClauses exp ariths)))
+
+/-- `TheoryEngine::getExplanation`, as the SAT solver asks for it. -/
+def satExplain (lit : Node) : EngineM (Array Node × BaseTag) := do
+  let (exp, cert) ← satExplainQuiet lit
+  emit (.explain (← level) lit (EE.mkAnd exp))
+  return (exp, cert)
+
+/-! ## The SAT solver's side -/
+
 
 structure PropState where
   sat : Sat.Solver := {}
@@ -212,10 +234,10 @@ instance : TheoryProxy PropM where
     lits.mapM satLit
   explainPropagation l := do
     let n ← satNode l
-    let (exp, cert) ← onEngineF (satExplain n)
+    let (exp, tag) ← onEngineF (satExplain n)
     let mut out := #[l]
     for e in (if exp.isEmpty then #[Node.mkTrue] else exp) do out := out.push (← satLit e).neg
-    modifyThe PropState fun p => { p with base := p.base.push (out, .theory cert) }
+    modifyThe PropState fun p => { p with base := p.base.push (out, tag) }
     return out
   enqueueTheoryLiteral l := do
     let n ← satNode l
@@ -324,10 +346,10 @@ def explainLevelZero : PropM Unit := do
     let d := s.vardata[p.var]!
     if d.level == 0 && d.reason == Sat.CRef.lazy then
       let n ← satNode p
-      let (exp, cert) ← onEngine (satExplainQuiet n)
+      let (exp, tag) ← onEngine (satExplainQuiet n)
       let mut out := #[p]
       for e in (if exp.isEmpty then #[Node.mkTrue] else exp) do out := out.push (← satLit e).neg
-      modifyThe PropState fun q => { q with base := q.base.push (out, .theory cert) }
+      modifyThe PropState fun q => { q with base := q.base.push (out, tag) }
 
 /-- **The certificate of a refutation**: the clauses as literals of terms, with
 their justifications; those with none (lemmas with no proof) are left
@@ -342,14 +364,29 @@ def buildCert (p : PropState) : Option SatProof.Cert := do
     | some (.arith (some (A, q))) => some (.arith A q)
     | _ => none
   let mut clauses : Array (SatProof.Clause × SatProof.Just) := #[]
+  -- the clauses that follow by unit propagation from the steps of their
+  -- explanations, which come first among the learned clauses
+  let mut derived : Array SatProof.Clause := #[]
   for (c, tag) in p.base do
+    let aux := match tag with
+      | .cnf (.src k) => match p.eng.satSources[k]? with
+        | some (.derived aux) => some aux
+        | _ => none
+      | .derived aux => some aux
+      | _ => none
+    if let some aux := aux then
+      for (d, j) in aux do
+        if let some j := j then clauses := clauses.push (d, j)
+      derived := derived.push (← toNodes c)
+      continue
     let j := match tag with
       | .cnf (.defn n) => some (.defn n)
       | .cnf (.src k) => source k
       | .theory j => j
+      | .derived _ => none
     if let some j := j then clauses := clauses.push ((← toNodes c), j)
   let learned ← p.learned.mapM toNodes
-  return { clauses, learned }
+  return { clauses, learned := derived ++ learned }
 
 /-- **Solve formulas** with the SAT solver and the theory engine. A `sat`
 answer comes with the engine's state, from which the caller builds a model

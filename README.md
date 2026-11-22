@@ -236,9 +236,42 @@ lake build telos-fuzz && python3 scripts/fuzz.py --cvc5 PATH   # compare the rew
 python3 scripts/fuzz-pp.py --cvc5 PATH [--proofs]               # compare the preprocessor with cvc5 (and check its proofs)
 python3 scripts/fuzz-lemmas.py --cvc5 PATH [--solver PATH]       # compare the rewriter with cvc5 on its solver's lemmas (-t im)
 python3 scripts/check-proofs.py --fuzz 500                      # proofs, with Ethos
-python3 scripts/loc-summary.py                                  # lines: spec, core, rewriter, preprocessor, solver, proofs
+python3 scripts/loc-summary.py                                  # TCB/spec, solver code, verification proofs
+python3 scripts/logos-runtime.py                                # build + inventory runtime references to Logos
+python3 scripts/logos-runtime.py --symbols --files               # targets/forms and caller files
+python3 scripts/logos-runtime.py --sites --check-no-spec         # dependency paths; fails while solver calls spec
 bash scripts/profile.sh                                         # where rewriting time goes
 ```
+
+The LOC report separates (1) TCB/spec, including the trusted profiling module,
+(2) solver code, including the rewriter, preprocessor, checkers, front end and
+proof output, and (3) verification proofs. Standalone theorems/lemmas in solver
+files count as proofs; inline proof terms and termination proofs stay with
+their definitions. Specification files count whole. Tests, fuzzing and audit
+tools are reported separately, as is the pinned Logos specification. `--files`
+shows each file's contribution. The shared classification is in
+`scripts/lean_inventory.py`.
+
+The runtime inventory reads the pinned Lean compiler's saved base LCNF after
+proof erasure and early simplification/specialization. It counts static
+application/reference sites, including implicit instances, function arguments
+and generated helpers. These are compiler-level counts, not source-token or
+execution counts: inlining can remove calls and specialization can duplicate
+them. Unused compiled definitions are included; theorem bodies, types and
+constructor allocations are excluded. `--scope all` includes TCB/spec callers;
+the default covers solver callers. `--json` exports sites and dependency paths.
+Locations identify the containing declaration (line 0 means unavailable).
+
+`--check-no-spec` exits 1 when solver references reach functions in Telos's
+TCB/spec files or the Logos specification import closure, directly or through
+Logos helpers. Shared datatype constructors are allowed, but functions in
+those files (including equality/hash helpers and profiling) are reported.
+The check currently fails: this is an inventory for removing dependencies,
+not a completed separation. It follows named references; it does not resolve
+dynamic calls through variables or certify source-level independence. The
+script builds all production Lean modules first, without verification/Mathlib;
+`--no-build` explicitly assumes the existing artifacts are current. Run
+`python3 scripts/test-inventory.py` for the report regression checks.
 
 The rule table `Telos/Rewriter/Rules/Generated.lean` is generated from the CPC signature in
 the pinned Logos checkout. After changing the Logos `rev`, regenerate it; CI

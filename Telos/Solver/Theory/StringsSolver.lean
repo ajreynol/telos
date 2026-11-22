@@ -336,9 +336,10 @@ def explainPremises (exp noExplain : Array Node) : EEM (Array Node) := do
 (`trustedConflict`). -/
 def processConflict (id : String) (premises : Array Node) : EEM Unit := do
   if ← inConflict then return
-  let exp ← explainPremises (premises.foldl (fun a p => flattenAnd p a) #[]) #[]
+  let ps := premises.foldl (fun a p => flattenAnd p a) #[]
+  let exp ← explainPremises ps #[]
   let conf := mkAndN exp
-  modifyStrings fun s => { s with conflict := some (id, conf) }
+  modifyStrings fun s => { s with conflict := some (id, conf, ps) }
   note (.conflict stringsTheory id conf)
   modify fun s => { s with teConflict := true }
 

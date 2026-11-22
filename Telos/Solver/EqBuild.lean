@@ -2,6 +2,7 @@ import Std.Data.HashMap
 import Telos.Solver.EqualityEngine
 import Telos.Solver.EqProof
 import Telos.Solver.Theory.DtType
+import Telos.Solver.StringsCore
 
 /-!
 # Equality proofs from the equality engine
@@ -157,7 +158,8 @@ mutual
         let cands := [Node.eqNode a b, Node.eqNode b a] ++
           (if b == Node.mkTrue then [a] else []) ++ (if a == Node.mkTrue then [b] else [])
         for conc in cands do
-          if let some (id, exp) := ee.dt.facts.get? ⟨conc⟩ <|> ee.sets.facts.get? ⟨conc⟩ then
+          if let some (id, exp) := ee.dt.facts.get? ⟨conc⟩ <|> ee.sets.facts.get? ⟨conc⟩ <|>
+              ee.strings.facts.get? ⟨conc⟩ then
             let p ← proveFact C conc id exp
             let (x, y) := EqProof.assumptionEq conc
             if x == a && y == b then return p
@@ -176,6 +178,27 @@ mutual
       let q := EqProof.eqTrue p
       return if cur == ee.trueId then .symm q else q
     | .constants =>
+      -- an application whose arguments are equal to constants is its value: by
+      -- congruence, then the rewriter
+      let (t, v, tFirst) := if a.isConst then (b, a, false) else (a, b, true)
+      let evaluated : BuildM (Option EqProof) := do
+        let .app _ cs := t | return none
+        if !v.isConst then return none
+        let mut args : Array (Option EqProof) := #[]
+        let mut ds : Array Node := #[]
+        for c in cs do
+          let some i := ee.nodeIds.get? ⟨c⟩ | return none
+          let r := find ee i
+          let rc := ee.nodes[r]!
+          if !rc.isConst then return none
+          args := args.push (← proveIds C i r)
+          ds := ds.push rc
+        let .app op _ := t | return none
+        let t' := Node.app op ds
+        if Telos.rewrite t' != v then return none
+        let p : EqProof := if args.all (·.isNone) then .rw t else .trans (.congAt t args) (.rw t')
+        return some (if tFirst then p else .symm p)
+      if let some p ← evaluated then return p
       -- an equality whose sides are equal to distinct constructor constants is
       -- false (`dt-cons-eq-clash`)
       let (e, eFirst) := if b == Node.mkFalse then (a, true) else (b, false)
@@ -184,12 +207,16 @@ mutual
       let some iy := ee.nodeIds.get? ⟨y⟩ | throw "a term is not in the engine"
       let cx := ee.nodes[find ee ix]!
       let cy := ee.nodes[find ee iy]!
-      if (DT.consApp? cx).isNone || (DT.consApp? cy).isNone then
+      -- distinct values (strings, numbers): the rewriter evaluates the
+      -- equality to `false`
+      let values := cx.isConst && cy.isConst && Telos.rewrite (Node.eqNode cx cy) == Node.mkFalse
+      if !values && ((DT.consApp? cx).isNone || (DT.consApp? cy).isNone) then
         throw "merges of evaluated constants are not supported"
       let px ← proveIds C ix (find ee ix)
       let py ← proveIds C iy (find ee iy)
       let lem := Node.eqNode (Node.eqNode cx cy) Node.mkFalse
-      let v := EqProof.valid lem [DT.ruleStep .dt_cons_eq_clash lem]
+      let v := if values then EqProof.rw (Node.eqNode cx cy)
+        else EqProof.valid lem [DT.ruleStep .dt_cons_eq_clash lem]
       let p := if px.isNone && py.isNone then v else .trans (.congAt e #[px, py]) v
       return if eFirst then p else .symm p
 
@@ -328,7 +355,60 @@ mutual
         | some ps => .trans (.symm (.congAt atom #[none, some ps])) pa
         | none => pa
       return .fromTrue (.trans (.rw conc) (.trans (.symm (.rw m')) q))
-    | _ => throw s!"an internal fact of {id} is not supported"
+    | _ =>
+      if id.startsWith "STRINGS_" then
+        -- a core inference of strings: its premises from the engine, and its
+        -- CPC proof (`Telos/Solver/StringsCore.lean`)
+        let P := match exp with
+          | .app (.kind .AND) ps => ps
+          | e => if e == Node.mkTrue then #[] else #[e]
+        let ps ← P.mapM (proveLitTrue C)
+        let some q := StringsCore.proveFrom id P ps conc | throw s!"an internal fact of {id} without a proof"
+        return .fromTrue q
+      throw s!"an internal fact of {id} is not supported"
+
+  /-- A proof of `(l, true)` for a literal `l` that the engine entails. -/
+  partial def proveLitTrue (C : BuildCtx) (l : Node) : BuildM EqProof := do
+    -- `((not x), true)` from `(x, false)`
+    let notTrue (x : Node) (p : EqProof) : EqProof :=
+      .trans (.congAt (Node.notNode x) #[some p]) (.rw (Node.notNode Node.mkFalse))
+    match l with
+    | .app (.kind .NOT) #[e@(.app (.kind .EQUAL) #[a, b])] =>
+      let p ← try proveDiseq C a b catch _ => do
+        let some p ← proveT C e Node.mkFalse | throw "a disequality that is false"
+        pure p
+      return notTrue e p
+    | .app (.kind .EQUAL) #[a, b] =>
+      match ← proveT C a b with
+      | some p => return .eqTrue p
+      | none => return .rw (Node.eqNode a a)
+    | .app (.kind .NOT) #[x] =>
+      let some p ← proveT C x Node.mkFalse | throw "a literal that is false"
+      return notTrue x p
+    | x =>
+      let some p ← proveT C x Node.mkTrue | throw "a literal that is true"
+      return p
+
+  /-- A proof of `((= a b), false)`, from the reasons of the propagated
+  disequality of `a` and `b`. Only a disequality propagated by a trigger (whose
+  reason is the merge of the equality with `false`) is supported, in either
+  orientation (by `rw`, the two having the same rewrite). -/
+  partial def proveDiseq (C : BuildCtx) (a b : Node) : BuildM EqProof := do
+    let some i := C.ee.nodeIds.get? ⟨a⟩ | throw "a term is not in the engine"
+    let some j := C.ee.nodeIds.get? ⟨b⟩ | throw "a term is not in the engine"
+    let some (lo, hi) := C.ee.diseqReasons.get? (i, j) | throw "no reasons for a disequality"
+    if hi != lo + 1 then throw "a disequality from several reasons is not supported"
+    let (x, y) := C.ee.deducedReasons[lo]!
+    if y != C.ee.falseId then throw "a disequality reason is not a merge with false"
+    let some p ← proveIds C x y | throw "an empty disequality reason"
+    let e := Node.eqNode a b
+    if C.ee.nodes[x]! == e then return p
+    -- the other orientation: the two equalities have the same rewrite
+    let e' := C.ee.nodes[x]!
+    if e' == Node.eqNode b a && Telos.rewrite e == Telos.rewrite e' then
+      return .trans (.rw e) (.trans (.symm (.rw e')) p)
+    throw "a disequality reason for the other orientation"
+
 
   /-- The arguments of a term, as the builder counts them. -/
   partial def children : Node → Array Node
@@ -354,25 +434,6 @@ def proveTerms (C : BuildCtx) (t₁ t₂ : Node) : BuildM EqProof := do
   let some p ← proveIds C i₁ i₂ | throw "identical terms"
   return p
 
-/-- A proof of `((= a b), false)`, from the reasons of the propagated
-disequality of `a` and `b`. Only a disequality propagated by a trigger (whose
-reason is the merge of the equality with `false`) is supported, in either
-orientation (by `rw`, the two having the same rewrite). -/
-def proveDiseq (C : BuildCtx) (a b : Node) : BuildM EqProof := do
-  let some i := C.ee.nodeIds.get? ⟨a⟩ | throw "a term is not in the engine"
-  let some j := C.ee.nodeIds.get? ⟨b⟩ | throw "a term is not in the engine"
-  let some (lo, hi) := C.ee.diseqReasons.get? (i, j) | throw "no reasons for a disequality"
-  if hi != lo + 1 then throw "a disequality from several reasons is not supported"
-  let (x, y) := C.ee.deducedReasons[lo]!
-  if y != C.ee.falseId then throw "a disequality reason is not a merge with false"
-  let some p ← proveIds C x y | throw "an empty disequality reason"
-  let e := Node.eqNode a b
-  if C.ee.nodes[x]! == e then return p
-  -- the other orientation: the two equalities have the same rewrite
-  let e' := C.ee.nodes[x]!
-  if e' == Node.eqNode b a && Telos.rewrite e == Telos.rewrite e' then
-    return .trans (.rw e) (.trans (.symm (.rw e')) p)
-  throw "a disequality reason for the other orientation"
 
 /-- A certificate that a literal `lit`, explained by `E`, and the assumption
 `neg` that makes it false are contradictory: assumptions (`E`, `neg`, and the
@@ -381,7 +442,7 @@ def conflictOfPropagation (ee : EqualityEngine) (lits : Array Node) (E : Array N
     Except String (Array Node × EqProof) :=
   -- the premises of internal facts reach other asserted literals; the
   -- explanation's reasons that are internal facts are not assumptions
-  let noFacts := ee.dt.facts.isEmpty && ee.sets.facts.isEmpty
+  let noFacts := ee.dt.facts.isEmpty && ee.sets.facts.isEmpty && ee.strings.facts.isEmpty
   let E := if noFacts then E else E.filter lits.contains
   let A := E.push neg
   let A := if noFacts then A else A ++ lits.filter (fun l => !A.contains l)
@@ -413,7 +474,12 @@ def conflictOfConstants (ee : EqualityEngine) (lits : Array Node) (E : Array Nod
     let p ← proveTerms C t₁ t₂
     if t₁ == Node.mkTrue && t₂ == Node.mkFalse then return p
     if t₁ == Node.mkFalse && t₂ == Node.mkTrue then return .symm p
-    throw "a merge of constants other than true and false"
+    -- distinct values (strings, numbers): the rewriter evaluates their
+    -- equality to `false`
+    let e := Node.eqNode t₁ t₂
+    if t₁.isConst && t₂.isConst && Telos.rewrite e == Node.mkFalse then
+      return .trans (.symm (.eqTrue p)) (.rw e)
+    throw "a merge of constants that are not distinct values"
 
 /-- A proof of `(true, false)` from a proof `p` of `(x, b)` and one `q` of
 `(x, c)`, for distinct Boolean constants `b` and `c`. -/
@@ -559,5 +625,18 @@ def conflictOfSets (ee : EqualityEngine) (lits : Array Node) (id : String) (conf
       let some pa ← proveT C atom Node.mkTrue | throw "a membership that is true"
       memberConflict atom t pa
     | id => throw s!"a conflict of {id} is not supported"
+
+/-- A certificate of a conflict of the theory of strings, from the asserted
+literals `lits` (its assumptions): its premises from the engine, and the CPC
+proof of its inference `id` (`Telos/Solver/StringsCore.lean`). -/
+def conflictOfStrings (ee : EqualityEngine) (lits : Array Node) (id : String) (premises : Array Node) :
+    Except String (Array Node × EqProof) :=
+  let C := buildCtx ee lits lits
+  build lits do
+    let ps ← premises.mapM (proveLitTrue C)
+    let some q := StringsCore.proveFrom id premises ps Node.mkFalse
+      | throw s!"a conflict of {id} without a proof"
+    -- `(false, true)`, as `(true, false)`
+    return .symm q
 
 end Telos.Solver.EE

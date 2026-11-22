@@ -292,7 +292,7 @@ def processPendingConflict : EEM Unit := do
     for a in ← explainLit p do
       exp := flattenAnd a exp
   let conf := EE.mkAnd exp
-  modifyStrings fun s => { s with conflict := some (id, conf) }
+  modifyStrings fun s => { s with conflict := some (id, conf, premises) }
   note (.conflict stringsTheory id conf)
   modify fun s => { s with teConflict := true }
 

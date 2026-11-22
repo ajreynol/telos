@@ -16,6 +16,7 @@ import Telos.Solver.Cnf
 import Telos.Solver.SatProof
 import Telos.Solver.DtLemma
 import Telos.Solver.SetsLemma
+import Telos.Solver.StringsLemma
 import Telos.Solver.Theory.Arith.Solver
 import Telos.Solver.Decision
 
@@ -230,6 +231,9 @@ inductive Pending where
   | arith (cert : LinCert)
   /-- A conflict of the theory of sets: its inference and the conflict sent. -/
   | sets (id : String) (conf : Node)
+  /-- A conflict of the theory of strings: its inference and its premises
+  before their explanation. -/
+  | strings (id : String) (premises : Array Node)
   deriving Inhabited
 
 /-- The source of a formula given to the CNF stream (`Cnf.ClauseTag.src`), for
@@ -245,6 +249,9 @@ inductive SatSource where
   /-- A conflict of linear arithmetic, or a lemma's clause, with its
   certificate, if any (`SatProof.Just.arith`). -/
   | arith (cert : Option (Array Node × LinCert))
+  /-- A clause that follows by unit propagation from these clauses, with their
+  certificates (`stepClauses`). -/
+  | derived (aux : Array (Array Node × Option SatProof.Just))
   deriving Inhabited
 
 /-- The context-dependent state of the engine saved at a push (cvc5's `CDO`s
@@ -285,6 +292,8 @@ inductive SharedUndo where
   | notified (t : Key) (old : Option Nat)
   | marked (lit : Key)
   | markedBuiltin (lit : Key)
+  | sharedArith (lit : Key)
+  | propagator (lit : Key)
   deriving Inhabited
 
 structure State where
@@ -356,6 +365,12 @@ structure State where
   central equality engine's theories (`d_propagationMap`, by target). -/
   markedSat : Std.HashSet Key := {}
   markedBuiltin : Std.HashSet Key := {}
+  /-- The literals the shared solver asserted to arithmetic: the equality
+  engine explains them (`d_propagationMap` has them from `THEORY_BUILTIN`). -/
+  sharedArith : Std.HashSet Key := {}
+  /-- The theory that propagated each literal to the SAT solver first, which
+  explains it (`d_propagationMap`). -/
+  propagator : Std.HashMap Key Theory := {}
   sharedLog : Array SharedUndo := #[]
   /-- The lemmas sent, whose atoms are to be preregistered (`flushLemmas`). -/
   lemmaQueue : Array Node := #[]
@@ -496,6 +511,9 @@ def propagate (T : Theory) (lit : Node) : EngineM Unit := do
     if v == pol then return
     modify fun s => { s with inConflict := true }
   | none => pure ()
+  if !(← get).propagator.contains ⟨lit⟩ then
+    modify fun s => { s with propagator := s.propagator.insert ⟨lit⟩ T,
+                             sharedLog := s.sharedLog.push (.propagator ⟨lit⟩) }
   modify fun s => { s with propagated := s.propagated.push lit }
 
 /-- The key of a literal in the record of the literals given to theories
@@ -536,6 +554,9 @@ def assertShared (T : Theory) (lit : Node) : EngineM Unit := do
                            factsAsserted := true,
                            used := if s.used.contains T then s.used else s.used.push T }
   emit (.assert (← level) T norm)
+  if T == .THEORY_ARITH then
+    modify fun s => { s with sharedArith := s.sharedArith.insert ⟨norm⟩,
+                             sharedLog := s.sharedLog.push (.sharedArith ⟨norm⟩) }
   if T == .THEORY_DATATYPES then modify fun s => { s with dtFacts := s.dtFacts.push norm }
   if T == .THEORY_SETS then modify fun s => { s with setsFacts := s.setsFacts.push norm }
   if T == .THEORY_STRINGS then modify fun s => { s with stringsFacts := s.stringsFacts.push norm }
@@ -568,7 +589,12 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
       emit (.lemma (← level) T id lem)
       if (← read).satMode then
         let ord := (← read).order
-        let proof := if T == .THEORY_SETS then SetsLemma.prove id lem ord else DtLemma.prove id lem
+        let fresh := (← get).ee.freshIds
+        let proof := if T == .THEORY_SETS then SetsLemma.prove id lem ord
+          else if T == .THEORY_STRINGS then
+            -- the order in which the theory rewrote the lemma's parts
+            StringsLemma.prove id lem { ord with fresh }
+          else DtLemma.prove id lem
         modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lem, false, none, proof),
                                  outputUsed := true, lemmasAdded := true }
       else
@@ -589,6 +615,7 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
         let ee := (← get).ee
         let kind := if T == .THEORY_DATATYPES then ee.dt.conflict.map Pending.dt
           else if T == .THEORY_SETS then ee.sets.conflict.map fun (id, conf, _) => Pending.sets id conf
+          else if T == .THEORY_STRINGS then ee.strings.conflict.map fun (id, _, ps) => Pending.strings id ps
           else none
         -- sets' conflict, as the theory engine explains it (`getExplanation`)
         let exp := if T == .THEORY_SETS then
@@ -909,6 +936,8 @@ def popTo (k : Nat) : EngineM Unit := do
       | none => nt₀.erase t
     | .marked l => ms₀ := ms₀.erase l
     | .markedBuiltin l => mb₀ := mb₀.erase l
+    | .sharedArith l => modify fun s => { s with sharedArith := s.sharedArith.erase l }
+    | .propagator l => modify fun s => { s with propagator := s.propagator.erase l }
   modify fun s => { s with atomTerms := at₀, termTheories := tt₀, notified := nt₀, markedSat := ms₀,
                            markedBuiltin := mb₀, sharedLog := log.take sv.sharedLog }
   -- the atoms registered above level `k`
@@ -955,21 +984,38 @@ partial def formulaAtoms (n : Node) (acc : Array Node) : Array Node :=
   | .const (.boolean _) => acc
   | _ => if acc.contains n then acc else acc.push n
 
+/-- A literal that `explainAllSteps` explained other than as a literal of the
+SAT solver: by the linear solver (`arith`, with the certificate of the
+explanation), or by the equality engine. -/
+structure ExplainStep where
+  lit : Node
+  exp : Array Node
+  arith : Bool
+  cert : Option LinCert := none
+  deriving Inhabited
+
 /-- The explanation of literals as literals the SAT solver asserted: each
 literal that it did not assert (all of them, with `all`; else all but the
 first) is explained by the equality engine, in turn, until all are;
-conjunctions are split, and `true` dropped (`TheoryEngine::getExplanation`). -/
-def explainAll (lits : Array Node) (all : Bool) : EngineM (Array Node) := do
+conjunctions are split, and `true` dropped (`TheoryEngine::getExplanation`).
+With `record`, also the steps: each literal the linear solver explained, and
+each literal the equality engine explained that is one of `lits` or of a linear
+solver's explanation (the others are below an explanation of the equality
+engine, which proves them from the literals of the SAT solver). -/
+def explainAllSteps (lits : Array Node) (all : Bool) (record : Bool) :
+    EngineM (Array Node × Array ExplainStep) := do
   let asg := (← get).assignment
   let fromSat (l : Node) : Bool :=
     let (a, p) := atomOf l
     asg.get? ⟨a⟩ == some p
   let mut out : Array Node := #[]
-  let mut todo : Array Node := lits
+  let mut steps : Array ExplainStep := #[]
+  -- each literal, and whether it is one of `lits` or of an arithmetic explanation
+  let mut todo : Array (Node × Bool) := lits.map (·, true)
   let mut seen : Std.HashSet Key := {}
   let mut i := 0
   while i < todo.size do
-    let l := todo[i]!
+    let (l, top) := todo[i]!
     let forced := !all && i == 0
     i := i + 1
     if seen.contains ⟨l⟩ then continue
@@ -979,16 +1025,66 @@ def explainAll (lits : Array Node) (all : Bool) : EngineM (Array Node) := do
       if !out.contains l then out := out.push l
       continue
     match l with
-    | .app (.kind .AND) cs => todo := todo ++ cs
+    | .app (.kind .AND) cs => todo := todo ++ cs.map (·, top)
     | _ =>
       let c ← read
-      if c.arithSolver && c.theoryOf (atomOf l).1 == .THEORY_ARITH then
+      -- (a shared literal that the equality engine asserted to arithmetic is
+      -- the equality engine's: `d_propagationMap` has it from THEORY_BUILTIN)
+      let sa := (← get).sharedArith
+      let shared := sa.contains ⟨l⟩ || sa.contains ⟨flipEq l⟩
+      if c.arithSolver && c.theoryOf (atomOf l).1 == .THEORY_ARITH && !shared then
         -- `TheoryArith::explain`
-        todo := todo ++ (← withArith (Arith.explain l))
+        let e ← withArith (Arith.explain l)
+        if record && !forced then
+          steps := steps.push { lit := l, exp := e, arith := true, cert := ← withArith (Arith.explainCert l) }
+        todo := todo ++ e.map (·, true)
       else
         let (exp, _) ← runEE (EE.explainLit l)
-        todo := todo ++ exp
-  return out
+        if record && !forced && top then steps := steps.push { lit := l, exp, arith := false }
+        todo := todo ++ exp.map (·, false)
+  return (out, steps)
+
+def explainAll (lits : Array Node) (all : Bool) : EngineM (Array Node) :=
+  return (← explainAllSteps lits all false).1
+
+/-- The clause `[lit, ¬lit₀]`, for literals with the same polarity whose atoms
+have the same rewrite, with its certificate: the refutation of `¬lit` and
+`lit₀`. It relates a literal of a lemma as a theory stated it (`lit₀`) to the
+literal of its rewrite (`lit`). -/
+def rewriteClause (lit lit₀ : Node) : Option (Array Node × SatProof.Just) :=
+  let (a, pos) := atomOf lit
+  let (a₀, pos₀) := atomOf lit₀
+  if pos != pos₀ || Telos.rewrite a != Telos.rewrite a₀ then none else
+  -- `(l, true)` from the assumption `i`, the literal `l`
+  let isTrue (i : Nat) (l : Node) : EqProof := match l with
+    | .app (.kind .EQUAL) #[_, _] => .eqTrue (.assume i)
+    | _ => .assume i
+  let same : EqProof := .trans (.rw a) (.symm (.rw a₀))
+  let A := #[negate lit, lit₀]
+  -- (`(a, false)` and `(a₀, true)`, or `(a, true)` and `(a₀, false)`)
+  let q : EqProof := if pos then .trans (.symm (.trans same (isTrue 1 a₀))) (.assume 0)
+    else .trans (.symm (isTrue 0 a)) (.trans same (.assume 1))
+  if EqProof.checkConflict A q then some (#[lit, negate lit₀], .theory A q) else none
+
+/-- The clauses of the steps of an explanation (`explainAllSteps`) whose
+literals of the SAT solver are `out`, with their certificates: for a literal
+the linear solver explained, its explanation and the literal; for one the
+equality engine explained, the literal from `out` and the literals the linear
+solver explained (from the literals of the clause only). With them, the clause
+of a certificate over the literals explained gives the clause over `out` by
+unit propagation. -/
+def stepClauses (out : Array Node) (steps : Array ExplainStep) :
+    EngineM (Array (Array Node × Option SatProof.Just)) := do
+  let ints := (steps.filter (·.arith)).map (·.lit)
+  let ee := (← get).ee
+  return steps.map fun st =>
+    if st.arith then
+      ((st.exp.map negate).push st.lit, st.cert.map (.arith (st.exp.push (negate st.lit))))
+    else
+      let E := (out ++ ints).filter (· != st.lit)
+      match EE.conflictOfPropagation ee (E.push (negate st.lit)) E st.lit (negate st.lit) with
+      | .ok (A, q) => (A.map negate, some (.theory A q))
+      | .error _ => ((E.map negate).push st.lit, none)
 
 /-! ### The CNF stream (`Config.satMode`) -/
 
@@ -1214,17 +1310,33 @@ partial def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (p
     let conf := match lem with
       | .app (.kind .AND) cs => cs
       | l => #[l]
-    let exp ← explainAll conf true
-    -- its certificate, from the literals of the clause only
+    let (exp, steps) ← explainAllSteps conf true true
+    -- its certificate, from the literals of the clause only, and the literals
+    -- the linear solver explained
     let ee := (← get).ee
+    let ints := (steps.filter (·.arith)).map (·.lit)
+    let lits := exp ++ ints
     let cert := match kind with
-      | some (.constants a b) => (EE.conflictOfConstants ee exp exp a b).toOption
-      | some (.dt cf) => (EE.conflictOfDt ee exp cf).toOption
-      | some (.sets id conf) => (EE.conflictOfSets ee exp id conf).toOption
+      | some (.constants a b) => (EE.conflictOfConstants ee lits lits a b).toOption
+      | some (.dt cf) => (EE.conflictOfDt ee lits cf).toOption
+      | some (.sets id conf) => (EE.conflictOfSets ee lits id conf).toOption
+      | some (.strings id ps) => (EE.conflictOfStrings ee lits id ps).toOption
       | _ => none
     let src ← match kind with
-      | some (.arith p) => newSatSource (.arith (some (exp, p)))
-      | _ => newSatSource (.theory cert)
+      | some (.arith p) =>
+        if steps.isEmpty then newSatSource (.arith (some (exp, p)))
+        else
+          -- the certificate refutes the conflict's literals, which the steps
+          -- give from those of the clause
+          let A := conf.filter (· != Node.mkTrue)
+          newSatSource (.derived (#[(A.map negate, some (.arith A p))] ++ (← stepClauses exp steps)))
+      | _ =>
+        if ints.isEmpty then newSatSource (.theory cert)
+        else
+          let main := match cert with
+            | some (A, q) => (A.map negate, some (.theory A q))
+            | none => (lits.map negate, none)
+          newSatSource (.derived (#[main] ++ (← stepClauses exp (steps.filter (·.arith)))))
     withCnf (Cnf.convertAndAssert (cnfHostWith notifySatLiteral c) (EE.mkAnd exp) false (negated := true) src)
     -- (`PropEngine::assertLemmasInternal` notifies the decision engine)
     modify fun s => { s with decisionQueue := s.decisionQueue.push (Node.notNode (EE.mkAnd exp)) }
@@ -1241,7 +1353,22 @@ partial def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (p
         let lits := match lem with
           | .app (.kind .OR) cs => cs
           | l => #[l]
-        newSatSource (.arith (some (lits.map negate, p)))
+        let litsOf (l : Node) : Array Node := match l with
+          | .app (.kind .OR) cs => cs
+          | l => #[l]
+        -- the certificate refutes the negations of the lemma's literals: as
+        -- the clause has them, as the theory stated them, or as the theory
+        -- rewrote them (in its order)
+        let arithOrder := { c.arith.order with fresh := (← get).ee.freshIds }
+        let cands := #[lits, litsOf lem₀, litsOf (Telos.rewrite lem₀ arithOrder)]
+        let lits₀ := (cands.find? fun L => p.check (L.map negate)).getD lits
+        if lits₀.all lits.contains then newSatSource (.arith (some (lits.map negate, p)))
+        else
+          -- each relates to one of the clause by its rewrite
+          let rel := (lits₀.filter (!lits.contains ·)).map fun l₀ =>
+            lits.findSome? fun l => rewriteClause l l₀
+          let main := (lits₀, some (SatProof.Just.arith (lits₀.map negate) p))
+          newSatSource (.derived (#[main] ++ (rel.filterMap id).map fun (d, j) => (d, some j)))
       | _ =>
         let cert := proof.bind (DtLemma.forFormula lem₀ lem) |>.map (lem, ·)
         newSatSource (.lemma cert)
@@ -1896,7 +2023,7 @@ def certifyV (lits : List Node) (ee : EE.EqualityEngine) : Pending → Option (A
         | none => none
       else none
     | _, _ => none
-  | .dt _ | .arith _ | .sets .. => none
+  | .dt _ | .arith _ | .sets .. | .strings .. => none
 
 /-- The explanation of a pending conflict by the equality engine's own
 explanation (`EE.explainLit`, not verified), and the certificate of the
@@ -1914,6 +2041,7 @@ def explainPending (s : State) : Pending → Array Node × Except String (Array 
   | .dt cf => (#[], EE.conflictOfDt s.ee s.asserted cf)
   | .arith _ => (#[], .error "a conflict of linear arithmetic, outside the SAT solver")
   | .sets id conf => (#[], EE.conflictOfSets s.ee s.asserted id conf)
+  | .strings id ps => (#[], EE.conflictOfStrings s.ee s.asserted id ps)
 
 /-- The event of a pending conflict, with its explanation. -/
 def Pending.event (k : Nat) (exp : Array Node) : Pending → Event
@@ -1922,6 +2050,7 @@ def Pending.event (k : Nat) (exp : Array Node) : Pending → Event
   | .dt cf => .conflict k .THEORY_DATATYPES cf.id (EE.mkAnd exp)
   | .arith _ => .conflict k .THEORY_ARITH "" (EE.mkAnd exp)
   | .sets id _ => .conflict k .THEORY_SETS id (EE.mkAnd exp)
+  | .strings id _ => .conflict k .THEORY_STRINGS id (EE.mkAnd exp)
 
 /-- Run `solve` on `lits`. An `unsat` answer stands only if it is certified:
 by the verified explanation of its conflict (`certifyV`), or else by a

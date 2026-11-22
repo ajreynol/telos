@@ -183,8 +183,9 @@ structure State where
   equality engine merges (the eager solver's), sent after the fact: its
   inference, and its premises. -/
   pendingConflict : Option (String × Array Node) := none
-  /-- The last conflict of the theory: its inference and the conflict sent. -/
-  conflict : Option (String × Node) := none
+  /-- The last conflict of the theory: its inference, the conflict sent, and
+  its premises before their explanation (for the certificate). -/
+  conflict : Option (String × Node × Array Node) := none
   trail : Array Undo := #[]
   /-- The trail, function-term and disequality sizes saved at each push. -/
   saved : Array (Nat × Nat × Nat) := #[]
