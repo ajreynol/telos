@@ -208,6 +208,26 @@ def ufq_quant(rng):
     body = lits[0] if k == 1 else "(or " + " ".join(lits) + ")"
     binds = " ".join(f"({x} U)" for x in xs)
     q = "forall" if rng.random() < 0.8 else "exists"
+    if rng.random() < 0.35:
+        # an annotation: user patterns (a term of each variable, or one term of
+        # all), a term excluded from triggers, a name
+        attrs = []
+        for _ in range(rng.randint(1, 2)):
+            r = rng.random()
+            if r < 0.7:
+                if len(xs) == 1 or rng.random() < 0.5:
+                    t = f"(f {xs[0]})" if len(xs) == 1 else f"(g {xs[0]} {xs[1]})"
+                    if rng.random() < 0.5:
+                        t = f"(f {ufq_term(rng, 1, xs)})" if len(xs) == 1 else t
+                    pats = [t]
+                else:
+                    pats = [f"(f {xs[0]})", f"(f {xs[1]})"]
+                attrs.append(":pattern (" + " ".join(pats) + ")")
+            elif r < 0.85:
+                attrs.append(f":no-pattern (f {xs[0]})")
+            else:
+                attrs.append(f":qid q{rng.randint(0, 99)}")
+        body = f"(! {body} {' '.join(attrs)})"
     return f"({q} ({binds}) {body})"
 
 

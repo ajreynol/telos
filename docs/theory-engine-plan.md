@@ -1826,11 +1826,47 @@ telos's `--trigger`). Fuzz (`ufq --ieval-off --triggers`, 100 each): seed 1
 and 68; the rest are `sat` answers of vacuous quantifiers, cvc5 timeouts, and
 the differences above. On cvc5's `regress0/quantifiers`, the failures are
 outside step 2: user patterns (`:pattern`, `:qid` attributes, not parsed),
-arrays, quantified arithmetic (step 3), nonlinear arithmetic. Open in step 2:
-user patterns (`InstStrategyUserPatterns`, the pattern list through parsing,
-preprocessing and rewriting), relational and arithmetic triggers, the
-candidate generators of datatypes (selectors, single-constructor expansion),
-`getTermForType`, the certificate of `QUANTIFIERS_TDB_DEQ_CONG`.
+arrays, quantified arithmetic (step 3), nonlinear arithmetic. User patterns (`user-pat=trust`):
+- the front end reads `(! body :pattern (…) :no-pattern t :qid n)` (and drops
+  `:named`) around Logos's parser, which has no attributes: the quantifier is
+  read without them, each term of its annotation as an assumption of its own in
+  the same binders and `let`s, and the annotation is put back on the
+  quantifier's node (`INST_PATTERN_LIST` of `INST_PATTERN`, `INST_NO_PATTERN`,
+  `INST_ATTRIBUTE`; `Telos/Frontend/Script.lean`). `toEo` drops it;
+- the quantifiers rewriter keeps or drops the list as cvc5's steps do
+  (`rewriteForallPats`): kept by `exists` elimination, NNF, conditional
+  splitting, the removal of unused variables, prenex merging (an inner
+  quantifier's list); dropped by variable elimination and splits; no
+  miniscoping or prenexing with a pattern. Each such step is the step on the
+  quantifier without its list, between `refl` steps (`castEo`: the two have
+  the same CPC term);
+- E-matching makes the triggers of the user patterns when a formula is
+  registered (`user-trigger`, `TR_MAKE_NEW`), runs them before the automatic
+  strategy, which skips formulas with user patterns; `:no-pattern` terms are
+  excluded from selection; a `:qid` names the formula in the trigger output;
+  a variable no pattern binds gets a term of its type (`getTermForType`).
+
+Fidelity fixes with them: a lemma of the quantifiers engine is not oriented
+again when it is given to the SAT solver (`Pending.quant`: it is rewritten at
+cvc5's node order already); the engine's terms are ordered by their node
+numbers (the input's, then those made while solving) before the equality
+engine's age; the last `:qid` names a formula. Fuzz (`ufq` with annotations,
+`--clauses --triggers --ieval-off`, seeds 1 to 3): 70, 62 and 69 the same
+events; besides vacuous `sat` answers and cvc5 timeouts, the differences left
+are cvc5's fresh variables of miniscoping (an alpha lemma telos does not
+have) and an explanation of cvc5's SAT proof manager (the explanations of the
+leaves of its proof of `false`, `finalizeProof`'s fixed point, not ported).
+
+Holes filled: alpha-equivalence (`QuantAlpha.lean`: cvc5's `TermCanonize`
+and `AlphaEquivalenceDb`; the lemma `(= q' q)`, `QUANTIFIERS_REDUCE_ALPHA_EQ`,
+and `q` neither registered nor skolemized; certified by `refl` when only the
+annotations differ, else `alpha_equiv`), the certificate of
+`QUANTIFIERS_TDB_DEQ_CONG` (`cong` under its antecedent). Not ported (expert
+options, off by default): relational, purified and partial triggers. Open:
+the solving of arithmetic literals for a usable monomial
+(`getIsUsableTrigger`), the candidate generators of datatypes, cvc5's fresh
+variables of miniscoping (telos keeps the names, so where cvc5 has two
+alpha-equivalent formulas, telos has one, and no alpha lemma).
 
 Steps, each with its fuzz generator, events and certificates:
 1. the engine's skeleton, skolemization, the instantiation manager, the term

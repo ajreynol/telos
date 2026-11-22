@@ -292,6 +292,15 @@ def Node.toSmtLibTop (N : DtNames) (pc : Node → String) : Node → String
     "(" ++ String.intercalate " " (s!"(_ is {c})" :: cs.toList.map pc) ++ ")"
   | .app (.node .APPLY_UPDATER f) cs =>
     "(" ++ String.intercalate " " (s!"(_ update {pc f})" :: cs.toList.map pc) ++ ")"
+  -- a quantifier with patterns: `(forall (…) (! body :pattern (…) … :qid n))`
+  | .app (.kind k) #[bvl, body, .app (.kind .INST_PATTERN_LIST) ps] =>
+    let attr (p : Node) : String := match p with
+      | .app (.kind .INST_PATTERN) ts => ":pattern (" ++ String.intercalate " " (ts.toList.map pc) ++ ")"
+      | .app (.kind .INST_NO_PATTERN) #[t] => ":no-pattern " ++ pc t
+      | .app (.kind .INST_ATTRIBUTE) #[.const (.string key), .const (.string v)] =>
+        ":" ++ String.ofList (key.map Char.ofNat) ++ " " ++ String.ofList (v.map Char.ofNat)
+      | p => pc p
+    s!"({k.smtLibName} {pc bvl} (! {pc body} " ++ String.intercalate " " (ps.toList.map attr) ++ "))"
   | .app (.kind .BOUND_VAR_LIST) vs =>
     "(" ++ String.intercalate " " (vs.toList.map fun
       | .boundVar n T => s!"({n} {T.toSmtLibWith N})"

@@ -1,5 +1,6 @@
 import Telos.Solver.Theory.QuantConflictFind
 import Telos.Solver.Theory.QuantTrigger
+import Telos.Solver.Theory.QuantAlpha
 
 /-!
 # The quantifiers engine's state, and instantiation
@@ -24,6 +25,8 @@ structure Eng where
   funcRelDom : Std.HashMap Key (Array Node) := {}
   /-- E-matching (`QuantTrigger.lean`). -/
   em : EmData := {}
+  /-- Alpha-equivalence (`QuantAlpha.lean`). -/
+  alpha : AlphaDb := {}
   /-- The nodes made while solving, numbered (the equality engine's
   `freshIds`, given and taken back by each call). -/
   fresh : Std.HashMap Key Nat := {}
@@ -32,7 +35,7 @@ structure Eng where
 /-- A trigger made (`-o trigger`): its formula, its terms, and its tag
 (`simple`, `multi`, or none); or a formula with no trigger (`no-trigger`). -/
 inductive TrigOut where
-  | trigger (q : Node) (nodes : Array Node) (tag : String)
+  | trigger (q : Node) (nodes : Array Node) (tag : String) (user : Bool := false)
   | noTrigger (q : Node)
   deriving Inhabited
 
@@ -91,6 +94,25 @@ def addInstantiation (rd : Round) (q : Node) (terms : Array Node) (id : String) 
   let o := { c.order with fresh }
   let lem := c.rewriteAt o lem₀
   return (← emitLemma { id, lem, inst := some (q, terms, lem₀), order := some o }, rd)
+
+/-- `QuantifiersEngine::reduceQuantifier`: `q` is alpha-equivalent to a formula
+registered before, `q'`: the lemma `(= q' q)` (`QUANTIFIERS_REDUCE_ALPHA_EQ`),
+and `q` is reduced. Once per formula (user context). -/
+def reduceQuantifier (q : Node) : EM Bool := do
+  if let some b := (← get).alpha.red.get? ⟨q⟩ then return b
+  let c ← ectx
+  let key := alphaKey c.lt (quantVars q) (quantBody q)
+  let red ← match (← get).alpha.trie.get? key with
+    | some q' =>
+      if q' != q then
+        let _ ← emitLemma { id := "QUANTIFIERS_REDUCE_ALPHA_EQ", lem := Node.eqNode q' q }
+        pure true
+      else pure false
+    | none =>
+      modify fun e => { e with alpha := { e.alpha with trie := e.alpha.trie.insert key q } }
+      pure false
+  modify fun e => { e with alpha := { e.alpha with red := e.alpha.red.insert ⟨q⟩ red } }
+  return red
 
 /-- `FirstOrderModel::markRelevant`. -/
 def markRelevant (q : Node) : EM Unit :=

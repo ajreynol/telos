@@ -51,6 +51,8 @@ structure Sel where
   visited : Std.HashMap Key (Array Node) := {}
   tinfo : Std.HashMap Key TInfo := {}
   tkeys : Array Node := #[]
+  /-- The terms excluded from triggers (`:no-pattern`, `d_user_no_gen`). -/
+  excluded : Array Node := #[]
   deriving Inhabited
 
 abbrev SelM := StateM Sel
@@ -240,7 +242,7 @@ partial def collectTerms (nvars : Nat) (n : Node) (tstrt : SelMode) (added : Arr
   if ← isVarOf n then return added
   let mut nu : Option Node := none
   if knowIsUsable then nu := some n
-  else if nk != .NOT then
+  else if nk != .NOT && !(← get).excluded.contains n then
     nu ← getIsUsableTrigger n
     if let some nu' := nu then
       if nu' != n then
@@ -470,6 +472,8 @@ structure EmData where
   processed : Std.HashSet (Key × Nat) := {}
   /-- The selection state of each formula (its variables, node numbering). -/
   sel : Std.HashMap Key Sel := {}
+  /-- The triggers of the user patterns of each formula (`d_user_gen`). -/
+  userGen : Std.HashMap Key (Array Nat) := {}
   /-- cvc5's random numbers (`Random::getRandom`). -/
   rng : MT := MT.cvc5
   deriving Inhabited
@@ -481,7 +485,16 @@ def selOf (em : EmData) (q : Node) : Sel :=
   | some s => s
   | none =>
     let vars := (quantVars q).zipIdx.foldl (fun m (v, i) => m.insert ⟨v⟩ i) {}
-    ((numberBody (quantBody q)).run { vars }).2
+    -- the patterns are substituted first (`InstantiationEngine::registerQuantifier`)
+    let ipl := q.getChildren[2]?
+    let excluded := match ipl with
+      | some l => l.getChildren.filterMap fun p =>
+        if p.getKind == .INST_NO_PATTERN then p.getChildren[0]? else none
+      | none => #[]
+    let go : SelM Unit := do
+      if let some l := ipl then numberBody l
+      numberBody (quantBody q)
+    (go.run { vars, excluded }).2
 
 /-! ### Construction (`initialize`, `mkInstMatchGenerator`) -/
 

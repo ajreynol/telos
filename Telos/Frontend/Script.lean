@@ -1,6 +1,7 @@
 import Cpc.Api
 import Telos.Core.Node.OfEo
 import Telos.Core.Node.Print
+import Telos.Core.Node.Key
 import Telos.Core.Proof.Eunoia
 
 /-!
@@ -280,6 +281,141 @@ def toNode (name : Nat → Option String) (t : Term) : Except String Node :=
     | some n => .ok n
     | none => .error "the term uses an operator telos does not support yet"
 
+/-! ### Annotations of quantifiers
+
+Logos's parser has no attributes (`!`: CPC has no patterns). An annotated
+quantifier `(forall bs (! body :pattern (p₁ … pₙ) :no-pattern t :qid n))` is
+read without its annotation, and its annotation is read on the side: the
+quantifier and each term of its annotation are read as assumptions of their
+own, in the binders and `let`s around the quantifier (`Frame`), then put back
+on the quantifier's node as its pattern list (`INST_PATTERN_LIST`). A `:named`
+term is read as its term. -/
+
+/-- A binder or `let` around a subterm. -/
+inductive Frame where
+  | binder (head : String) (bs : Sexp)
+  | lets (bs : Sexp)
+
+/-- `s` in the frames (the innermost first). -/
+def wrapFrames (fs : List Frame) (s : Sexp) : Sexp :=
+  fs.foldl (fun s f => match f with
+    | .binder h bs => .expr [.atom h, bs, s]
+    | .lets bs => .expr [.atom "let", bs, s]) s
+
+/-- The number of binders of the frames. -/
+def Frame.binders (fs : List Frame) : Nat := (fs.filter fun | .binder .. => true | _ => false).length
+
+/-- An element of an annotation: a pattern, an excluded term, or `:qid`. -/
+inductive AnnotElem where
+  | pattern (ts : List Sexp)
+  | noPattern (t : Sexp)
+  | qid (name : String)
+
+/-- An annotated quantifier: its frames, the quantifier without its
+annotation, and the annotation. -/
+structure Annot where
+  /-- The command it is in. -/
+  item : Nat := 0
+  frames : List Frame
+  quant : Sexp
+  bs : Sexp
+  elems : List AnnotElem
+
+/-- The attributes of a `!`: the annotation's elements, and whether all are
+supported. -/
+partial def readAttrs : List Sexp → Except String (List AnnotElem)
+  | [] => pure []
+  | .atom ":pattern" :: .expr ts :: rest => return .pattern ts :: (← readAttrs rest)
+  | .atom ":no-pattern" :: t :: rest => return .noPattern t :: (← readAttrs rest)
+  | .atom ":qid" :: .atom n :: rest => return .qid n :: (← readAttrs rest)
+  | .atom ":named" :: .atom _ :: rest => readAttrs rest
+  | a :: _ => throw s!"unsupported attribute: {a.serialize}"
+
+/-- `s` without its annotations, and the annotated quantifiers in it. -/
+partial def stripAnnots (fs : List Frame) (s : Sexp) : Except String (Sexp × Array Annot) := do
+  match s with
+  | .expr [.atom q, bs, body] =>
+    if q == "forall" || q == "exists" then
+      let fs' := Frame.binder q bs :: fs
+      match body with
+      | .expr (.atom "!" :: b :: attrs) =>
+        let (b', as) ← stripAnnots fs' b
+        let elems ← readAttrs attrs
+        let quant := Sexp.expr [.atom q, bs, b']
+        if elems.isEmpty then return (quant, as)
+        return (quant, as.push { frames := fs, quant, bs, elems })
+      | _ =>
+        let (b', as) ← stripAnnots fs' body
+        return (.expr [.atom q, bs, b'], as)
+    else if q == "let" then
+      let (bs', as₁) ← stripAnnots fs bs
+      let (b', as₂) ← stripAnnots (Frame.lets bs :: fs) body
+      return (.expr [.atom q, bs', b'], as₁ ++ as₂)
+    else
+      let (cs, as) ← stripList fs [bs, body]
+      return (.expr (.atom q :: cs), as)
+  | .expr [.atom "!", t, .atom ":named", .atom _] => stripAnnots fs t
+  | .expr (.atom "!" :: _) => throw s!"unsupported annotation: {s.serialize}"
+  | .expr cs =>
+    let (cs', as) ← stripList fs cs
+    return (.expr cs', as)
+  | s => return (s, #[])
+where
+  stripList (fs : List Frame) (cs : List Sexp) : Except String (List Sexp × Array Annot) :=
+    cs.foldlM (fun (acc, as) c => do
+      let (c', as') ← stripAnnots fs c
+      return (acc ++ [c'], as ++ as')) ([], #[])
+
+/-- The assumptions that read an annotation: its quantifier, then each term
+of its patterns and excluded terms, each as `(forall bs (= t t))`, in the
+frames. -/
+def Annot.reads (a : Annot) : List Sexp :=
+  let term (t : Sexp) := wrapFrames a.frames (.expr [.atom "forall", a.bs, .expr [.atom "=", t, t]])
+  wrapFrames a.frames a.quant :: a.elems.flatMap fun
+    | .pattern ts => ts.map term
+    | .noPattern t => [term t]
+    | .qid _ => []
+
+/-- The node of `t` read in `k` binders: its body below them. -/
+def peelBinders : Nat → Node → Node
+  | 0, n => n
+  | k + 1, n => peelBinders k (n.getChildren[1]?.getD n)
+
+/-- The string constant of a name. -/
+def strConst (s : String) : Node := .const (.string (s.toList.map Char.toNat))
+
+/-- The annotated quantifier, from the nodes its assumptions read
+(`Annot.reads`): the quantifier, and its pattern list. -/
+def Annot.build (a : Annot) (nodes : List Node) : Option (Node × Node) := do
+  let k := Frame.binders a.frames
+  let q ← nodes.head?
+  let q := peelBinders k q
+  let mut rest := nodes.tail
+  let term (n : Node) : Node := ((peelBinders (k + 1) n).getChildren[0]?).getD n
+  let mut ps : Array Node := #[]
+  for e in a.elems do
+    match e with
+    | .pattern ts =>
+      let (here, more) := (rest.take ts.length, rest.drop ts.length)
+      rest := more
+      ps := ps.push (.app (.kind .INST_PATTERN) (here.map term).toArray)
+    | .noPattern _ =>
+      let some t := rest.head? | none
+      rest := rest.tail
+      ps := ps.push (.app (.kind .INST_NO_PATTERN) #[term t])
+    | .qid n => ps := ps.push (.app (.kind .INST_ATTRIBUTE) #[strConst "qid", strConst n])
+  let .app op cs := q | none
+  return (q, .app op (cs.push (.app (.kind .INST_PATTERN_LIST) ps)))
+
+/-- `n` with the quantifiers of `σ` annotated. -/
+partial def annotate (σ : Std.HashMap Key Node) (n : Node) : Node :=
+  if σ.isEmpty then n else
+  match σ.get? ⟨n⟩ with
+  | some m => m
+  | none => match n with
+    | .app op cs => .app op (cs.map (annotate σ))
+    | n => n
+
 /-- Read a script. Numerals in positions of type `Real` are reals
 (`cvc5Numerals`). With `cvc5Output`, the script is cvc5's output (its
 preprocessed assertions, a replayed trace), whose constants are read as cvc5
@@ -299,6 +435,7 @@ def readScript (input : String) (cvc5Output : Bool := false) : Except String Scr
   let mut checkSat := false
   -- the arithmetic types of the symbols (of the return types of functions)
   let mut numEnv : List (String × NumTy) := []
+  let mut annots : Array Annot := #[]
   for s in ss do
     let s := bvNumerals s
     let s : Sexp := match s with
@@ -361,28 +498,48 @@ def readScript (input : String) (cvc5Output : Bool := false) : Except String Scr
       | .expr [.atom "define-fun", .atom f, .expr args, _, body] =>
         eunoia := eunoia.push (Sexp.expr [.atom "define", .atom f, .expr args, body]).serialize
       | .expr [.atom "simplify", t] =>
+        let (t, as) ← stripAnnots [] t
+        annots := annots ++ as.map ({ · with item := items.size })
         let t := t.serialize
         eunoia := eunoia.push s!"(assume @s{items.size} (= {t} {t}))"
         items := items.push (true, t)
       | .expr [.atom "assert", t] =>
         if checkSat then throw "incremental scripts are not supported: an assertion after check-sat"
+        let (t, as) ← stripAnnots [] t
+        annots := annots ++ as.map ({ · with item := items.size })
         let t := t.serialize
         eunoia := eunoia.push s!"(assume @s{items.size} {t})"
         items := items.push (false, t)
       | _ => throw s!"unsupported command: {s.serialize}"
     | _ => throw s!"unsupported command: {s.serialize}"
+  -- the annotations, read after the assertions
+  for a in annots do
+    for r in a.reads do
+      eunoia := eunoia.push s!"(assume @a{eunoia.size} {r.serialize})"
   let (assums, _) ← parseProof ("\n".intercalate eunoia.toList)
   let constName := fun i => consts[i - 1]?
   let dtNames := { mkDtNames dts with sort := fun i => sorts[i - 1]? }
   let names : Eunoia.Names :=
     { sort := fun i => sorts[i - 1]?, dt := dtNames }
   let read := items.toList.zip assums
-  let queries := read.filterMap fun ((simp, src), t) =>
-    if simp then some ⟨src, toNode constName t⟩ else none
-  let assertions := read.filterMap fun ((simp, src), t) =>
+  -- the annotated quantifiers
+  let mut aux := assums.drop items.size
+  -- (by command: the same quantifier may have other annotations elsewhere)
+  let mut σs : Std.HashMap Nat (Std.HashMap Key Node) := {}
+  for a in annots do
+    let k := a.reads.length
+    let nodes := (aux.take k).filterMap fun t => Node.ofEo [] (nameConsts constName t)
+    aux := aux.drop k
+    if nodes.length == k then
+      if let some (q, q') := a.build nodes then
+        σs := σs.insert a.item (((σs.get? a.item).getD {}).insert ⟨q⟩ q')
+  let read := read.zipIdx
+  let queries := read.filterMap fun (((simp, src), t), i) =>
+    if simp then some ⟨src, (toNode constName t).map (annotate ((σs.get? i).getD {}))⟩ else none
+  let assertions := read.filterMap fun (((simp, src), t), i) =>
     if simp then none
     else some ⟨src, match Node.ofEo [] (nameConsts constName t) with
-      | some n => .ok n
+      | some n => .ok (annotate ((σs.get? i).getD {}) n)
       | none => .error "the term uses an operator telos does not support yet"⟩
   return { decls := decls.toList, names, queries, dtNames, assertions, logic, decision,
            symbols := symbols.toList }

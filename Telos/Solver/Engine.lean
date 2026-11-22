@@ -241,6 +241,10 @@ inductive Pending where
   /-- A conflict of the theory of strings: its inference and its premises
   before their explanation. -/
   | strings (id : String) (premises : Array Node)
+  /-- A lemma of the quantifiers engine, rewritten at cvc5's node order (its
+  instance's nodes numbered as the substitution makes them): not oriented
+  again. -/
+  | quant
   deriving Inhabited
 
 /-- The source of a formula given to the CNF stream (`Cnf.ClauseTag.src`), for
@@ -702,7 +706,10 @@ def quantCtx : EngineM Quant.Ctx := do
     return out
   return { hasTerm := fun t => ee.nodeIds.contains ⟨t⟩, rep, areEqual, areDisequal, members,
            order := c.order, rewriteAt := fun o t => Telos.rewrite t o,
-           lt := fun a b => EE.ageLt ee.nodeIds a b c.declOrder c.order, reps,
+           lt := fun a b => match ord.id? a, ord.id? b with
+             | some i, some j => i < j
+             | _, _ => EE.ageLt ee.nodeIds a b c.declOrder c.order,
+           reps,
            facts := s.ufFacts ++ s.arithFacts ++ s.dtFacts ++ s.setsFacts ++ s.stringsFacts ++ s.quantFacts,
            rewrite := fun t => Telos.rewrite t ord }
 
@@ -721,13 +728,13 @@ def quantRun (x : Quant.EM α) (flush : EngineM Unit := pure ()) : EngineM α :=
   if (← read).triggerEvents then
     for (_, t) in out.triggers do
       match t with
-      | .trigger q ns tag => emit (.trigger q ns tag)
+      | .trigger q ns tag u => emit (.trigger q ns tag u)
       | .noTrigger q => emit (.noTrigger q)
   -- each lemma, then its atoms preregistered (`TheoryEngine::lemma`)
   for l in out.lemmas do
     emit (.lemma (← level) .THEORY_QUANTIFIERS l.id l.lem)
     if (← read).satMode then
-      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (l.lem, false, none, QuantLemma.prove l),
+      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (l.lem, false, some .quant, QuantLemma.prove l),
                                outputUsed := true, lemmasAdded := true }
     else
       modify fun s => { s with lemmaSent := true, lemmaQueue := s.lemmaQueue.push l.lem, lemmasAdded := true }
@@ -1469,7 +1476,8 @@ partial def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (p
     -- the lemma's nodes are created before its rewrite (cvc5's node ids)
     let lem := Telos.rewrite lem (← withEE (EE.numbered lem))
     let ids := (← get).ee.nodeIds
-    let lem := if c.cvc5Order then orientEqs ids lem c.declOrder else lem
+    let lem := if c.cvc5Order && !(match kind with | some .quant => true | _ => false) then
+      orientEqs ids lem c.declOrder else lem
     -- the formula's proof, from the lemma's
     let src ← match kind with
       | some (.arith p) =>
@@ -2172,6 +2180,7 @@ def certifyV (lits : List Node) (ee : EE.EqualityEngine) : Pending → Option (A
       else none
     | _, _ => none
   | .dt _ | .arith _ | .sets .. | .strings .. => none
+  | .quant => none
 
 /-- The explanation of a pending conflict by the equality engine's own
 explanation (`EE.explainLit`, not verified), and the certificate of the
@@ -2190,6 +2199,7 @@ def explainPending (s : State) : Pending → Array Node × Except String (Array 
   | .arith _ => (#[], .error "a conflict of linear arithmetic, outside the SAT solver")
   | .sets id conf => (#[], EE.conflictOfSets s.ee s.asserted id conf)
   | .strings id ps => (#[], EE.conflictOfStrings s.ee s.asserted id ps)
+  | .quant => (#[], .error "a lemma of the quantifiers engine is not a conflict")
 
 /-- The event of a pending conflict, with its explanation. -/
 def Pending.event (k : Nat) (exp : Array Node) : Pending → Event
@@ -2199,6 +2209,7 @@ def Pending.event (k : Nat) (exp : Array Node) : Pending → Event
   | .arith _ => .conflict k .THEORY_ARITH "" (EE.mkAnd exp)
   | .sets id _ => .conflict k .THEORY_SETS id (EE.mkAnd exp)
   | .strings id _ => .conflict k .THEORY_STRINGS id (EE.mkAnd exp)
+  | .quant => .conflict k .THEORY_QUANTIFIERS "" (EE.mkAnd exp)
 
 /-- Run `solve` on `lits`. An `unsat` answer stands only if it is certified:
 by the verified explanation of its conflict (`certifyV`), or else by a

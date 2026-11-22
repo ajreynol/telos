@@ -112,7 +112,7 @@ inductive Event where
   cvc5 creates them). -/
   | skolem (k : Node)
   /-- A trigger made (`-o trigger`), and a formula with no trigger. -/
-  | trigger (q : Node) (nodes : Array Node) (tag : String)
+  | trigger (q : Node) (nodes : Array Node) (tag : String) (user : Bool := false)
   | noTrigger (q : Node)
   deriving Inhabited
 
@@ -123,7 +123,7 @@ def Event.nodes : Event → List Node
   | .fact _ _ _ l e | .explain _ l e | .eeMerge _ l e => [l, e]
   | .eeDiseq _ a b r => [a, b, r]
   | .check .. | .pop _ | .modelUnsound .. | .refutationUnsound .. => []
-  | .trigger q ns _ => q :: ns.toList
+  | .trigger q ns _ _ => q :: ns.toList
   | .noTrigger q => [q]
 
 /-- The event with its nodes mapped by `f` (for naming skolems). -/
@@ -140,9 +140,20 @@ def Event.map (f : Node → Node) : Event → Event
   | .eeMerge k a b => .eeMerge k (f a) (f b)
   | .eeDiseq k a b r => .eeDiseq k (f a) (f b) (f r)
   | .skolem t => .skolem (f t)
-  | .trigger q ns tag => .trigger (f q) (ns.map f) tag
+  | .trigger q ns tag u => .trigger (f q) (ns.map f) tag u
   | .noTrigger q => .noTrigger (f q)
   | e => e
+
+/-- A quantified formula as cvc5 names it (`quantToString`): its (last)
+`:qid`, or itself. -/
+def quantName (N : DtNames) (q : Node) : String :=
+  let qid := match q.getChildren[2]? with
+    | some l => l.getChildren.reverse.findSome? fun (p : Node) => match p with
+      | .app (.kind .INST_ATTRIBUTE) #[.const (.string k), .const (.string v)] =>
+        if String.ofList (k.map Char.ofNat) == "qid" then some (String.ofList (v.map Char.ofNat)) else none
+      | _ => none
+    | none => none
+  qid.getD (q.toSmtLibLet N)
 
 /-- The event as cvc5 prints it, without the newline. -/
 def Event.print (N : DtNames) : Event → String
@@ -162,9 +173,9 @@ def Event.print (N : DtNames) : Event → String
   | .eeMerge k a b => s!"(ee-merge {k} {a.toSmtLibLet N} {b.toSmtLibLet N})"
   | .eeDiseq k a b r => s!"(ee-diseq {k} {a.toSmtLibLet N} {b.toSmtLibLet N} {r.toSmtLibLet N})"
   | .skolem _ => ""
-  | .trigger q ns tag =>
+  | .trigger q ns tag u =>
     let nodes := " ".intercalate (ns.toList.map (·.toSmtLibLet N))
-    s!"(trigger {q.toSmtLibLet N} ({nodes}){if tag.isEmpty then "" else " :" ++ tag})"
-  | .noTrigger q => s!"(no-trigger {q.toSmtLibLet N})"
+    s!"({if u then "user-trigger" else "trigger"} {quantName N q} ({nodes}){if tag.isEmpty then "" else " :" ++ tag})"
+  | .noTrigger q => s!"(no-trigger {quantName N q})"
 
 end Telos.Solver

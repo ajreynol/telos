@@ -64,7 +64,15 @@ def imResetAll : GM Unit := modify fun s => { s with m := s.m.map fun _ => none 
 /-- `Trigger::sendInstantiation`, then `Instantiate::addInstantiation`. (A
 variable left unbound has no term yet: the instance is not sent.) -/
 def sendInst (terms : Array (Option Node)) : GM Bool := do
-  let some ts := terms.mapM id | return false
+  -- a variable not bound (by a user pattern): a term of its type
+  let vs := quantVars (← get).q
+  let mut ts : Array Node := #[]
+  for i in [0:terms.size] do
+    match terms[i]! with
+    | some t => ts := ts.push t
+    | none =>
+      let some t ← tdb (getTermForType (vs[i]?.bind (·.typeHint))) | return false
+      ts := ts.push t
   let s ← get
   let (ok, rd) ← (addInstantiation s.rd s.q ts s.id : EM _)
   modify fun s => { s with rd }
@@ -432,19 +440,33 @@ def generatePatternTerms (q : Node) : EM Bool := do
   modify fun e => { e with em := { e.em with patTerms := e.em.patTerms.insert ⟨q⟩ sm } }
   return true
 
-/-- `TriggerDatabase::mkTrigger`: the trigger of the terms (those needed to
-bind the variables), new, or (`getOld`) the one made before, or none if it was
-made (`TR_RETURN_NULL`). -/
-def mkTrigger (q : Node) (nodes : Array Node) (getOld : Bool) : EM (Option Nat) := do
-  let nv := (quantVars q).size
-  let useN := ((← get).em.numTrigVars.get? ⟨q⟩).getD 0
-  let nvars := if useN == 0 then nv else useN
-  let some trNodes ← onSel q (mkTriggerTerms nodes nvars) | return none
+/-- The user patterns of `q` (`INST_PATTERN`), each a list of terms. -/
+def userPatterns (q : Node) : Array (Array Node) :=
+  match q.getChildren[2]? with
+  | some l => l.getChildren.filterMap fun p => if p.getKind == .INST_PATTERN then some p.getChildren else none
+  | none => #[]
+
+/-- `QuantAttributes::hasPattern`: a pattern, or a term excluded. -/
+def hasPatternAttr (q : Node) : Bool :=
+  match q.getChildren[2]? with
+  | some l => l.getChildren.any fun p => p.getKind == .INST_PATTERN || p.getKind == .INST_NO_PATTERN
+  | none => false
+
+/-- `TriggerDatabase::mkTrigger` on the terms `trNodes`, kept: new
+(`TR_MAKE_NEW`), or the one made before (`getOld`), or none if there is one
+(`returnNull`). -/
+inductive TrOption where
+  | makeNew | getOld | returnNull
+
+def mkTriggerOf (q : Node) (trNodes : Array Node) (opt : TrOption) (user : Bool := false) : EM (Option Nat) := do
   let s ← emSel q
   let c ← ectx
   let key : Key × List Key := (⟨q⟩, (trNodes.qsort (selLt c.lt s)).toList.map (⟨·⟩))
   if let some t := (← get).em.trie.get? key then
-    return if getOld then some t else none
+    match opt with
+    | .getOld => return some t
+    | .returnNull => return none
+    | .makeNew => pure ()
   -- the trigger, built (its generators' operators through the term database)
   let ((tr, s'), _) ← runM {} ((mkTrig q trNodes).run s)
   setSel q s'
@@ -453,8 +475,48 @@ def mkTrigger (q : Node) (nodes : Array Node) (getOld : Bool) : EM (Option Nat) 
   let tag := match tr.root with
     | .simple _ => "simple"
     | .gen _ => if trNodes.size > 1 then "multi" else ""
-  modifyThe Out fun o => { o with triggers := o.triggers.push (o.lemmas.size, .trigger q trNodes tag) }
+  modifyThe Out fun o => { o with triggers := o.triggers.push (o.lemmas.size, .trigger q trNodes tag user) }
   return some ti
+
+/-- `TriggerDatabase::mkTrigger`: the trigger of the terms (those needed to
+bind the variables), new, or (`getOld`) the one made before, or none if it was
+made (`TR_RETURN_NULL`). -/
+def mkTrigger (q : Node) (nodes : Array Node) (getOld : Bool) : EM (Option Nat) := do
+  let nv := (quantVars q).size
+  let useN := ((← get).em.numTrigVars.get? ⟨q⟩).getD 0
+  let nvars := if useN == 0 then nv else useN
+  let some trNodes ← onSel q (mkTriggerTerms nodes nvars) | return none
+  mkTriggerOf q trNodes (if getOld then .getOld else .returnNull)
+
+
+/-- `InstStrategyUserPatterns::addUserPattern`: the trigger of a user pattern,
+its terms usable (`getIsUsableTrigger`), or none if one is not. -/
+def addUserPattern (q : Node) (pat : Array Node) : EM Unit := do
+  let mut nodes : Array Node := #[]
+  for p in pat do
+    if nodes.contains p then continue
+    let some u ← onSel q (getIsUsableTrigger p) | return
+    nodes := nodes.push u
+  if let some t ← mkTriggerOf q nodes .makeNew true then
+    modify fun e => { e with em := { e.em with
+      userGen := e.em.userGen.insert ⟨q⟩ (((e.em.userGen.get? ⟨q⟩).getD #[]).push t) } }
+
+/-- `InstantiationEngine::registerQuantifier`: the triggers of its user
+patterns (its excluded terms are in its selection state, `selOf`). -/
+def ematchRegister (q : Node) : EM Unit := do
+  for p in userPatterns q do addUserPattern q p
+
+/-- `InstStrategyUserPatterns::process` (`user-pat=trust`): at effort `1`, the
+instances of the user triggers; true if unfinished. -/
+def processUser (rd : Round) (q : Node) (e : Nat) : EM (Bool × Round) := do
+  if e == 0 then return (true, rd)
+  if e != 1 then return (false, rd)
+  let mut rd := rd
+  for ti in ((← get).em.userGen.get? ⟨q⟩).getD #[] do
+    let (_, rd') ← trigAddInsts rd ti
+    rd := rd'
+    if rd.inConflict then break
+  return (false, rd)
 
 /-- `addTrigger`. -/
 def addTrigger (rd : Round) (q : Node) (ti : Nat) : EM Round := do
@@ -497,6 +559,8 @@ def generateTriggers (rd : Round) (q : Node) : EM Round := do
 /-- `InstStrategyAutoGenTriggers::process` at the effort `e` of the round:
 true if unfinished. -/
 def processQ (rd : Round) (q : Node) (e : Nat) : EM (Bool × Round) := do
+  -- (`user-pat=trust`: the user patterns only)
+  if !(userPatterns q).isEmpty then return (false, rd)
   if e < 1 then return (true, rd)
   let mut gen := false
   if e == 1 then
@@ -512,7 +576,7 @@ def processQ (rd : Round) (q : Node) (e : Nat) : EM (Bool × Round) := do
   if gen then
     rd ← generateTriggers rd q
     let (s, m) := ((← get).em.agt.get? ⟨q⟩).getD (#[], #[])
-    if (← get).em.counter.get? ⟨q⟩ == some 0 && s.isEmpty && m.isEmpty then
+    if (← get).em.counter.get? ⟨q⟩ == some 0 && s.isEmpty && m.isEmpty && !hasPatternAttr q then
       modifyThe Out fun o => { o with triggers := o.triggers.push (o.lemmas.size, .noTrigger q) }
   let (s, m) := ((← get).em.agt.get? ⟨q⟩).getD (#[], #[])
   for l in [s, m] do
@@ -532,7 +596,8 @@ def ematchResetRound (rd : Round) : EM Round := do
   for ti in [0:(← get).em.trigs.size] do
     let q := (← get).em.trigs[ti]!.q
     let (s, m) := ((← get).em.agt.get? ⟨q⟩).getD (#[], #[])
-    if (s ++ m).any (·.1 == ti) then rd ← trigReset rd ti
+    let user := ((← get).em.userGen.get? ⟨q⟩).getD #[]
+    if (s ++ m).any (·.1 == ti) || user.contains ti then rd ← trigReset rd ti
   modify fun e => { e with em := { e.em with processed := {} } }
   return rd
 
@@ -549,10 +614,14 @@ def ematchCheck (rd : Round) (lastCall : Bool) : EM Round := do
   while !finished && e ≤ eLimit do
     finished := true
     for q in quants do
+      -- the strategies, in order: user patterns, then automatic triggers
+      let (unfinishedU, rd') ← processUser rd q e
+      rd := rd'
+      if rd.inConflict then return rd
       let (unfinished, rd') ← processQ rd q e
       rd := rd'
       if rd.inConflict then return rd
-      if unfinished then finished := false
+      if unfinished || unfinishedU then finished := false
     if (← getThe Out).lemmas.size > lastWaiting then finished := true
     e := e + 1
   return rd

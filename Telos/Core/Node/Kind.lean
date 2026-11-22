@@ -194,6 +194,12 @@ inductive Kind where
   | BOUND_VAR_LIST
   /-- Instantiation patterns. They carry no semantics, and `toEo` drops them. -/
   | INST_PATTERN_LIST
+  /-- The elements of a pattern list: a pattern (`:pattern (t₁ … tₙ)`), a term
+  excluded from triggers (`:no-pattern t`), an attribute (`:qid n`, as
+  `INST_ATTRIBUTE("qid", n)`, the name a string constant). -/
+  | INST_PATTERN
+  | INST_NO_PATTERN
+  | INST_ATTRIBUTE
   deriving DecidableEq, Repr, Inhabited, Hashable, Ord
 
 /-- cvc5's `TheoryId` (`src/theory/theory_id.h`), for the theories `Kind` covers. -/
@@ -321,7 +327,8 @@ def Kind.theoryId : Kind → TheoryId
   | .REGEXP_LOOP => .THEORY_STRINGS
   | .APPLY_CONSTRUCTOR | .APPLY_SELECTOR | .APPLY_TESTER | .APPLY_UPDATER
   | .TUPLE | .TUPLE_UNIT | .TUPLE_SELECT | .TUPLE_UPDATE => .THEORY_DATATYPES
-  | .FORALL | .EXISTS | .BOUND_VAR_LIST | .INST_PATTERN_LIST => .THEORY_QUANTIFIERS
+  | .FORALL | .EXISTS | .BOUND_VAR_LIST | .INST_PATTERN_LIST | .INST_PATTERN | .INST_NO_PATTERN
+  | .INST_ATTRIBUTE => .THEORY_QUANTIFIERS
 
 /-- The quantifier kinds, whose congruence is in their body only. -/
 def Kind.isQuantifier : Kind → Bool

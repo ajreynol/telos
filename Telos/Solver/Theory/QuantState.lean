@@ -106,6 +106,7 @@ end Trie
 inductive Undo where
   | processed (k : Key)
   | opTerm (op : Key)
+  | typeTerm (T : Option TypeNode)
   | newOp
   | inactive (k : Key)
   | hasTerm (k : Key)
@@ -131,6 +132,8 @@ structure State where
   processed : Std.HashSet Key := {}
   /-- `d_opMap`: the terms of each match operator, in order (SAT context). -/
   opTerms : Std.HashMap Key (Array Node) := {}
+  /-- `d_typeMap`: the terms of each type, in order (SAT context). -/
+  typeTerms : Std.HashMap (Option TypeNode) (Array Node) := {}
   /-- `d_ops` (SAT context). -/
   ops : Array Node := #[]
   /-- `d_inactive_map` (SAT context). -/
@@ -179,20 +182,22 @@ def popTo (s : State) (k : Nat) : State := Id.run do
   let trail := s.trail
   let mut processed := s.processed
   let mut opTerms := s.opTerms
+  let mut typeTerms := s.typeTerms
   let mut inactive := s.inactive
   let mut hasMap := s.hasMap
   let mut conflictInst := s.conflictInst
-  let s := { s with processed := {}, opTerms := {}, inactive := {}, hasMap := {}, trail := #[] }
+  let s := { s with processed := {}, opTerms := {}, typeTerms := {}, inactive := {}, hasMap := {}, trail := #[] }
   for i in [0:trail.size - tsize] do
     match trail[trail.size - 1 - i]! with
     | .processed k => processed := processed.erase k
     | .opTerm op => opTerms := opTerms.modify op Array.pop
+    | .typeTerm T => typeTerms := typeTerms.modify T Array.pop
     | .newOp => pure ()
     | .inactive k => inactive := inactive.erase k
     | .hasTerm k => hasMap := hasMap.erase k
     | .asserted => pure ()
     | .conflictInst => conflictInst := false
-  return { s with processed, opTerms, inactive, hasMap, conflictInst, trail := trail.take tsize,
+  return { s with processed, opTerms, typeTerms, inactive, hasMap, conflictInst, trail := trail.take tsize,
                   ops := s.ops.take osize, asserted := s.asserted.take asize, saved := s.saved.take k }
 
 end State
@@ -326,6 +331,8 @@ lists of their match operators. -/
 partial def addTerm (n : Node) : M Unit := do
   if (← getSt).processed.contains ⟨n⟩ then return
   modifySt fun s => (s.log (.processed ⟨n⟩)) |> fun s => { s with processed := s.processed.insert ⟨n⟩ }
+  modifySt fun s => { (s.log (.typeTerm n.typeHint)) with
+    typeTerms := s.typeTerms.alter n.typeHint fun l => some ((l.getD #[]).push n) }
   if let some op ← getMatchOperator n then
     modifySt fun s =>
       let fresh := !s.opTerms.contains ⟨op⟩
@@ -334,6 +341,17 @@ partial def addTerm (n : Node) : M Unit := do
       { s with opTerms := s.opTerms.alter ⟨op⟩ fun l => some ((l.getD #[]).push n) }
   if n.getKind != .FORALL && n.getKind != .EXISTS then
     for c in n.getChildren do addTerm c
+
+/-- `TermRegistry::getTermForType`: for a closed enumerable type, its first
+enumerated term (`false`, `0`); else the first term of the type
+(`getOrMakeTypeGroundTerm`); none if there is none (cvc5 makes a fresh
+`@ground_term` skolem, not ported). -/
+def getTermForType (T : Option TypeNode) : M (Option Node) := do
+  match T with
+  | some .boolean => return some Node.mkFalse
+  | some .integer => return some (.const (.integer 0))
+  | some .real => return some (.const (.rational 0))
+  | _ => return ((← getSt).typeTerms.get? T).bind (·[0]?)
 
 /-- `setHasTerm`: the term and its subterms are relevant. -/
 partial def setHasTerm (n : Node) : M Unit := do

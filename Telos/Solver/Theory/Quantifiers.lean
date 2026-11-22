@@ -32,6 +32,8 @@ def registerQuantifier (q : Node) : EM Unit := do
   if (← get).st.registered.contains ⟨q⟩ then return
   modify fun e => { e with st := { e.st with registered := e.st.registered.insert ⟨q⟩ } }
   let ((qi, fops), _) ← runM {} (mkQInfo q)
+  -- (E-matching's registration: the triggers of the user patterns)
+  ematchRegister q
   modify fun e => { e with
     qinfo := e.qinfo.insert ⟨q⟩ qi,
     funcRelDom := fops.foldl (fun m f =>
@@ -42,6 +44,7 @@ def registerQuantifier (q : Node) : EM Unit := do
 def preRegister (q : Node) : EM Unit := do
   if (← get).st.preregistered.contains ⟨q⟩ then return
   modify fun e => { e with st := { e.st with preregistered := e.st.preregistered.insert ⟨q⟩ } }
+  if ← reduceQuantifier q then return
   registerQuantifier q
 
 /-- The skolems of `q` (`getSkolemConstants`). -/
@@ -51,6 +54,7 @@ def skolemsOf (q : Node) : Array Node :=
 /-- `assertQuantifier`: a negated formula is skolemized once (user context); an
 asserted one registered and recorded. -/
 def assertQuantifier (q : Node) (pol : Bool) : EM Unit := do
+  if ← reduceQuantifier q then return
   if !pol then
     if (← get).st.skolemized.contains ⟨q⟩ then return
     modify fun e => { e with st := { e.st with skolemized := e.st.skolemized.insert ⟨q⟩ } }

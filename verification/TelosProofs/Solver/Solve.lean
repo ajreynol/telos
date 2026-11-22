@@ -147,6 +147,7 @@ theorem certifyV_sound {lits : List Node} {ee : EE.EqualityEngine} {p : Pending}
   | arith _ => simp [certifyV] at h
   | sets _ _ => simp [certifyV] at h
   | strings _ _ => simp [certifyV] at h
+  | quant => simp [certifyV] at h
 
 /-- **An `unsat` of the engine is correct**: no well-formed model satisfies the
 literals. -/

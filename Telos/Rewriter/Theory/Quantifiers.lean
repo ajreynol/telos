@@ -44,7 +44,8 @@ bound variables (`BoundVarManager`), printed with the same names, and the
 variables pulled by prenexing fresh ones (`BOUND_VARIABLE_n`); telos renames a
 pulled variable only when it clashes. telos, like
 Logos, identifies bound variables by name and type, so they are the same
-variables. Instantiation patterns are dropped (they have no CPC counterpart).
+variables. Instantiation patterns (which have no CPC counterpart) are kept or
+dropped as cvc5's steps do (`rewriteForallPats`).
 -/
 
 open Eo
@@ -84,6 +85,55 @@ def congrBody? : (n : Node) → ((b : Node) → Rw b) → Option (Rw n)
     else none
   | _, _ => none
 
+/-! ### Patterns
+
+A quantifier may have a pattern list (`INST_PATTERN_LIST`), which its CPC term
+does not have. A step that keeps it, or drops it, as cvc5's does, is the step
+on the quantifier without it, between steps that remove and put back the list:
+the two quantifiers have the same CPC term, so `refl` proves them equal
+(`castEo`). -/
+
+/-- The pattern list of a quantifier. -/
+def pats? : Node → Option Node
+  | .app (.kind k) #[_, _, p] =>
+    if (k == .FORALL || k == .EXISTS) && p.getKind == .INST_PATTERN_LIST then some p else none
+  | _ => none
+
+/-- The quantifier without its pattern list. -/
+def stripPats : Node → Node
+  | n@(.app op #[vs, body, _]) => if (pats? n).isSome then .app op #[vs, body] else n
+  | n => n
+
+/-- The list has a pattern, or a term excluded from patterns
+(`QuantAttributes::hasPattern`). -/
+def hasPattern (ipl : Node) : Bool :=
+  ipl.getChildren.any fun p => p.getKind == .INST_PATTERN || p.getKind == .INST_NO_PATTERN
+
+/-- `n` is `k` when their CPC terms are the same: a `refl` step. -/
+def castEo (n k : Node) : Option (Rw n) :=
+  let cs := CCmdList.cons (.step .refl (.cons n.toEo .nil) .nil) .nil
+  if h : decide (ProvesEq cs n k) = true then some ⟨k, .step cs (of_decide_eq_true h) (.refl k)⟩
+  else none
+
+/-- `m` with the pattern list `ipl` put back on its quantifier, the result of
+a step that keeps it: `(forall vs F)` or `(not (forall vs F))`. -/
+def withPats (ipl : Node) : Node → Option Node
+  | .app (.kind .FORALL) #[vs, body] => some (.app (.kind .FORALL) #[vs, body, ipl])
+  | .app (.kind .NOT) #[.app (.kind .FORALL) #[vs, body]] =>
+    some (.app (.kind .NOT) #[.app (.kind .FORALL) #[vs, body, ipl]])
+  | _ => none
+
+/-- The step `f` on the quantifier `n` without its pattern list; with `keep`,
+the list put back on the result. -/
+def viaStripped (n : Node) (keep : Bool) (f : (m : Node) → Option (Rw m)) : Option (Rw n) := do
+  let ipl ← pats? n
+  let c ← castEo n (stripPats n)
+  let r ← c.next? f
+  if !keep then return r
+  r.next? fun m => match withPats ipl m with
+    | some m' => castEo m m'
+    | none => some (Rw.id m)
+
 def respond {n : Node} (st : RewriteStatus) : Option (Rw n) → RewriteResponse n
   | some ⟨m, h⟩ => ⟨st, m, h⟩
   | none => .done n
@@ -91,16 +141,25 @@ def respond {n : Node} (st : RewriteStatus) : Option (Rw n) → RewriteResponse 
 /-- cvc5's `mergePrenex` (without removing duplicates, which telos does not
 prove yet): `(Q xs (Q ys F))` is `(Q (xs ys) F)`. -/
 def mergePrenex (n : Node) : Option (Rw n) := do
+  -- (a quantifier with patterns is not merged into; an inner one's patterns
+  -- become those of the merged quantifier)
   let (k, vs, body) ← quant? n
-  let rec collect (fuel : Nat) (vs : Array Node) (body : Node) : Array Node × Node :=
-    match fuel, quant? body with
-    | fuel + 1, some (k', ws, b) => if k' == k then collect fuel (vs ++ ws) b else (vs, body)
-    | _, _ => (vs, body)
-  let (vs', body') := collect 1000 vs body
+  let rec collect (fuel : Nat) (vs : Array Node) (body : Node) : Array Node × Node × Option Node :=
+    match fuel, quant? body, pats? body with
+    | fuel + 1, some (k', ws, b), _ => if k' == k then collect fuel (vs ++ ws) b else (vs, body, none)
+    | _ + 1, none, some ipl =>
+      match quant? (stripPats body) with
+      | some (k', ws, b) => if k' == k then (vs ++ ws, b, some ipl) else (vs, body, none)
+      | none => (vs, body, none)
+    | _, _, _ => (vs, body, none)
+  let (vs', body', ipl) := collect 1000 vs body
   if vs'.size == vs.size then none
   -- Shadowed variables would have to be renamed.
   if vs'.toList.eraseDups.length != vs'.size then none
-  checkBy .quant_merge_prenex n (mkQuant k vs' body')
+  let r ← checkBy .quant_merge_prenex n (mkQuant k vs' body')
+  match ipl with
+  | none => return r
+  | some ipl => r.next? fun m => castEo m (.app (.kind k) #[mkNode .BOUND_VAR_LIST vs', body', ipl])
 
 /-- `(forall vs F)` for `F` none of `vs` occurs in is `F` (`quant-unused-vars`). -/
 def dropUnused (n : Node) : Option (Rw n) := do
@@ -815,9 +874,36 @@ def prenex (n : Node) : Option (Rw n) := do
   let r ← congrBody? n fun b => if h : b = b₁ then h ▸ fwd else Rw.id b
   r.next? fun m => checkBy .quant_merge_prenex m (mkQuant .FORALL (xs ++ ys) b₂)
 
+/-- `rewriteForall` on a quantifier with patterns (cvc5's `doOperation`): the
+steps that keep them (`COMPUTE_ELIM_SYMBOLS`, `COMPUTE_COND_SPLIT`), those that
+drop them (variable elimination: `computeOperation` keeps them only if no
+variable goes); no miniscoping or prenexing with a pattern
+(`miniscope-quant-user`, `prenex-quant-user` off), unless the body has no
+variable. -/
+def rewriteForallPats (rw : (m : Node) → Rw m) (n : Node) (ipl : Node) : RewriteResponse n :=
+  let n0 := stripPats n
+  match quant? n0 with
+  | none => .done n
+  | some (_, vs, body) =>
+    if body.isConst && body.getKind == .CONST_BOOLEAN then
+      respond .REWRITE_DONE ((castEo n n0).bind (·.next? fun m => checkBy .quant_unused_vars m body))
+    else
+      let structural := !hasPattern ipl || !vs.any (occursIn · body)
+      respond .REWRITE_AGAIN_FULL <| firstOf [
+        fun _ => congrBody? n Nnf.nnf,
+        -- (the list is kept when only unused variables go, a quantifier the
+        -- result: `computeArgVec2`, `mkForAll`; a split drops it)
+        fun _ => if structural then viaStripped n true miniscope else none,
+        fun _ => if structural then viaStripped n false prenex else none,
+        fun _ => viaStripped n false (varElim rw),
+        fun _ => if hasPattern ipl then none else viaStripped n false (ineqElim rw),
+        fun _ => viaStripped n true condSplit]
+
 def rewriteForall (rw : (m : Node) → Rw m) (n : Node) : RewriteResponse n :=
   match quant? n with
-  | none => .done n
+  | none => match pats? n with
+    | some ipl => rewriteForallPats rw n ipl
+    | none => .done n
   | some (_, _, body) =>
     match mergePrenex n with
     | some ⟨m, h⟩ => ⟨.REWRITE_AGAIN_FULL, m, h⟩
@@ -840,7 +926,13 @@ def rewriteExists (n : Node) : RewriteResponse n :=
   | some (_, vs, body) =>
     respond .REWRITE_AGAIN_FULL
       (checkBy .exists_elim n (notNode (mkQuant .FORALL vs (notNode body))))
-  | none => .done n
+  | none =>
+    -- with patterns, kept (`EXISTS_ELIM`)
+    if (pats? n).isSome then
+      respond .REWRITE_AGAIN_FULL (viaStripped n true fun m => match quant? m with
+        | some (_, vs, body) => checkBy .exists_elim m (notNode (mkQuant .FORALL vs (notNode body)))
+        | none => none)
+    else .done n
 
 def preRewrite (n : Node) : RewriteResponse n :=
   match n.getKind with
