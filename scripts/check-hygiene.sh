@@ -25,9 +25,9 @@ done < <(LC_ALL=C grep -nHE "(^|[^[:alnum:]_'])(unsafe|implemented_by)([^[:alnum
 # Eunoia programs compiled from Cpc.eo (Cpc.Logos: the rules, the checker,
 # __eo_typeof, __eo_nil). Its files import only each other and these modules.
 spec_files=(Telos/Core/Node/Kind.lean Telos/Core/Node/TypeNode.lean Telos/Core/Node/SkolemId.lean
-  Telos/Core/Node/Node.lean
+  Telos/Core/Node/KindTy.lean Telos/Core/Node/Node.lean
   Telos/Core/Node/ToEo.lean verification/TelosProofs/Core/Spec.lean)
-spec_imports='^(Telos\.Core\.Node\.(Kind|TypeNode|SkolemId|Node|ToEo)|Cpc\.(LogosTerm|SmtEval|SmtSyntax|SmtTyping|SmtTranslate|SmtModel|Spec))$'
+spec_imports='^(Telos\.Core\.Node\.(Kind|TypeNode|SkolemId|KindTy|Node|ToEo)|Cpc\.(LogosTerm|SmtEval|SmtSyntax|SmtTyping|SmtTranslate|SmtModel|Spec))$'
 while IFS=: read -r file line text; do
   mod=$(sed -E 's/^[[:space:]]*(public[[:space:]]+)?import[[:space:]]+(all[[:space:]]+)?//; s/[[:space:]]+$//' <<<"${text}")
   if ! LC_ALL=C grep -qE "${spec_imports}" <<<"${mod}"; then

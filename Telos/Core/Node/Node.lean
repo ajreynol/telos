@@ -1,6 +1,7 @@
 import Telos.Core.Node.Kind
 import Telos.Core.Node.TypeNode
 import Telos.Core.Node.SkolemId
+import Telos.Core.Node.KindTy
 
 /-!
 # Nodes
@@ -85,6 +86,14 @@ def kind : Const → Kind
 /-- A string constant from a Lean string. -/
 def ofString (s : String) : Const := .string (s.toList.map Char.toNat)
 
+/-- The SMT type of a constant, for the constants `Const.ty` covers. -/
+def ty : Const → Option Smtm.SmtType
+  | .boolean _ => some .Bool
+  | .integer _ => some .Int
+  | .rational _ => some .Real
+  | .string w => some (SmtEval.native_ite (SmtEval.native_string_valid w) (.Seq .Char) .None)
+  | _ => none
+
 end Const
 
 mutual
@@ -117,6 +126,23 @@ with
         | .indexed k is => mixHash (Hashable.hash k) (Hashable.hash is)
         | .node k f => mixHash (Hashable.hash k) f.hash
       cs.foldl (fun h c => mixHash h c.hash) (mixHash 23 ho)
+  /-- The SMT type of a node, computed once, when the node is built, from those
+  of its children (`kindTy`), for the nodes whose operators and leaves Logos's
+  rules cover here; `none` for the others. It is Logos's type of the node's
+  translation (`Node.fastTy_sound`), so typing a node is constant time, however
+  large the term it shares, as cvc5 keeps a type in each node. -/
+  @[computed_field] fastTy : Node → Option Smtm.SmtType
+    | .const c => c.ty
+    | .var _ T => varTy T
+    | .boundVar _ _ => none
+    | .skolem id cs =>
+      -- the purification skolem `(@purify t)` has the type of `t`
+      if id == .PURIFY && cs.size == 1 then cs.foldl (fun _ c => c.fastTy) none else none
+    | .app op cs =>
+      match op with
+      | .kind k =>
+        (cs.foldr (fun c acc => acc.bind fun ts => c.fastTy.map (· :: ts)) (some [])).bind (kindTy k)
+      | _ => none
 
 /-- The operator of an application (cvc5's API `Op`). -/
 inductive Op where

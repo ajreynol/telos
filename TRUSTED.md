@@ -37,6 +37,12 @@ it, its identifier's operator applied to its cache values (`SkolemId.eoShape`):
   import `Cpc/Logos.lean` (`scripts/check-hygiene.sh` checks this for every
   specification file).
 - `verification/TelosProofs/Core/Spec.lean`: the definition of `Node.Equiv`.
+- `Telos/Core/Node/Node.lean` keeps in each node its SMT type (`Node.fastTy`, a
+  computed field, by the rules of `Telos/Core/Node/KindTy.lean`), as it keeps
+  its hash. It is a cache, not part of a node's meaning: `Node.fastTy_sound`
+  (`Telos/Core/Node/SmtTypeFast.lean`) proves it is `__smtx_typeof` of the
+  node's translation. It sits here only because a computed field is declared
+  with the datatype; `KindTy.lean` imports only Logos's specification.
 
 ## Not trusted
 
