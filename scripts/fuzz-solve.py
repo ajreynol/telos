@@ -15,7 +15,8 @@ Comparing:
 - the output events between two inputs (`propagate`, `explain`, `conflict`,
   `lemma`, `fact`, ...) are compared as multisets, since cvc5's order inside a
   round comes from hash maps keyed by node ids;
-- terms are compared after expanding `let`s, renumbering skolems in order of
+- terms are compared after expanding `let`s, renaming bound variables by
+  position (`alpha_free`), renumbering skolems in order of
   first occurrence, writing `(- n)` as `-n`, and orienting equalities;
 - the answers must agree;
 - the events of the theories outside safe mode (finite fields, floating point,
@@ -163,6 +164,65 @@ def uf_benchmark(rng, size, clauses=False):
         else:
             out.append(uf_literal(rng))
     return UF_PRELUDE + "".join(f"(assert {l})\n" for l in out) + "(check-sat)\n"
+
+
+UFQ_PRELUDE = """(set-logic UF)
+(declare-sort U 0)
+(declare-fun u () U)
+(declare-fun v () U)
+(declare-fun w () U)
+(declare-fun f (U) U)
+(declare-fun g (U U) U)
+(declare-fun P (U) Bool)
+(declare-fun Q (U U) Bool)
+"""
+
+
+def ufq_term(rng, depth, xs):
+    """A term over the constants and the bound variables `xs`."""
+    leaves = ["u", "v", "w"] + xs + xs
+    if depth == 0 or rng.random() < 0.35:
+        return rng.choice(leaves)
+    if rng.random() < 0.65:
+        return f"(f {ufq_term(rng, depth - 1, xs)})"
+    return f"(g {ufq_term(rng, depth - 1, xs)} {ufq_term(rng, depth - 1, xs)})"
+
+
+def ufq_literal(rng, xs):
+    r = rng.random()
+    if r < 0.35:
+        atom = f"(P {ufq_term(rng, 2, xs)})"
+    elif r < 0.5:
+        atom = f"(Q {ufq_term(rng, 1, xs)} {ufq_term(rng, 1, xs)})"
+    else:
+        atom = f"(= {ufq_term(rng, 2, xs)} {ufq_term(rng, 2, xs)})"
+    return atom if rng.random() < 0.5 else f"(not {atom})"
+
+
+def ufq_quant(rng):
+    """A quantified clause over one or two variables: universal, or (negated)
+    existential."""
+    xs = ["x"] if rng.random() < 0.6 else ["x", "y"]
+    k = rng.randint(1, 3)
+    lits = [ufq_literal(rng, xs) for _ in range(k)]
+    body = lits[0] if k == 1 else "(or " + " ".join(lits) + ")"
+    binds = " ".join(f"({x} U)" for x in xs)
+    q = "forall" if rng.random() < 0.8 else "exists"
+    return f"({q} ({binds}) {body})"
+
+
+def ufq_benchmark(rng, size, clauses=False):
+    """Ground literals and quantified clauses (some in disjunctions)."""
+    out = []
+    for _ in range(rng.randint(2, size)):
+        r = rng.random()
+        if r < 0.45:
+            out.append(ufq_quant(rng))
+        elif clauses and r < 0.7:
+            out.append("(or " + ufq_literal(rng, []) + " " + ufq_literal(rng, []) + ")")
+        else:
+            out.append(ufq_literal(rng, []))
+    return UFQ_PRELUDE + "".join(f"(assert {l})\n" for l in out) + "(check-sat)\n"
 
 
 DT_PRELUDE = """(set-logic QF_UFDT)
@@ -581,7 +641,7 @@ def neg_free(e):
 
 
 def norm_term(e):
-    return fuzz.orient_free(neg_free(fuzz.let_free(e)))
+    return fuzz.orient_free(fuzz.alpha_free(neg_free(fuzz.let_free(e))))
 
 
 def print_sexpr(e):
@@ -756,10 +816,14 @@ def main():
     ap.add_argument("--sat", action="store_true",
                     help="solve with telos's SAT solver (--via-sat), cvc5 with --sat-solver=minisat")
     ap.add_argument("--size", type=int, default=6, help="the most literals of a random benchmark")
-    ap.add_argument("--theory", choices=["uf", "dt", "lra", "lia", "uflra", "uflia", "dtlia", "sets", "strings"], default="uf", help="the theory of the random benchmarks")
+    ap.add_argument("--theory", choices=["uf", "dt", "lra", "lia", "uflra", "uflia", "dtlia", "sets", "strings", "ufq"], default="uf", help="the theory of the random benchmarks")
     ap.add_argument("--decision", choices=["internal", "justification", "stoponly"],
                     help="the SAT solver's decision mode, for both (otherwise the logic's)")
     ap.add_argument("--ite", action="store_true", help="arithmetic literals with ite terms")
+    ap.add_argument("--ieval-off", action="store_true",
+                    help="cvc5 with --ieval=off (the form of conflict-based instantiation telos ports); "
+                         "safe mode allows one non-default option, so cvc5 runs without --safe-mode=safe "
+                         "(the traces are otherwise the same)")
     ap.add_argument("files", nargs="*")
     a = ap.parse_args()
     global ITE_TERMS
@@ -784,7 +848,7 @@ def main():
                 gen = {"dt": dt_benchmark, "lra": lra_benchmark, "lia": lia_benchmark,
                        "uflra": uflra_benchmark, "uflia": uflia_benchmark,
                        "dtlia": dtlia_benchmark, "sets": sets_benchmark,
-                       "strings": strings_benchmark}.get(a.theory, uf_benchmark)
+                       "strings": strings_benchmark, "ufq": ufq_benchmark}.get(a.theory, uf_benchmark)
                 p.write_text(gen(rng, a.size, a.clauses or a.replay))
             files.append(p)
     counts = collections.Counter()
@@ -845,7 +909,8 @@ def main():
             theirs, cerr = (rec.read_text(), "") if rec.exists() else (None, f"no recorded trace {rec}")
         else:
             # (the decision mode is the logic's, as in telos, unless `--decision`)
-            theirs, cerr = run([a.cvc5, *CVC5_OPTS] + (["-o", "theory-events-ee"] if a.ee else []) +
+            opts = [o for o in CVC5_OPTS if o != "--safe-mode=safe"] + ["--ieval=off"] if a.ieval_off else CVC5_OPTS
+            theirs, cerr = run([a.cvc5, *opts] + (["-o", "theory-events-ee"] if a.ee else []) +
                                (["--sat-solver=minisat"] if a.sat else []) +
                                ([f"--decision={a.decision}"] if a.decision else []), path)
         if theirs is None or "(error" in theirs:

@@ -247,6 +247,47 @@ noncomputable def toSmtModel (M : Model) : SmtModel where
   nativeFuns := tableFun M
   usortDom := fun _ => Set.univ
 
+/-- `toSmtModel`, with the values of the bound variables of `env` pushed
+(`native_model_push`, `toSmtModelE_push`). -/
+noncomputable def toSmtModelE (M : Model) (env : Model.Env) : SmtModel where
+  values k :=
+    if k.isVar then
+      match env.lookup k.name k.ty with
+      | some v => toVal v
+      | none => __smtx_type_default k.ty
+    else
+    match M.lookup k.name k.ty with
+    | some v => toVal v
+    | none => __smtx_type_default k.ty
+  nativeFuns := tableFun M
+  usortDom := fun _ => Set.univ
+
+omit [LogosFacts] in
+theorem toSmtModelE_nil (M : Model) : toSmtModelE M [] = toSmtModel M := by
+  simp only [toSmtModelE, toSmtModel, Model.Env.lookup]
+
+omit [LogosFacts] in
+/-- Pushing a value on the model of `env` gives that of the longer `env`. -/
+theorem toSmtModelE_push (M : Model) (env : Model.Env) (s : native_String) (T : SmtType) (v : MVal) :
+    native_model_push (toSmtModelE M env) s T (toVal v) = toSmtModelE M ((s, T, v) :: env) := by
+  simp only [native_model_push, toSmtModelE]
+  congr 1
+  funext k
+  rcases k with ⟨isVar, name, ty⟩
+  cases isVar with
+  | false => simp
+  | true =>
+    by_cases h : name = s ∧ ty = T
+    · obtain ⟨rfl, rfl⟩ := h
+      simp [Model.Env.lookup]
+    · have h1 : ¬ ({ isVar := true, name := name, ty := ty } : SmtModelKey) = { isVar := true, name := s, ty := T } := by
+        intro e; cases e; exact h ⟨rfl, rfl⟩
+      have h2 : (s == name && T == ty) = false := by
+        rw [Bool.eq_false_iff]; intro e
+        simp only [Bool.and_eq_true, beq_iff_eq] at e
+        exact h ⟨e.1.symm, e.2.symm⟩
+      simp only [h1, ↓reduceIte, Model.Env.lookup, h2, Bool.false_eq_true]
+
 omit [LogosFacts] in
 theorem usort_dom_wf_univ : usort_dom_wf (fun _ => (Set.univ : Set ModelId)) := by
   intro i
@@ -360,17 +401,19 @@ theorem toSmtModel_wf {M : Model} (hc : M.constsOk = true) (ht : M.tablesOk = tr
 
 /-! ## Evaluation -/
 
+variable {env : Model.Env}
+
 /-- The memo has the values of its nodes in the model. -/
-def MemoOk (M : Model) (S : Model.Memo) : Prop :=
-  ∀ t v, S.get? ⟨t⟩ = some (some v) → __smtx_model_eval (toSmtModel M) t.toSmt = toVal v
+def MemoOk (M : Model) (env : Model.Env) (S : Model.Memo) : Prop :=
+  ∀ t v, S.get? ⟨t⟩ = some (some v) → __smtx_model_eval (toSmtModelE M env) t.toSmt = toVal v
 
 omit [LogosFacts] in
-theorem memoOk_empty (M : Model) : MemoOk M {} := by
+theorem memoOk_empty (M : Model) (env : Model.Env) : MemoOk M env {} := by
   intro t v h; simp at h
 
 omit [LogosFacts] in
-theorem memoOk_insert {M : Model} {S : Model.Memo} (hS : MemoOk M S) {t : Node} {r : Option MVal}
-    (ht : ∀ v, r = some v → __smtx_model_eval (toSmtModel M) t.toSmt = toVal v) : MemoOk M (S.insert ⟨t⟩ r) := by
+theorem memoOk_insert {M : Model} {S : Model.Memo} (hS : MemoOk M env S) {t : Node} {r : Option MVal}
+    (ht : ∀ v, r = some v → __smtx_model_eval (toSmtModelE M env) t.toSmt = toVal v) : MemoOk M env (S.insert ⟨t⟩ r) := by
   intro u v h
   simp only [Std.HashMap.get?_eq_getElem?, Std.HashMap.getElem?_insert] at h
   split at h
@@ -387,10 +430,22 @@ theorem toSmt_var (x : String) (T : TypeNode) :
 
 omit [LogosFacts] in
 theorem eval_var {M : Model} {x : String} {T : TypeNode} {v : MVal} (h : M.const x T = some v) :
-    __smtx_model_eval (toSmtModel M) (Node.var x T).toSmt = toVal v := by
+    __smtx_model_eval (toSmtModelE M env) (Node.var x T).toSmt = toVal v := by
   unfold Model.const at h
   rw [toSmt_var, __smtx_model_eval.eq_def]
-  simp only [native_model_lookup, model_key, toSmtModel, Bool.false_eq_true, ↓reduceIte, h]
+  simp only [native_model_lookup, model_key, toSmtModelE, Bool.false_eq_true, ↓reduceIte, h]
+
+omit [LogosFacts] in
+theorem toSmt_boundVar (x : String) (T : TypeNode) :
+    (Node.boundVar x T).toSmt = SmtTerm.Var (native_string_lit x) (tyS T) := by
+  unfold Node.toSmt; rw [Node.toEo]; rfl
+
+omit [LogosFacts] in
+theorem eval_boundVar {M : Model} {x : String} {T : TypeNode} {v : MVal}
+    (h : env.lookup (native_string_lit x) (tyS T) = some v) :
+    __smtx_model_eval (toSmtModelE M env) (Node.boundVar x T).toSmt = toVal v := by
+  rw [toSmt_boundVar, __smtx_model_eval.eq_def]
+  simp only [native_model_var_lookup, toSmtModelE, ↓reduceIte, h]
 
 /-! ### Connectives -/
 
@@ -793,7 +848,7 @@ theorem eval_eq_toVal (a b : MVal) :
 abbrev ValsIn (N : SmtModel) (l : List Node) (vs : List MVal) : Prop :=
   List.Forall₂ (fun c v => __smtx_model_eval N c.toSmt = toVal v) l vs
 
-abbrev Vals (M : Model) (l : List Node) (vs : List MVal) : Prop := ValsIn (toSmtModel M) l vs
+abbrev Vals (M : Model) (env : Model.Env) (l : List Node) (vs : List MVal) : Prop := ValsIn (toSmtModelE M env) l vs
 
 omit [LogosFacts] in
 theorem vals_map {N : SmtModel} : ∀ {l : List Node} {vs : List MVal}, ValsIn N l vs →
@@ -1128,8 +1183,8 @@ theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List 
           simp [toVal, __smtx_model_eval_str_len, native_seq_len, native_pack_string, unpack_pack]))
 
 theorem combine_sound (M : Model) {k : Kind} {cs : Array Node} {vs : List MVal} {r : MVal}
-    (hv : Vals M cs.toList vs) (h : Model.combine k cs vs = some r) :
-    __smtx_model_eval (toSmtModel M) (Node.app (.kind k) cs).toSmt = toVal r :=
+    (hv : Vals M env cs.toList vs) (h : Model.combine k cs vs = some r) :
+    __smtx_model_eval (toSmtModelE M env) (Node.app (.kind k) cs).toSmt = toVal r :=
   combine_sound_in _ hv h
 
 /-! ### `distinct` -/
@@ -1167,9 +1222,9 @@ theorem typedNil_cons (x : Term) :
   · exact Or.inr ⟨_, rfl⟩
 
 theorem eval_pairs (M : Model) (T : Term) (s : SmtTerm) (sv : MVal)
-    (hs : __smtx_model_eval (toSmtModel M) s = toVal sv) : ∀ (xs : List Term) (vs : List MVal),
-    List.Forall₂ (fun x v => __smtx_model_eval (toSmtModel M) (__eo_to_smt x) = toVal v) xs vs →
-    __smtx_model_eval (toSmtModel M)
+    (hs : __smtx_model_eval (toSmtModelE M env) s = toVal sv) : ∀ (xs : List Term) (vs : List MVal),
+    List.Forall₂ (fun x v => __smtx_model_eval (toSmtModelE M env) (__eo_to_smt x) = toVal v) xs vs →
+    __smtx_model_eval (toSmtModelE M env)
         (__eo_to_smt_distinct_pairs s (tl (Term.Apply (Term.UOp UserOp._at__at_TypedList_nil) T) xs)) =
       SmtValue.Boolean (vs.all fun w => !(sv.veq w))
   | [], [], .nil => by
@@ -1184,8 +1239,8 @@ theorem eval_pairs (M : Model) (T : Term) (s : SmtTerm) (sv : MVal)
     cases hb : (sv.veq v) <;> simp [hb, __smtx_model_eval_not, __smtx_model_eval_and, native_and, native_not]
 
 theorem eval_distinct (M : Model) (T : Term) : ∀ (xs : List Term) (vs : List MVal),
-    List.Forall₂ (fun x v => __smtx_model_eval (toSmtModel M) (__eo_to_smt x) = toVal v) xs vs →
-    __smtx_model_eval (toSmtModel M)
+    List.Forall₂ (fun x v => __smtx_model_eval (toSmtModelE M env) (__eo_to_smt x) = toVal v) xs vs →
+    __smtx_model_eval (toSmtModelE M env)
         (__eo_to_smt_distinct (tl (Term.Apply (Term.UOp UserOp._at__at_TypedList_nil) T) xs)) =
       SmtValue.Boolean (Model.distinctVals vs)
   | [], [], .nil => by
@@ -1201,8 +1256,8 @@ theorem eval_distinct (M : Model) (T : Term) : ∀ (xs : List Term) (vs : List M
 
 /-- **A `distinct` has its value.** -/
 theorem distinct_sound (M : Model) {cs : Array Node} {vs : List MVal}
-    (hv : Vals M cs.toList vs) (hty : Model.distinctTyped cs = true) (h2 : 2 ≤ vs.length) :
-    __smtx_model_eval (toSmtModel M) (Node.app (.kind .DISTINCT) cs).toSmt =
+    (hv : Vals M env cs.toList vs) (hty : Model.distinctTyped cs = true) (h2 : 2 ≤ vs.length) :
+    __smtx_model_eval (toSmtModelE M env) (Node.app (.kind .DISTINCT) cs).toSmt =
       toVal (.bool (Model.distinctVals vs)) := by
   have hs : 2 ≤ cs.size := by have := hv.length_eq; simp at this; omega
   have hte : (Node.app (.kind .DISTINCT) cs).toEo =
@@ -1275,7 +1330,7 @@ theorem eval_apply_of {g x : SmtTerm} (M : SmtModel)
 
 /-- **An application of a function value has its value.** -/
 theorem apply_sound {M : Model} {f a g : MVal} (h : M.apply f a = some g) :
-    __smtx_model_eval_apply (toSmtModel M) (toVal f) (toVal a) = toVal g := by
+    __smtx_model_eval_apply (toSmtModelE M env) (toVal f) (toVal a) = toVal g := by
   unfold Model.apply at h
   split at h
   · cases h
@@ -1288,8 +1343,8 @@ theorem apply_sound {M : Model} {f a g : MVal} (h : M.apply f a = some g) :
       · rename_i hty
         simp only [Bool.and_eq_true, beq_iff_eq] at hty
         obtain ⟨rfl, rfl⟩ := hty
-        have e1 : __smtx_model_eval_apply (toSmtModel M) (toVal (.fn fid t.dom t.rng)) (toVal a) =
-            native_eval_fun_apply (toSmtModel M) ((fid : ℝ) + 1) t.dom t.rng (toVal a) := by
+        have e1 : __smtx_model_eval_apply (toSmtModelE M env) (toVal (.fn fid t.dom t.rng)) (toVal a) =
+            native_eval_fun_apply (toSmtModelE M env) ((fid : ℝ) + 1) t.dom t.rng (toVal a) := by
           have hnv := toVal_ne_notValue a (by simpa using hna)
           simp only [toVal]
           generalize toVal a = w at hnv ⊢
@@ -1309,7 +1364,7 @@ theorem apply_sound {M : Model} {f a g : MVal} (h : M.apply f a = some g) :
           · have : toVal p.1 ≠ toVal a := fun h => e ((veq_iff _ _).2 h)
             simp [e, this]
         rw [e1]
-        simp only [native_eval_fun_apply, model_fun_lookup, toSmtModel, tableFun]
+        simp only [native_eval_fun_apply, model_fun_lookup, toSmtModelE, tableFun]
         simp only [hne, hex, ↓reduceIte, ↓reduceDIte, hc, ht, and_self, hp]
         cases hf : t.entries.find? (·.1.veq a) with
         | none => simp only [hf] at h ⊢; cases h; rfl
@@ -1319,9 +1374,9 @@ theorem apply_sound {M : Model} {f a g : MVal} (h : M.apply f a = some g) :
   · cases h
 
 theorem applyAll_sound {M : Model} : ∀ (vs : List MVal) (ts : List SmtTerm) (h : SmtTerm) (f r : MVal),
-    List.Forall₂ (fun t v => __smtx_model_eval (toSmtModel M) t = toVal v) ts vs →
+    List.Forall₂ (fun t v => __smtx_model_eval (toSmtModelE M env) t = toVal v) ts vs →
     ((∃ s T, h = SmtTerm.UConst s T) ∨ ∃ a b, h = SmtTerm.Apply a b) →
-    __smtx_model_eval (toSmtModel M) h = toVal f → M.applyAll f vs = some r → __smtx_model_eval (toSmtModel M) (ts.foldl SmtTerm.Apply h) = toVal r
+    __smtx_model_eval (toSmtModelE M env) h = toVal f → M.applyAll f vs = some r → __smtx_model_eval (toSmtModelE M env) (ts.foldl SmtTerm.Apply h) = toVal r
   | [], [], h, f, r, .nil, _, hh, ha => by
     simp only [Model.applyAll, Option.some.injEq] at ha; subst ha; exact hh
   | v :: vs, t :: ts, h, f, r, .cons ht hr, hs, hh, ha => by
@@ -1473,27 +1528,27 @@ theorem eval_apply_cons_toVal (M : SmtModel) (hv a : MVal)
 
 /-- **A constructor applied to arguments has its value.** -/
 theorem eval_chain (M : Model) : ∀ (vs : List MVal) (ts : List SmtTerm) (h : SmtTerm) (hv : MVal),
-    List.Forall₂ (fun t v => __smtx_model_eval (toSmtModel M) t = toVal v) ts vs →
+    List.Forall₂ (fun t v => __smtx_model_eval (toSmtModelE M env) t = toVal v) ts vs →
     ((∃ s dd i, h = SmtTerm.DtCons s dd i) ∨ ∃ a b, h = SmtTerm.Apply a b) →
     ((∃ s dd i, hv = .dtc s dd i) ∨ ∃ f x, hv = .app f x) →
-    __smtx_model_eval (toSmtModel M) h = toVal hv → (∀ v ∈ vs, v.notValue = false) →
-    __smtx_model_eval (toSmtModel M) (ts.foldl SmtTerm.Apply h) = toVal (vs.foldl .app hv)
+    __smtx_model_eval (toSmtModelE M env) h = toVal hv → (∀ v ∈ vs, v.notValue = false) →
+    __smtx_model_eval (toSmtModelE M env) (ts.foldl SmtTerm.Apply h) = toVal (vs.foldl .app hv)
   | [], [], _, _, .nil, _, _, hh, _ => hh
   | v :: vs, t :: ts, h, hv, .cons ht hr, hs, hvs, hh, hna => by
     simp only [List.foldl]
     refine eval_chain M vs ts _ _ hr (Or.inr ⟨_, _, rfl⟩) (Or.inr ⟨_, _, rfl⟩) ?_
       (fun w hw => hna w (List.mem_cons_of_mem _ hw))
-    have e : __smtx_model_eval (toSmtModel M) (SmtTerm.Apply h t) =
-        __smtx_model_eval_apply (toSmtModel M) (__smtx_model_eval (toSmtModel M) h)
-          (__smtx_model_eval (toSmtModel M) t) := by
+    have e : __smtx_model_eval (toSmtModelE M env) (SmtTerm.Apply h t) =
+        __smtx_model_eval_apply (toSmtModelE M env) (__smtx_model_eval (toSmtModelE M env) h)
+          (__smtx_model_eval (toSmtModelE M env) t) := by
       rcases hs with ⟨_, _, _, rfl⟩ | ⟨_, _, rfl⟩ <;> rw [__smtx_model_eval.eq_def]
     rw [e, hh, ht, eval_apply_cons_toVal _ _ _ hvs (hna v (List.mem_cons_self ..))]
     rfl
 
 omit [LogosFacts] in
 theorem lookup_sound {M : Model} {x : native_String} {T : SmtType} {v : MVal} (h : M.lookup x T = some v) :
-    native_model_lookup (toSmtModel M) x T = toVal v := by
-  simp only [native_model_lookup, model_key, toSmtModel, Bool.false_eq_true, ↓reduceIte, h]
+    native_model_lookup (toSmtModelE M env) x T = toVal v := by
+  simp only [native_model_lookup, model_key, toSmtModelE, Bool.false_eq_true, ↓reduceIte, h]
 
 omit [LogosFacts] in
 theorem wrongSelName_eq (i j : Nat) : Model.wrongSelName i j = native_wrong_apply_sel_id i j := rfl
@@ -1502,18 +1557,18 @@ theorem wrongSelName_eq (i j : Nat) : Model.wrongSelName i j = native_wrong_appl
 
 /-- The evaluation at fuel `n` is sound. -/
 def EvOk (M : Model) (n : Nat) : Prop :=
-  ∀ t S, MemoOk M S → MemoOk M (M.ev n t S).2 ∧ ∀ v, (M.ev n t S).1 = some v → __smtx_model_eval (toSmtModel M) t.toSmt = toVal v
+  ∀ env t S, MemoOk M env S → MemoOk M env (M.ev env n t S).2 ∧ ∀ v, (M.ev env n t S).1 = some v → __smtx_model_eval (toSmtModelE M env) t.toSmt = toVal v
 
 omit [LogosFacts] in
 theorem evList_sound (M : Model) (n : Nat) (IH : EvOk M n) : ∀ (l : List Node) (S : Model.Memo),
-    MemoOk M S → MemoOk M (M.evList n l S).2 ∧ ∀ vs, (M.evList n l S).1 = some vs → Vals M l vs
+    MemoOk M env S → MemoOk M env (M.evList env n l S).2 ∧ ∀ vs, (M.evList env n l S).1 = some vs → Vals M env l vs
   | [], S, hS => by
     rw [Model.evList]
     exact ⟨hS, fun vs h => by cases h; exact .nil⟩
   | c :: cs, S, hS => by
     rw [Model.evList]
-    obtain ⟨hS1, hv1⟩ := IH c S hS
-    rcases e1 : M.ev n c S with ⟨r1, S1⟩
+    obtain ⟨hS1, hv1⟩ := IH env c S hS
+    rcases e1 : M.ev env n c S with ⟨r1, S1⟩
     rw [e1] at hS1 hv1
     try dsimp only
     cases r1 with
@@ -1521,26 +1576,142 @@ theorem evList_sound (M : Model) (n : Nat) (IH : EvOk M n) : ∀ (l : List Node)
     | some v =>
       dsimp only
       obtain ⟨hS2, hv2⟩ := evList_sound M n IH cs S1 hS1
-      rcases e2 : M.evList n cs S1 with ⟨r2, S2⟩
+      rcases e2 : M.evList env n cs S1 with ⟨r2, S2⟩
       rw [e2] at hS2 hv2
       try dsimp only
       cases r2 with
       | none => exact ⟨hS2, fun vs h => by cases h⟩
       | some vs => exact ⟨hS2, fun vs' h => by cases h; exact .cons (hv1 v rfl) (hv2 vs rfl)⟩
 
-theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model.Memo) (hS : MemoOk M S) :
-    MemoOk M (M.evNode n t S).2 ∧ ∀ v, (M.evNode n t S).1 = some v → __smtx_model_eval (toSmtModel M) t.toSmt = toVal v := by
+omit [LogosFacts] in
+theorem mem_dedupVals {v : MVal} : ∀ {l : List MVal}, v ∈ Model.dedupVals l → v ∈ l
+  | [], h => by simp [Model.dedupVals] at h
+  | w :: ws, h => by
+    simp only [Model.dedupVals] at h
+    split at h
+    · exact List.mem_cons_of_mem _ (mem_dedupVals h)
+    · rcases List.mem_cons.1 h with rfl | h
+      · exact List.mem_cons_self ..
+      · exact List.mem_cons_of_mem _ (mem_dedupVals h)
+
+omit [LogosFacts] in
+theorem candidates_ty {M : Model} {T : SmtType} {v : MVal} (h : v ∈ M.candidates T) : v.ty = T := by
+  unfold Model.candidates at h
+  have := List.mem_filter.1 (mem_dedupVals h)
+  simpa using this.2
+
+omit [LogosFacts] in
+/-- The Logos translation of a chain of `exists` binders. -/
+theorem eval_exists_cons (N : SmtModel) (s : native_String) (T : SmtType) (b : SmtTerm) (w : SmtValue)
+    (hty : __smtx_typeof_value w = T) (hc : __smtx_value_canonical N.usortDom w = true)
+    (hb : __smtx_model_eval (native_model_push N s T w) b = SmtValue.Boolean true) :
+    __smtx_model_eval N (SmtTerm.exists s T b) = SmtValue.Boolean true := by
+  rw [__smtx_model_eval.eq_def]
+  simp only
+  split
+  · rfl
+  · rename_i hn; exact absurd ⟨w, hty, hc, hb⟩ hn
+
+/-- The goal of the witnesses: the body, or its negation. -/
+def witnessGoal (pol : Bool) (body : Node) : SmtTerm := if pol then body.toSmt else SmtTerm.not body.toSmt
+
+theorem witness_sound (M : Model) (n : Nat) (IH : EvOk M n) (pol : Bool) (body : Node) :
+    ∀ (vs : List Node) (env env' : Model.Env), M.witness env n pol body vs = some env' →
+      __smtx_model_eval (toSmtModelE M env)
+        (__eo_to_smt_exists (eoList (vs.map Node.toEo)) (witnessGoal pol body)) = SmtValue.Boolean true
+  | [], env, env', h => by
+    unfold Model.witness at h
+    obtain ⟨-, hv⟩ := IH env body {} (memoOk_empty M env)
+    rcases e : (M.ev env n body {}).1 with _ | r
+    · rw [e] at h; cases h
+    · rw [e] at h
+      cases r with
+      | bool b =>
+        dsimp only at h
+        split at h
+        · rename_i hb
+          have hb : b = pol := by simpa using hb
+          subst hb
+          have hev := hv _ e
+          simp only [List.map_nil, eoList, __eo_to_smt_exists, witnessGoal]
+          cases b with
+          | true => simpa [toVal] using hev
+          | false =>
+            simp only [Bool.false_eq_true, ↓reduceIte]
+            rw [__smtx_model_eval.eq_def]
+            simp only
+            rw [hev]; rfl
+        · cases h
+      | _ => cases h
+  | .boundVar x T :: rest, env, env', h => by
+    unfold Model.witness at h
+    obtain ⟨v, hmem, hw⟩ := List.exists_of_findSome?_eq_some h
+    have ih := witness_sound M n IH pol body rest _ _ hw
+    rw [← toSmtModelE_push] at ih
+    simp only [List.map_cons, eoList]
+    rw [show (Node.boundVar x T).toEo = Term.Var (Term.String (native_string_lit x)) T.toEo by rw [Node.toEo]]
+    simp only [__eo_to_smt_exists]
+    exact eval_exists_cons _ _ _ _ _ (by rw [typeof_toVal]; exact candidates_ty hmem)
+      (canonical_toVal v) ih
+  | .const _ :: _, _, _, h | .var .. :: _, _, _, h | .skolem .. :: _, _, _, h | .app .. :: _, _, _, h => by
+    unfold Model.witness at h; cases h
+
+theorem quant_sound (M : Model) (n : Nat) (IH : EvOk M n) (k : Kind) (cs : Array Node) (v : MVal)
+    (hk : (k == .FORALL || k == .EXISTS) = true) (h : M.quant env n (k == .EXISTS) cs = some v) :
+    __smtx_model_eval (toSmtModelE M env) (Node.app (.kind k) cs).toSmt = toVal v := by
+  unfold Model.quant at h
+  split at h
+  · rename_i vs body hcs
+    split at h
+    · rename_i hif
+      cases h
+      simp only [Bool.and_eq_true, Bool.not_eq_true', Option.isSome_iff_exists] at hif
+      obtain ⟨hne, env', hw⟩ := hif
+      have ih := witness_sound M n IH _ body vs.toList env env' hw
+      obtain ⟨a, rest, hvs⟩ : ∃ a rest, vs.toList = a :: rest := by
+        cases e : vs.toList with
+        | nil =>
+          have : vs = #[] := Array.toList_eq_nil_iff.1 e
+          subst this; simp at hne
+        | cons a rest => exact ⟨a, rest, rfl⟩
+      have hbvl : (Node.app (.kind .BOUND_VAR_LIST) vs).toEo = eoList (vs.toList.map Node.toEo) := by
+        rw [Node.toEo_app]; rfl
+      unfold Node.toSmt at ih ⊢
+      rw [Node.toEo_app, hcs]
+      simp only [List.map_cons, List.map_nil]
+      rw [hbvl]
+      rw [hvs] at ih ⊢
+      simp only [List.map_cons, eoList] at ih ⊢
+      simp only [Bool.or_eq_true, beq_iff_eq] at hk
+      rcases hk with rfl | rfl
+      · show __smtx_model_eval _ (__eo_to_smt (eoApp2 UserOp.forall _ _)) = _
+        simp only [eoApp2, __eo_to_smt]
+        rw [__smtx_model_eval.eq_def]
+        simp only [witnessGoal, show (Kind.FORALL == Kind.EXISTS) = false from rfl, Bool.false_eq_true,
+          ↓reduceIte, Node.toSmt] at ih
+        simp only
+        rw [ih]; rfl
+      · show __smtx_model_eval _ (__eo_to_smt (eoApp2 UserOp.exists _ _)) = _
+        simp only [eoApp2, __eo_to_smt]
+        simp only [witnessGoal, show (Kind.EXISTS == Kind.EXISTS) = true from rfl, ↓reduceIte,
+          Node.toSmt] at ih
+        rw [ih]; rfl
+    · cases h
+  · cases h
+
+theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model.Memo) (hS : MemoOk M env S) :
+    MemoOk M env (M.evNode env n t S).2 ∧ ∀ v, (M.evNode env n t S).1 = some v → __smtx_model_eval (toSmtModelE M env) t.toSmt = toVal v := by
   unfold Model.evNode
   split
   · rename_i b
     exact ⟨hS, fun v h => by cases h; exact evalsTo_const _ b⟩
   · rename_i i
     exact ⟨hS, fun v h => by
-      cases h; simpa [Node.toSmt, Node.toEo, Const.toEo, toVal] using eval_numeral_term (toSmtModel M) i⟩
+      cases h; simpa [Node.toSmt, Node.toEo, Const.toEo, toVal] using eval_numeral_term (toSmtModelE M env) i⟩
   · rename_i q
     exact ⟨hS, fun v h => by
       cases h; simpa [Node.toSmt, Node.toEo, Const.toEo, toVal, native_rat_to_real] using
-        eval_rational_term (toSmtModel M) q⟩
+        eval_rational_term (toSmtModelE M env) q⟩
   · rename_i w
     refine ⟨hS, fun v h => ?_⟩
     dsimp only at h
@@ -1578,11 +1749,12 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
       rw [e, __smtx_model_eval.eq_def]
       rfl
   · exact ⟨hS, fun v h => eval_var h⟩
+  · exact ⟨hS, fun v h => eval_boundVar h⟩
   · rename_i cs
     split
     · rename_i hty
       obtain ⟨hS1, hv1⟩ := evList_sound M n IH cs.toList S hS
-      rcases e1 : M.evList n cs.toList S with ⟨r1, S1⟩
+      rcases e1 : M.evList env n cs.toList S with ⟨r1, S1⟩
       rw [e1] at hS1 hv1
       try dsimp only
       cases r1 with
@@ -1597,8 +1769,11 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
         · cases h
     · exact ⟨hS, fun v h => by cases h⟩
   · rename_i k cs _
+    split
+    · rename_i hk
+      exact ⟨hS, fun v h => quant_sound M n IH k cs v hk h⟩
     obtain ⟨hS1, hv1⟩ := evList_sound M n IH cs.toList S hS
-    rcases e1 : M.evList n cs.toList S with ⟨r1, S1⟩
+    rcases e1 : M.evList env n cs.toList S with ⟨r1, S1⟩
     rw [e1] at hS1 hv1
     try dsimp only
     cases r1 with
@@ -1610,7 +1785,7 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
     | some fv =>
       dsimp only
       obtain ⟨hS1, hv1⟩ := evList_sound M n IH cs.toList S hS
-      rcases e1 : M.evList n cs.toList S with ⟨r1, S1⟩
+      rcases e1 : M.evList env n cs.toList S with ⟨r1, S1⟩
       rw [e1] at hS1 hv1
       try dsimp only
       cases r1 with
@@ -1639,7 +1814,7 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
       have hsmt : (Node.const (.dtCons T idx)).toSmt = SmtTerm.DtCons sc ddc ic := by
         simp only [Model.consOf?] at hc; split at hc <;> simp_all
       obtain ⟨hS1, hv1⟩ := evList_sound M n IH cs.toList S hS
-      rcases e1 : M.evList n cs.toList S with ⟨r1, S1⟩
+      rcases e1 : M.evList env n cs.toList S with ⟨r1, S1⟩
       rw [e1] at hS1 hv1
       try dsimp only
       cases r1 with
@@ -1664,8 +1839,8 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
     · rename_i sc ddc ic x hc hcs
       have hsmt : (Node.const (.dtCons T idx)).toSmt = SmtTerm.DtCons sc ddc ic := by
         simp only [Model.consOf?] at hc; split at hc <;> simp_all
-      obtain ⟨hS1, hv1⟩ := IH x S hS
-      rcases e1 : M.ev n x S with ⟨r1, S1⟩
+      obtain ⟨hS1, hv1⟩ := IH env x S hS
+      rcases e1 : M.ev env n x S with ⟨r1, S1⟩
       rw [e1] at hS1 hv1
       try dsimp only
       cases r1 with
@@ -1687,8 +1862,8 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
       obtain ⟨a, d, he⟩ := dtSel_toEo hc
       have hsmt : (Node.const (.dtSel T idx jdx)).toSmt = SmtTerm.DtSel sc ddc ic jc := by
         simp only [Model.selOf?] at hc; split at hc <;> simp_all
-      obtain ⟨hS1, hv1⟩ := IH x S hS
-      rcases e1 : M.ev n x S with ⟨r1, S1⟩
+      obtain ⟨hS1, hv1⟩ := IH env x S hS
+      rcases e1 : M.ev env n x S with ⟨r1, S1⟩
       rw [e1] at hS1 hv1
       try dsimp only
       cases r1 with
@@ -1730,16 +1905,16 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
 
 /-- **The evaluation is sound**, at every fuel. -/
 theorem ev_sound (M : Model) : ∀ n, EvOk M n
-  | 0 => fun t S hS => by
+  | 0 => fun env t S hS => by
     rw [Model.ev]
     exact ⟨hS, fun v h => by cases h⟩
-  | n + 1 => fun t S hS => by
+  | n + 1 => fun env t S hS => by
     rw [Model.ev]
     split
     · rename_i w hw
       exact ⟨hS, fun v h => hS t v (by dsimp only at h; rw [hw, h])⟩
     · obtain ⟨hS1, hv1⟩ := evNode_sound M n (ev_sound M n) t S hS
-      rcases e1 : M.evNode n t S with ⟨r, S1⟩
+      rcases e1 : M.evNode env n t S with ⟨r, S1⟩
       rw [e1] at hS1 hv1
       exact ⟨memoOk_insert hS1 hv1, hv1⟩
 
@@ -1753,14 +1928,14 @@ theorem eval_andChain_true (M : Model) : ∀ (xs : List Term),
     rfl
 
 omit [LogosFacts] in
-theorem vals_true {M : Model} : ∀ {l : List Node} {vs : List MVal}, Vals M l vs →
+theorem vals_true {M : Model} : ∀ {l : List Node} {vs : List MVal}, Vals M [] l vs →
     (∀ v ∈ vs, v = .bool true) → ∀ a ∈ l, __smtx_model_eval (toSmtModel M) a.toSmt = SmtValue.Boolean true
   | _, _, .nil, _ => by simp
   | _, _, .cons h hr, hv => by
     intro a ha
     rcases List.mem_cons.1 ha with rfl | ha
     · have hb := hv _ (List.mem_cons.2 (Or.inl rfl))
-      rw [h, hb]; rfl
+      rw [← toSmtModelE_nil, h, hb]; rfl
     · exact vals_true hr (fun v hv' => hv v (by simp [hv'])) a ha
 
 /-- **A model that satisfies the assertions shows that they are
@@ -1772,8 +1947,8 @@ theorem satisfies_sound {M : Model} {as : List Node} (h : M.satisfies as = true)
   simp only [Bool.and_eq_true] at h
   obtain ⟨⟨ht, hc⟩, he⟩ := h
   refine ⟨toSmtModel_wf hc ht, ?_⟩
-  obtain ⟨-, hv⟩ := evList_sound M Model.fuel (ev_sound M _) as {} (memoOk_empty M)
-  rcases e : M.evList Model.fuel as {} with ⟨r, S⟩
+  obtain ⟨-, hv⟩ := evList_sound M Model.fuel (ev_sound M _) as {} (memoOk_empty M [])
+  rcases e : M.evList [] Model.fuel as {} with ⟨r, S⟩
   rw [e] at he hv
   cases r with
   | none => simp at he

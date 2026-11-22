@@ -1728,6 +1728,82 @@ Not yet: the deep chains of skolems of some splits are slow (a benchmark that
 cvc5 solves in a second times out; the terms are trees whose size doubles with
 each skolem, though shared in memory).
 
+## Stage 10: quantifiers (in progress: step 2)
+
+cvc5's quantifiers engine (`src/theory/quantifiers/`) in the configuration of
+safe mode with full-strict proofs and the central equality engine. Its
+default modules, by `SetDefaults::setDefaultsQuantifiers` and
+`QuantifiersModules::initialize`:
+
+To port:
+- **conflict-based instantiation** (`QuantConflictFind`, `cbqi-mode=prop-eq`),
+  on unless the logic is pure arithmetic (where CEGQI replaces it): instances
+  that are conflicting or propagating against the equality engine
+  (`QUANTIFIERS_INST_CBQI_CONFLICT`, `QUANTIFIERS_INST_CBQI_PROP`);
+- **E-matching** (`InstantiationEngine`): trigger selection, the term
+  database, single and multi-trigger matching, user patterns;
+- **counterexample-guided instantiation** (`InstStrategyCegqi`) for quantified
+  logics with arithmetic or datatypes: linear arithmetic (with
+  `cegqi-midpoint` and no infinitesimals or infinities, which full-strict
+  proofs force), then datatypes (constructor terms of the model);
+- the infrastructure: the engine's efforts (instantiation at full effort and
+  last call, `inst-when=full-last-call`), the quantifier registry and
+  attributes, the term database (relevant terms, signatures modulo the
+  equality engine), the instantiation manager (duplicates, `inst-no-entail`,
+  the rewriting of instances), skolemization of negated quantifiers,
+  alpha-equivalence (`quant-alpha-equiv`), and the preprocessing that is on
+  (prenexing, miniscoping, `var-elim-quant`, `var-ineq-elim-quant`).
+
+Not ported: CEGQI for bit-vectors (`cegqi-bv`, off in safe mode),
+`var-ent-eq-elim-quant` (off in safe mode); finite model finding and its
+dynamic splitting, MBQI, enumerative instantiation (off by default; the last
+is a candidate as an option), SyGuS instantiation, macros, `quant-sub-cbqi`
+(off by default); conjecture generation, induction, oracles (expert, off);
+pool instantiation (acts only on the non-standard `:pool`); higher-order
+(outside safe mode). Bounded integers and the model engine, which cvc5 builds
+for the logics of strings (`strings-exp`), belong to strings stage 2 (the
+bounded quantifiers of reductions).
+
+Certificates: an instance is `instantiate` (with the rewriting of the
+instance, when the instantiation manager rewrites it), a skolemization
+`skolemize`, alpha-equivalence `alpha_equiv`. A `sat` answer needs a model of
+the quantified formulas, which the model check cannot decide over infinite
+domains. It decides what a witness settles (`Model.quant`, proven in
+`TelosProofs/Solver/Model.lean`): an `exists` true, or a `forall` false, by a
+value of the model for each bound variable (`Model.candidates`); a `forall`
+that must be true is not evaluated, so its `sat` is `unknown`. cvc5 answers
+`unknown` itself when a quantified formula is asserted and instantiation is
+incomplete (`model-unsound`, `modelUnsoundAt`), so this leaves out mostly
+vacuous quantifiers, such as `(forall ((x U)) (or (not (P w)) …))` with
+`(not (P w))` true, which cvc5's preprocessing removes. Open: evaluate the
+body with its variables masked (true for every value) and short-circuit `or`
+and `and` (`LogosFacts.eval_bool` for the other children).
+
+Comparisons with cvc5 use `fuzz-solve.py --theory ufq --ieval-off`: telos
+ports conflict-based instantiation with `--ieval=off` (the instantiation
+evaluator is not ported); safe mode allows one non-default option, so cvc5 then
+runs without `--safe-mode=safe`, which leaves its traces otherwise the same
+(96 of 100 identical, the 4 others its timeouts).
+
+Step 1 (done; 2026-11-22): `Telos/Solver/Theory/QuantState.lean` (term
+database, entailment), `QuantConflictFind.lean`, `Quantifiers.lean` (the
+engine: registration, skolemization, instantiation, efforts and last call,
+`shouldRecheck`), `Telos/Solver/QuantLemma.lean` (certificates); hooked into
+`Engine.lean` (with the central equality engine, the quantifiers engine is
+notified of new classes only, not merges). The SAT solver explains, with
+events, the theory propagations of a clause in conflict at level 0
+(`finalizeExplain`, cvc5's `SatProofManager::finalizeProof`). Fuzz (`ufq`,
+seed 1, 100): 50 the same events as cvc5 (42 with `--clauses`); the rest are
+E-matching (step 2), vacuous quantifiers in `sat` answers, and cvc5 timeouts;
+every `unsat` is certified.
+
+Steps, each with its fuzz generator, events and certificates:
+1. the engine's skeleton, skolemization, the instantiation manager, the term
+   database, conflict-based instantiation (UF);
+2. E-matching;
+3. CEGQI for linear arithmetic, then datatypes;
+4. alpha-equivalence and the remaining preprocessing.
+
 ## Order of work (all stages)
 
 1. **Equality engine.** Port `theory/uf/equality_engine.cpp` (about 3k lines)

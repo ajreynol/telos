@@ -9,6 +9,7 @@ import Telos.Solver.Theory.UF
 import Telos.Solver.Theory.Datatypes
 import Telos.Solver.Theory.Sets
 import Telos.Solver.Theory.StringsSolver
+import Telos.Solver.Theory.Quantifiers
 import Telos.Solver.EqBuild
 import Telos.Solver.Explain
 import Telos.Solver.Model
@@ -17,6 +18,7 @@ import Telos.Solver.SatProof
 import Telos.Solver.DtLemma
 import Telos.Solver.SetsLemma
 import Telos.Solver.StringsLemma
+import Telos.Solver.QuantLemma
 import Telos.Solver.Theory.Arith.Solver
 import Telos.Solver.Decision
 
@@ -186,9 +188,8 @@ among UF, datatypes and arithmetic, and the logic is quantifier-free. -/
 def Config.satSupported (c : Config) : Bool :=
   c.theories.all fun T => [.THEORY_BUILTIN, .THEORY_BOOL, .THEORY_UF, .THEORY_DATATYPES, .THEORY_ARITH,
     .THEORY_SETS, .THEORY_STRINGS].contains T ||
-    -- strings enable quantifiers (`strings-exp`), which have nothing to check on
-    -- quantifier-free inputs
-    (T == .THEORY_QUANTIFIERS && c.theories.contains .THEORY_STRINGS)
+    -- quantifiers (Stage 10; strings enable them, `strings-exp`)
+    T == .THEORY_QUANTIFIERS
 
 /-- The central equality engine runs, with UF and datatypes: the theories are
 supported (with arithmetic or not). -/
@@ -203,6 +204,10 @@ def Config.setsSolver (c : Config) : Bool := c.eeSolver && c.theories.contains .
 /-- The theory of strings is enabled (`Telos/Solver/Theory/Strings.lean`, in
 progress). -/
 def Config.stringsSolver (c : Config) : Bool := c.eeSolver && c.theories.contains .THEORY_STRINGS
+
+/-- The quantifiers engine is enabled, and solved (in part,
+`Telos/Solver/Theory/Quantifiers.lean`). -/
+def Config.quantSolver (c : Config) : Bool := c.eeSolver && c.theories.contains .THEORY_QUANTIFIERS
 
 /-- The answer to `check-sat`. -/
 inductive Answer where
@@ -350,6 +355,15 @@ structure State where
   /-- The facts asserted to the theory of strings, and the next to process. -/
   stringsFacts : Array Node := #[]
   stringsHead : Nat := 0
+  /-- The quantifiers engine (`Telos/Solver/Theory/Quantifiers.lean`), its facts
+  and how many it processed, and their sizes saved at each push. -/
+  quant : Quant.Eng := {}
+  quantFacts : Array Node := #[]
+  quantHead : Nat := 0
+  quantSaved : Array (Nat × Nat) := #[]
+  /-- The level at which a theory set the model unsound (`TheoryEngine::d_modelUnsound`,
+  context dependent): the answer is then `unknown`. -/
+  modelUnsoundAt : Option Nat := none
   /-- The facts of arithmetic, and how many it has processed (context
   dependent). -/
   arithFacts : Array Node := #[]
@@ -562,14 +576,35 @@ def assertShared (T : Theory) (lit : Node) : EngineM Unit := do
   if T == .THEORY_STRINGS then modify fun s => { s with stringsFacts := s.stringsFacts.push norm }
   if T == .THEORY_ARITH then modify fun s => { s with arithFacts := s.arithFacts.push norm }
 
+/-- A context of the quantifiers engine that sees nothing (for the term
+database's operations that do not look at the equality engine). -/
+def Quant.emptyCtx : Quant.Ctx :=
+  { hasTerm := fun _ => false, rep := id, areEqual := (· == ·), areDisequal := fun _ _ => false,
+    lt := Node.lt, reps := #[], facts := #[], rewrite := id }
+
+/-- Run an operation of the quantifiers' term database that does not look at
+the equality engine. -/
+def quantTermDb (x : Quant.M Unit) : EngineM Unit :=
+  modify fun s =>
+    let q := s.quant
+    let s := { s with quant := {} }
+    let (_, r) := (x.run Quant.emptyCtx).run { st := q.st }
+    { s with quant := { q with st := r.st } }
+
 /-- Process the notes of the central equality engine
 (`EqEngineManagerCentral`): its propagations and conflicts are
 `THEORY_BUILTIN`'s. -/
 def processNotes (notes : Array EE.Note) : EngineM Unit := do
   for n in notes do
     match n with
-    | .newClass t => if (← read).eeEvents then emit (.eeNewClass (← level) t)
-    | .merge a b => if (← read).eeEvents then emit (.eeMerge (← level) a b)
+    | .newClass t =>
+      if (← read).eeEvents then emit (.eeNewClass (← level) t)
+      -- (`TermRegistry::eqNotifyNewClass`)
+      if (← read).quantSolver then quantTermDb (Quant.addTerm t)
+    | .merge a b =>
+      -- (with the central equality engine, the quantifiers engine is notified of
+      -- new classes only, not of merges: `EqEngineManagerCentral`)
+      if (← read).eeEvents then emit (.eeMerge (← level) a b)
     | .disequal a b r => if (← read).eeEvents then emit (.eeDiseq (← level) a b r)
     | .propagate lit => propagate .THEORY_BUILTIN lit
     | .constantMerge a b =>
@@ -633,6 +668,53 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
 def withEE (x : EE.EEM α) : EngineM α := do
   let (a, notes) ← runEE x
   processNotes notes
+  return a
+
+/-- What the quantifiers engine sees of the rest: the equality engine (its
+terms, representatives, (dis)equalities and classes, in its order), cvc5's
+node order, the facts asserted to the theories, and the rewriter. -/
+def quantCtx : EngineM Quant.Ctx := do
+  let s ← get
+  let c ← read
+  let ee := s.ee
+  let ectx ← eeCtx
+  let rep (t : Node) : Node := match ee.nodeIds.get? ⟨t⟩ with
+    | some i => ee.nodes[EE.find ee i]!
+    | none => t
+  let areEqual (a b : Node) : Bool := a == b || match ee.nodeIds.get? ⟨a⟩, ee.nodeIds.get? ⟨b⟩ with
+    | some i, some j => EE.find ee i == EE.find ee j
+    | _, _ => false
+  let areDisequal (a b : Node) : Bool := (((EE.areDisequal a b false).run ectx).run ee).1
+  let mut reps : Array Node := #[]
+  for i in [0:ee.nodes.size] do
+    if !ee.isInternal[i]! && EE.find ee i == i then reps := reps.push ee.nodes[i]!
+  let ord := { c.order with fresh := ee.freshIds }
+  return { hasTerm := fun t => ee.nodeIds.contains ⟨t⟩, rep, areEqual, areDisequal,
+           lt := fun a b => EE.ageLt ee.nodeIds a b c.declOrder c.order, reps,
+           facts := s.ufFacts ++ s.arithFacts ++ s.dtFacts ++ s.setsFacts ++ s.stringsFacts ++ s.quantFacts,
+           rewrite := fun t => Telos.rewrite t ord }
+
+/-- Run an operation of the quantifiers engine, and act on its outputs: its
+skolems, and its lemmas, as a theory's (`TheoryEngine::lemma`); a model that
+is unsound (`setModelUnsound`), and a check asked for (`markUsed`). -/
+def quantRun (x : Quant.EM α) : EngineM α := do
+  let ctx ← quantCtx
+  let q ← modifyGet fun s => (s.quant, { s with quant := {} })
+  let ((a, q), out) := ((x.run q).run {}).run ctx
+  modify fun s => { s with quant := q }
+  processNotes (out.skolems.map EE.Note.skolem)
+  for l in out.lemmas do
+    emit (.lemma (← level) .THEORY_QUANTIFIERS l.id l.lem)
+    if (← read).satMode then
+      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (l.lem, false, none, QuantLemma.prove l),
+                               outputUsed := true, lemmasAdded := true }
+    else
+      modify fun s => { s with lemmaSent := true, lemmaQueue := s.lemmaQueue.push l.lem, lemmasAdded := true }
+  if out.modelUnsound then
+    let l ← level
+    emit (.modelUnsound l .THEORY_QUANTIFIERS "QUANTIFIERS")
+    modify fun s => { s with modelUnsoundAt := s.modelUnsoundAt.orElse fun _ => some l }
+  if out.markUsed then modify fun s => { s with outputUsed := true }
   return a
 
 /-- What the engine does with an output of the linear solver, but for the
@@ -818,6 +900,7 @@ def assertFact (lit : Node) (fromSat : Bool := true) (to : Option Theory := none
   if T == .THEORY_SETS then modify fun s => { s with setsFacts := s.setsFacts.push lit }
   if T == .THEORY_STRINGS then modify fun s => { s with stringsFacts := s.stringsFacts.push lit }
   if T == .THEORY_ARITH then modify fun s => { s with arithFacts := s.arithFacts.push lit }
+  if T == .THEORY_QUANTIFIERS then modify fun s => { s with quantFacts := s.quantFacts.push lit }
   -- an equality goes to the shared solver too (`THEORY_BUILTIN`), unless its
   -- theory uses the central equality engine (it is marked already): asserted
   -- to the equality engine now (`SharedTermsDatabase::assertShared`)
@@ -848,7 +931,9 @@ def pushLevel : EngineM Unit :=
       s.dtFacts.size, s.dtHead, s.setsFacts.size, s.setsHead, s.stringsFacts.size, s.stringsHead, s.arithFacts.size, s.arithHead, s.factsAsserted, s.inConflict, s.theoryConflict, s.propagated.size, s.asserted.size,
       s.sharedLog.size, s.registerLog.size, s.skActive.size, s.ufFunctionTerms.size, s.arithShared.size,
       s.setsShared.size, s.stringsShared.size⟩
-    { s with saved := s.saved.push sv, level := s.level + 1, ee := EE.push s.ee, arith := s.arith.push }
+    { s with saved := s.saved.push sv, level := s.level + 1, ee := EE.push s.ee, arith := s.arith.push,
+             quant := { s.quant with st := s.quant.st.push },
+             quantSaved := s.quantSaved.push (s.quantFacts.size, s.quantHead) }
 
 /-- A purification skolem (as `--post-asserts` names it in a script read back). -/
 def isPurifySkolem : Node → Bool
@@ -969,6 +1054,11 @@ def popTo (k : Nat) : EngineM Unit := do
     theoryConflict := sv.theoryConflict, propagated := s.propagated.take sv.propagated,
     asserted := s.asserted.take sv.asserted,
     saved := s.saved.take k, level := k, ee, satQueue := #[] }
+  modify fun s =>
+    let (qf, qh) := s.quantSaved[k]?.getD (s.quantFacts.size, s.quantHead)
+    { s with quant := { s.quant with st := s.quant.st.popTo k }, quantFacts := s.quantFacts.take qf,
+             quantHead := qh, quantSaved := s.quantSaved.take k,
+             modelUnsoundAt := s.modelUnsoundAt.filter (· ≤ k) }
 
 /-- Raise the context level to `k` (pushes are implicit in cvc5's traces). -/
 def raiseTo (k : Nat) : EngineM Unit := do
@@ -1165,6 +1255,8 @@ partial def theoryPreRegister (T : Theory) (t : Node) : EngineM Unit := do
       modify fun s => { s with ufFunctionTerms := s.ufFunctionTerms.push t }
   if T == .THEORY_DATATYPES && (← read).dtSolver then withEE (DT.preRegisterTerm t)
   if T == .THEORY_SETS && (← read).setsSolver then withEE (Sets.preRegisterTerm t)
+  if T == .THEORY_QUANTIFIERS && (← read).quantSolver && t.getKind == .FORALL then
+    quantRun (Quant.preRegister t)
   if T == .THEORY_STRINGS && (← read).stringsSolver then
     -- each lemma's atoms are preregistered as it is sent
     let c ← read
@@ -1580,6 +1672,19 @@ def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
     flushArithDeferred
     -- its lemmas go to the CNF stream before the next theory's check
     flushLemmas
+  if T == .THEORY_QUANTIFIERS && (← read).quantSolver then
+    repeat
+      let s ← get
+      if s.inConflict || s.quantHead ≥ s.quantFacts.size then break
+      let fact := s.quantFacts[s.quantHead]!
+      modify fun s => { s with quantHead := s.quantHead + 1 }
+      let (atom, pol) := atomOf fact
+      quantRun (Quant.assertQuantifier atom pol)
+      flushLemmas
+    if !(← get).inConflict then
+      let st ← get
+      quantRun (Quant.check e (st.outputUsed || st.lemmasAdded) #[])
+      flushLemmas
   if T == .THEORY_UF && (← read).eeSolver then
     repeat
       let s ← get
@@ -1771,6 +1876,17 @@ def check (e : Effort) : EngineM Unit := do
     if e == .full && (← read).sharing && !st.factsAsserted && !(st.outputUsed || st.lemmasAdded) &&
         !st.inConflict then
       combineTheories
+  -- last call: the quantifiers engine (`QuantifiersEngine::check`), if the full
+  -- check left nothing to do
+  let st ← get
+  if e == .full && (← read).quantSolver && !st.inConflict && !(st.outputUsed || st.lemmasAdded) then
+    let ee := st.ee
+    let mut all : Array Node := #[]
+    for i in [0:ee.nodes.size] do
+      if !ee.isInternal[i]! then all := all.push ee.nodes[i]!
+    let all' := all
+    quantRun (Quant.check .lastCall false all')
+    flushLemmas
 
 /-- The explanation of a propagated literal (`TheoryEngine::getExplanation`,
 with the central equality engine), as its assumptions: the equality engine

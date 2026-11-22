@@ -94,7 +94,7 @@ partial def sharedTerm (N : Eunoia.Names) (refs : Std.HashMap Key Nat)
     StateM PrintState Term := do
   if let some t := (← get).terms.get? ⟨n⟩ then return t
   let (cs, rebuild) : Array Node × (List Term → Term) := match n with
-    | .skolem id cs => (cs, id.eoShape.toEo)
+    | .skolem id cs => (cs, id.toEo)
     | .app op cs => (cs, op.eoShape.toEo)
     | _ => (#[], fun _ => n.toEo)
   let body ← if cs.isEmpty then pure n.toEo else do

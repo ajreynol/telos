@@ -20,7 +20,14 @@ the input assertions makes them satisfiable. To make that correspondence
 direct:
 - the constants are keyed as Logos keys them: by the name of their Logos symbol
   (`keyName`), with their Logos type;
-- function values carry their Logos types.
+- function values carry their Logos types;
+- the values of bound variables are a stack (`Env`), as Logos pushes them
+  (`native_model_push`), so the model of the stack (`toSmtModelE`) is Logos's.
+
+A quantifier is evaluated when a witness settles it (`quant`): an `exists` is
+true, or a `forall` false, if its body evaluates to `true`, or `false`, for
+some values of its variables among those of the model (`candidates`). A
+`forall` that is true is not evaluated (the domains may be infinite).
 
 The values are those of the theories telos solves: Booleans, the elements of
 uninterpreted sorts (numbered), functions, and datatype values. A function is
@@ -398,22 +405,43 @@ def distinctVals : List MVal → Bool
   | [] => true
   | v :: vs => vs.all (fun w => !(v.veq w)) && distinctVals vs
 
+/-- The values of the bound variables in scope: name, Logos type and value,
+the innermost first (as Logos's `native_model_push` stacks them). -/
+abbrev Env := List (native_String × SmtType × MVal)
+
+/-- The value of the bound variable `x` of Logos type `T`: the innermost. -/
+def Env.lookup : Env → native_String → SmtType → Option MVal
+  | [], _, _ => none
+  | (y, U, v) :: env, x, T => if y == x && U == T then some v else Env.lookup env x T
+
+/-- The list without the values equal (`veq`) to a later one. -/
+def dedupVals : List MVal → List MVal
+  | [] => []
+  | v :: vs => let r := dedupVals vs; if r.any (v.veq ·) then r else v :: r
+
+/-- The witnesses tried for a bound variable of Logos type `T`: the values of
+that type in the model (of its constants, in its tables, and the Booleans). -/
+def candidates (M : Model) (T : SmtType) : List MVal :=
+  let vs := [MVal.bool true, .bool false] ++ M.consts.toList.map (·.2.2) ++
+    M.funs.toList.flatMap fun t => t.default :: t.entries.flatMap fun (a, b) => [a, b]
+  dedupVals (vs.filter (·.ty == T))
+
 mutual
   /-- Evaluate a node, memoized (the memo is threaded, so it is updated in
   place); `none` outside the fragment evaluated (Booleans, equalities, `ite`,
   declared constants and their applications) or when the fuel runs out. -/
-  def ev (M : Model) : Nat → Node → Memo → Option MVal × Memo
+  def ev (M : Model) (env : Env) : Nat → Node → Memo → Option MVal × Memo
     | 0, _, S => (none, S)
     | n + 1, t, S =>
       match S.get? ⟨t⟩ with
       | some v => (v, S)
       | none =>
-        match evNode M n t S with
+        match evNode M env n t S with
         | (v, S) => (v, S.insert ⟨t⟩ v)
   termination_by n => (n, 0, 0)
 
   /-- Evaluate a node from its children. -/
-  def evNode (M : Model) (n : Nat) (t : Node) (S : Memo) : Option MVal × Memo :=
+  def evNode (M : Model) (env : Env) (n : Nat) (t : Node) (S : Memo) : Option MVal × Memo :=
     match t with
     | .const (.boolean b) => (some (.bool b), S)
     | .const (.integer i) => (some (.int i), S)
@@ -421,41 +449,43 @@ mutual
     | .const (.string w) => (if w.all (fun c => decide (c < 196608)) then some (.str w) else none, S)
     | .const (.emptySet T) => (if tyS T == .None then none else some (.sempty (tyS T)), S)
     | .var x T => (M.const x T, S)
+    | .boundVar x T => (env.lookup (native_string_lit x) (tyS T), S)
     | .app (.kind .DISTINCT) cs =>
       if distinctTyped cs then
-        match evList M n cs.toList S with
+        match evList M env n cs.toList S with
         | (none, S) => (none, S)
         | (some vs, S) => (if 2 ≤ vs.length then some (.bool (distinctVals vs)) else none, S)
       else (none, S)
     | .app (.kind k) cs =>
-      match evList M n cs.toList S with
+      if k == .FORALL || k == .EXISTS then (quant M env n (k == .EXISTS) cs, S) else
+      match evList M env n cs.toList S with
       | (none, S) => (none, S)
       | (some vs, S) => (combine k cs vs, S)
     | .app (.node .APPLY_UF (.var f T)) cs =>
       match M.const f T with
       | none => (none, S)
       | some fv =>
-        match evList M n cs.toList S with
+        match evList M env n cs.toList S with
         | (none, S) => (none, S)
         | (some vs, S) => (if vs.isEmpty then none else M.applyAll fv vs, S)
     | .app (.node .APPLY_CONSTRUCTOR f@(.const (.dtCons ..))) cs =>
       match consOf? f with
       | none => (none, S)
       | some (s, dd, i) =>
-        match evList M n cs.toList S with
+        match evList M env n cs.toList S with
         | (none, S) => (none, S)
         | (some vs, S) => (if vs.any (·.notValue) then none else some (MVal.mkDt s dd i vs), S)
     | .app (.node .APPLY_TESTER f@(.const (.dtCons ..))) cs =>
       match consOf? f, cs.toList with
       | some (s, dd, i), [x] =>
-        match ev M n x S with
+        match ev M env n x S with
         | (none, S) => (none, S)
         | (some v, S) => (some (.bool (v.head == .dtc s dd i)), S)
       | _, _ => (none, S)
     | .app (.node .APPLY_SELECTOR f@(.const (.dtSel ..))) cs =>
       match selOf? f, cs.toList with
       | some (s, dd, i, j), [x] =>
-        match ev M n x S with
+        match ev M env n x S with
         | (none, S) => (none, S)
         | (some v, S) =>
           (if v.head == .dtc s dd i then v.argNth j (__smtx_dt_num_sels (__smtx_dd_lookup s dd) i)
@@ -463,16 +493,40 @@ mutual
       | _, _ => (none, S)
     | .const (.dtCons ..) => (consOf? t |>.map fun (s, dd, i) => .dtc s dd i, S)
     | _ => (none, S)
+  termination_by (n, 3, 0)
+
+  /-- A quantifier, an `exists` (`pol`) or a `forall`, of the children `cs`, by
+  a witness among the candidates (`candidates`): an `exists` is true if its
+  body is true for one, a `forall` false if its body is false for one; else it
+  is not evaluated. -/
+  def quant (M : Model) (env : Env) (n : Nat) (pol : Bool) (cs : Array Node) : Option MVal :=
+    match cs.toList with
+    | [.app (.kind .BOUND_VAR_LIST) vs, body] =>
+      if !vs.isEmpty && (witness M env n pol body vs.toList).isSome then some (.bool pol) else none
+    | _ => none
   termination_by (n, 2, 0)
 
+  /-- Values of the bound variables `vs` (pushed on `env`) for which `body`
+  evaluates to `pol` (with a memo of its own, as its value depends on them). -/
+  def witness (M : Model) (env : Env) (n : Nat) (pol : Bool) (body : Node) :
+      List Node → Option Env
+    | [] => match (ev M env n body {}).1 with
+      | some (.bool b) => if b == pol then some env else none
+      | _ => none
+    | .boundVar x T :: rest =>
+      (candidates M (tyS T)).findSome? fun v =>
+        witness M ((native_string_lit x, tyS T, v) :: env) n pol body rest
+    | _ :: _ => none
+  termination_by l => (n, 1, l.length)
+
   /-- Evaluate a list of nodes. -/
-  def evList (M : Model) (n : Nat) : List Node → Memo → Option (List MVal) × Memo
+  def evList (M : Model) (env : Env) (n : Nat) : List Node → Memo → Option (List MVal) × Memo
     | [], S => (some [], S)
     | c :: cs, S =>
-      match ev M n c S with
+      match ev M env n c S with
       | (none, S) => (none, S)
       | (some v, S) =>
-        match evList M n cs S with
+        match evList M env n cs S with
         | (none, S) => (none, S)
         | (some vs, S) => (some (v :: vs), S)
   termination_by l => (n, 1, l.length)
@@ -485,12 +539,12 @@ def fuel : Nat := 1 <<< 20
 typed, and every assertion evaluates to `true`. -/
 def satisfies (M : Model) (as : List Node) : Bool :=
   M.tablesOk && M.constsOk &&
-    (match M.evList fuel as {} with
+    (match M.evList [] fuel as {} with
      | (some vs, _) => vs.all (· == .bool true)
      | (none, _) => false)
 
 /-- Evaluate one node. -/
-def eval (M : Model) (t : Node) : Option MVal := (M.ev fuel t {}).1
+def eval (M : Model) (t : Node) : Option MVal := (M.ev [] fuel t {}).1
 
 end Model
 

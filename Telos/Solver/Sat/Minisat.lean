@@ -1,3 +1,4 @@
+import Std.Data.HashSet
 import Telos.Solver.Sat.Basic
 
 /-!
@@ -387,6 +388,30 @@ def reason (x : Var) : m CRef := do
                       clausesRemovable := s.clausesRemovable.push cr }
     (cr, attachClause s cr)
 
+/-- `SatProofManager::explainLit`, for the explanations it asks of the
+theories: the reason of the true literal `p` (which a theory explains, if it
+propagated `p`), then, recursively, of the other literals of that reason; the
+literals in `seen` are explained already. -/
+partial def explainLitPf (p : Lit) (seen : Std.HashSet Var) : m (Std.HashSet Var) := do
+  if seen.contains p.var then return seen
+  let mut seen := seen.insert p.var
+  let r ← reason p.var
+  if r == CRef.undef then return seen
+  let c := (← st).clauses[r]!
+  for q in c.lits do
+    if q.var == p.var then continue
+    seen ← explainLitPf q.neg seen
+  return seen
+
+/-- `SatProofManager::finalizeProof` on the clause `c` in conflict at level 0
+(with proofs): the negations of its literals are explained (`explainLitPf`).
+(cvc5 then explains the remaining leaves of its proof of `false`; telos
+explains the theory propagations at level 0 after the refutation, quietly.) -/
+def finalizeExplain (c : Array Lit) : m Unit := do
+  if !(← st).needProof then return
+  let mut seen : Std.HashSet Var := {}
+  for q in c do seen ← explainLitPf q.neg seen
+
 /-- `litRedundant`. -/
 partial def litRedundant (p : Lit) (abstractLevels : Nat) : m Bool := do
   upd fun s => { s with analyzeStack := #[p] }
@@ -702,6 +727,7 @@ def addClause (ps : Array Lit) (removable : Bool) : m Bool := do
   if out.size == falseCount then
     if s.needProof then
       if falseCount == 1 then
+        finalizeExplain out
         upd fun s => { s with ok := false }
         return false
     else
@@ -716,6 +742,7 @@ def addClause (ps : Array Lit) (removable : Bool) : m Bool := do
       (cr, attachClause { s with clausesPersistent := s.clausesPersistent.push cr } cr)
     cr := r
     if s.needProof && out.size == falseCount then
+      finalizeExplain out
       upd fun s => { s with ok := false }
       return false
   if out.size == falseCount + 1 && (← st).valueVar out[0]!.var == .undef then
@@ -723,6 +750,7 @@ def addClause (ps : Array Lit) (removable : Bool) : m Bool := do
     if out.size == 1 then TheoryProxy.notifySatClause #[out[0]!]
     let confl ← propagate .withoutTheory
     let ok := confl == CRef.undef
+    if !ok && confl != CRef.lazy then finalizeExplain (← st).clauses[confl]!.lits
     upd fun s => { s with ok }
     return ok
   return true
@@ -840,7 +868,9 @@ partial def search (nofConflicts : Nat) : m Result := do
     if confl != CRef.undef then
       upd fun s => { s with conflicts := s.conflicts + 1 }
       conflictC := conflictC + 1
-      if (← st).decisionLevel == 0 then return .unsat
+      if (← st).decisionLevel == 0 then
+        if confl != CRef.lazy then finalizeExplain (← st).clauses[confl]!.lits
+        return .unsat
       let confl ← if confl == CRef.lazy then pure confl else pure confl
       let (learnt, bt) ← analyze confl
       cancelUntil bt

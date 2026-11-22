@@ -466,6 +466,15 @@ def _root_.Telos.SkolemId.eoShape : SkolemId → AppShape
   | .MOD_BY_ZERO => .spine (Term.UOp UserOp._at_mod_by_zero) (.exactly 0)
   | .DIV_BY_ZERO => .spine (Term.UOp UserOp._at_div_by_zero) (.exactly 0)
   | .SETS_DEQ_DIFF => .spine (Term.UOp UserOp._at_sets_deq_diff) (.exactly 2)
+  -- (a binary operator, `SkolemId.toEo`)
+  | .QUANTIFIERS_SKOLEMIZE => .none
+
+/-- The CPC term of a skolem, from the CPC terms of its cache values: by its
+shape (`SkolemId.eoShape`), but `(@quantifiers_skolemize q i)`, Logos's binary
+operator `UOp2` of `q` and the numeral `i`. -/
+def _root_.Telos.SkolemId.toEo : SkolemId → List Term → Term
+  | .QUANTIFIERS_SKOLEMIZE, [q, i] => Term.UOp2 UserOp2._at_quantifiers_skolemize q i
+  | id, xs => id.eoShape.toEo xs
 
 namespace Node
 
@@ -473,7 +482,7 @@ def toEo : Node → Term
   | .const c => c.toEo
   | .var name T => Term.UConst (constId name) T.toEo
   | .boundVar name T => Term.Var (Term.String (native_string_lit name)) T.toEo
-  | .skolem id cs => id.eoShape.toEo (cs.attach.toList.map fun ⟨c, _⟩ => c.toEo)
+  | .skolem id cs => id.toEo (cs.attach.toList.map fun ⟨c, _⟩ => c.toEo)
   | .app (.kind k) cs => k.eoShape.toEo (cs.attach.toList.map fun ⟨c, _⟩ => c.toEo)
   | .app (.indexed k is) cs =>
       (indexedEoShape k is.toList).toEo (cs.attach.toList.map fun ⟨c, _⟩ => c.toEo)

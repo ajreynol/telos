@@ -48,7 +48,19 @@ def rangeAfter : Nat → Option TypeNode → Option TypeNode
 def skolemType? : SkolemId → Option TypeNode
   | .INT_DIV_BY_ZERO | .MOD_BY_ZERO => some (.function .integer .integer)
   | .DIV_BY_ZERO => some (.function .real .real)
-  | .PURIFY | .SETS_DEQ_DIFF => none
+  | .PURIFY | .SETS_DEQ_DIFF | .QUANTIFIERS_SKOLEMIZE => none
+
+/-- The type of `(@quantifiers_skolemize q i)`: that of the `i`-th variable of
+`q`. -/
+def skolemizeType? (cs : Array Node) : Option TypeNode := do
+  let q ← cs[0]?
+  let i ← match cs[1]? with
+    | some (Node.const (.integer i)) => some i.toNat
+    | _ => none
+  let vs ← q.getChildren[0]?
+  match vs.getChildren[i]? with
+  | some (Node.boundVar _ T) => some T
+  | _ => none
 
 -- The match over `Kind` is large; its compilation needs more than the default.
 set_option maxHeartbeats 1000000 in
@@ -68,6 +80,7 @@ def typeHint : Node → Option TypeNode
     | .PURIFY, [t] =>
       have : t ∈ cs := by rw [Array.mem_def, h]; simp
       typeHint t
+    | .QUANTIFIERS_SKOLEMIZE, _ => (skolemizeType? cs).orElse fun _ => n.getTypeF
     | .SETS_DEQ_DIFF, [a, _] =>
       have : a ∈ cs := by rw [Array.mem_def, h]; simp
       match typeHint a with

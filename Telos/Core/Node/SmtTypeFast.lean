@@ -289,6 +289,7 @@ theorem smtType_var_string (x : String) : (Node.var x .string).smtType = .Seq .C
 theorem smtType_purify (t : Node) : (Node.skolem .PURIFY #[t]).smtType = t.smtType := by
   show termTy (Node.skolem .PURIFY #[t]).toEo = termTy t.toEo
   rw [Node.toEo]
+  simp only [SkolemId.toEo]
   exact termTy_purify t.toEo
 
 /-- The children's kept types, as `fastTy` collects them. -/
