@@ -497,6 +497,35 @@ tested:
 
 ## Roadmap
 
+**End goal: no Logos at run time** (set 2026-11-22). telos is an
+independent implementation: while it rewrites, preprocesses and solves, it
+never translates nodes to Logos terms, nor runs Logos's checker or its Eunoia
+programs. Logos stays what the theorems are about (the specification, and the
+target of the CPC proofs telos prints), but each step is justified by a
+procedure of telos's own, proven once (statically) to produce what Logos would
+accept, as `Certified.static` steps already are (`StaticProc`: a cheap side
+condition, and a theorem that it implies `ProvesEq`). Printing a CPC proof,
+when asked for, may translate; it is not on the solving path. This does not
+hold up other work: each use of Logos at run time is replaced in turn, guided
+by profiles. Why: Logos terms are trees and its functions do not share work, so
+any check of a term that is a large DAG (the nested skolems of strings, for
+example) is exponential; and run-time checking is a constant cost on every step.
+
+The uses at run time now, to replace:
+1. the rewriter's and the preprocessor's dynamic steps (`Certified.applyCmds`,
+   `applyRule`: the RARE rules, `byRule`, `aci`, `byEvaluate`, and the theory
+   steps), which translate, run the checker and read the result back
+   (`Node.ofEo`);
+2. Logos programs used as side conditions (such as
+   `__eo_prog_arith_poly_norm_rel` in `ArithRelOk`);
+3. the solver's certificates: the CPC proofs of lemmas and facts run by
+   `EqProof.check` (`EqProof.valid`: datatypes, sets, strings, with
+   `StringsCore` reading each rule's conclusion back from Logos), to be
+   replaced by native rules proven sound;
+4. typing: `Node.smtType` for the kinds `Node.fastTy` (each node's type, kept
+   when it is built) does not cover yet, and the nil terminators that
+   `Node.toEo` types (`typedNil`).
+
 1. ~~Equivalence algebra, congruence, driver.~~ Done, with trivial theory
    rewriters.
 2. ~~Certified steps.~~ Done: `Node.ofEo`, `ProvesEq`, `Certified`,

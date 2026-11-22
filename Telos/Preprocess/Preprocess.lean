@@ -32,21 +32,23 @@ def preprocessCert (as : List Node) (opts : PPOptions := {}) (o : NodeOrder := {
     Pipeline (inputNode as) :=
   let pass {α : Type} (name : String) (f : Unit → α) : α := Profile.time "pass" (fun _ => name) f
   let p := pass "init" fun _ => Pipeline.init as
+  -- (each pass after the first sees the nodes the passes before it created,
+  -- after the input's: cvc5's node ids, `Pipeline.order`)
   let p := pass "rewrite" fun _ => Pipeline.rewrite p o
   -- `simplifyAssertions`: non-clausal simplification, twice with `repeat-simp`
   let simplifyAssertions (p : Pipeline (inputNode as)) : Pipeline (inputNode as) × Array Node :=
     if !opts.simplification then (p, #[]) else
-    let (p, lits) := pass "non-clausal-simp" fun _ => Pipeline.nonClausalSimpB p opts.termBased o
+    let (p, lits) := pass "non-clausal-simp" fun _ => Pipeline.nonClausalSimpB p opts.termBased (p.order o)
     if !opts.repeatSimp then (p, lits) else
-    let (p, lits') := pass "non-clausal-simp" fun _ => Pipeline.nonClausalSimpB p opts.termBased o
+    let (p, lits') := pass "non-clausal-simp" fun _ => Pipeline.nonClausalSimpB p opts.termBased (p.order o)
     (p, lits ++ lits')
   let (p, lits) := simplifyAssertions p
   let p := if opts.staticLearning then
-      pass "static-learning" fun _ => Pipeline.staticLearning p opts lits o else p
+      pass "static-learning" fun _ => Pipeline.staticLearning p opts lits (p.order o) else p
   let p := if opts.repeatSimp then (simplifyAssertions p).1 else p
-  let p := pass "rewrite (2)" fun _ => Pipeline.rewrite p o
-  let p := pass "static-rewrite" fun _ => Pipeline.staticRewrite p opts o
-  pass "theory-preprocess" fun _ => Pipeline.theoryPreprocess p o
+  let p := pass "rewrite (2)" fun _ => Pipeline.rewrite p (p.order o)
+  let p := pass "static-rewrite" fun _ => Pipeline.staticRewrite p opts (p.order o)
+  pass "theory-preprocess" fun _ => Pipeline.theoryPreprocess p (p.order o)
 
 /-- The preprocessed assertions, and the definitions of the solved variables. -/
 def preprocess (as : List Node) (opts : PPOptions := {}) (o : NodeOrder := {}) :

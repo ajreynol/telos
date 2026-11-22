@@ -84,8 +84,7 @@ def preprocessed (as : List Node) (opts : Preprocess.PPOptions) (preprocess : Bo
       | .app (.kind .AND) cs => if 2 ≤ cs.size then cs.toList.dropLast else [.app (.kind .AND) cs]
       | n => [n]
     (out, if o.decl.isEmpty && o.ids.isEmpty then o else
-      let ns := Profile.time "order" (fun _ => "certNodes") fun _ => certNodes #[] p.2
-      Profile.time "order" (fun _ => "add") fun _ => ns.foldl NodeOrder.add o)
+      Profile.time "order" (fun _ => "certNodes") fun _ => Preprocess.Pipeline.order p o)
 
 theorem preprocessed_fst (as : List Node) (opts : Preprocess.PPOptions) (pp : Bool) (o : NodeOrder) :
     (preprocessed as opts pp o).1 = engineAssertions as opts pp o := by

@@ -165,14 +165,27 @@ partial def rewriteIntermediates (acc : Array Node) (t : Node) : Array Node :=
 def numberFreshRewrite (o : NodeOrder) (fresh : Std.HashMap Key Nat) (t : Node) : Std.HashMap Key Nat :=
   (rewriteIntermediates #[] t).foldl o.numberFresh (o.numberFresh fresh t)
 
+/-- The order with the subterms of `t` that it does not number yet numbered
+after the others (`numberFresh`), as nodes a rewrite creates: children first,
+left to right. -/
+def extend (o : NodeOrder) (t : Node) : NodeOrder := { o with fresh := o.numberFresh o.fresh t }
+
 /-- The order with the subterms of `t` numbered after its own (`numberFresh`
 from none). -/
 def withLocal (o : NodeOrder) (t : Node) : NodeOrder := { o with fresh := o.numberFresh {} t }
 
+/-- The integer constants cvc5's theories create when they are built, which
+it does when the first assertion is processed (after it is parsed, before the
+next): `0` to `8`, as their orientation in shared equalities shows. -/
+def solverConstants : List Node := (List.range 9).map fun (i : Nat) => Node.const (.integer (Int.ofNat i))
+
 /-- The order of an input: the declared constants `decls`, in order, and the
-assertions `as`, in order. -/
+assertions `as`, in order, with the solvers' constants (`solverConstants`)
+after the first. -/
 def ofInput (decls : List String) (as : List Node) : NodeOrder :=
-  let ids := as.foldl visit {}
+  let ids := match as with
+    | [] => {}
+    | a :: rest => rest.foldl visit (solverConstants.foldl visit (visit {} a))
   { decl := decls.zipIdx.foldl (fun m (x, i) => if m.contains x then m else m.insert x i) {},
     ids := ids, inputSize := ids.size }
 

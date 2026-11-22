@@ -1021,17 +1021,19 @@ def explainAllSteps (lits : Array Node) (all : Bool) (record : Bool) :
     if seen.contains ⟨l⟩ then continue
     seen := seen.insert ⟨l⟩
     if l == Node.mkTrue || l == Node.notNode Node.mkFalse then continue
-    if !forced && fromSat l then
+    let c ← read
+    -- (a shared literal that the equality engine asserted to arithmetic is
+    -- the equality engine's: `d_propagationMap` has it from THEORY_BUILTIN,
+    -- even if it became a literal of the SAT solver after, which is then
+    -- assigned after what arithmetic propagated from it)
+    let sa := (← get).sharedArith
+    let shared := c.arithSolver && sa.contains ⟨l⟩
+    if !forced && !shared && fromSat l then
       if !out.contains l then out := out.push l
       continue
     match l with
     | .app (.kind .AND) cs => todo := todo ++ cs.map (·, top)
     | _ =>
-      let c ← read
-      -- (a shared literal that the equality engine asserted to arithmetic is
-      -- the equality engine's: `d_propagationMap` has it from THEORY_BUILTIN)
-      let sa := (← get).sharedArith
-      let shared := sa.contains ⟨l⟩ || sa.contains ⟨flipEq l⟩
       if c.arithSolver && c.theoryOf (atomOf l).1 == .THEORY_ARITH && !shared then
         -- `TheoryArith::explain`
         let e ← withArith (Arith.explain l)
@@ -1040,6 +1042,11 @@ def explainAllSteps (lits : Array Node) (all : Bool) (record : Bool) :
         todo := todo ++ e.map (·, true)
       else
         let (exp, _) ← runEE (EE.explainLit l)
+        -- (a shared literal that the SAT solver asserted to the equality
+        -- engine is its own explanation there: the SAT solver's literal)
+        if shared && exp.contains l && fromSat l then
+          if !out.contains l then out := out.push l
+          continue
         if record && !forced && top then steps := steps.push { lit := l, exp, arith := false }
         todo := todo ++ exp.map (·, false)
   return (out, steps)

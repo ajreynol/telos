@@ -185,6 +185,9 @@ Each output event carries a certificate, in the style of `Certified`:
 Mode S then gets the theorem "`unsat` ⇒ the input is unsatisfiable", composed
 with `Telos.preprocess_correct`.
 
+The certificates are checked when they are made; the end goal is to check
+them without Logos at run time (`docs/design.md`, Roadmap).
+
 The CPC proof is emitted afterwards from the EE's proof forest, which uses
 `trans`, `cong`, `symm`, `true_intro`/`false_intro` and so on, as cvc5's
 `ProofEqEngine` does, and through `Proof.emitChainWith`. As for preprocessing,
@@ -1693,17 +1696,31 @@ follows from the lemma's literals as the certificate has them, by their
 rewrites.
 
 Testing: `fuzz-solve.py --theory strings` (QF_SLIA word equations with
-lengths). With the SAT solver, seed 1, 100 benchmarks: 68 the same events as
-cvc5. Of the others, most differ in the preprocessed input (rewrites of word
-equations telos's rewriter lacks, such as `(= "" (str.++ y y))` and the
-cancellation of common components, and the order of the variables of length
-equations), or in the orientation of shared equalities between numerals and
-length terms (cvc5's node ids: the solvers' constants are created after the
-input's terms, before the preprocessing's); cvc5 times out on 1 (a looping word
-equation, on which telos answers `unknown`). On 300 larger benchmarks (seed 11,
-half with disjunctions), every answer agrees with cvc5's but 2 `unsat` that
-are `unknown`: their prefix conflicts, `(= "" (str.++ y "a"))`, need the
-rewrites of word equations telos lacks (or `len ≥ 0`).
+lengths). With the SAT solver, 100 benchmarks: 85 the same events as cvc5
+(seed 1; 87 with seed 2). The others: the length-based unifications of
+`rewriteStrEqualityExt` that telos lacks (`(= "" (str.++ y y))` is
+`(= y "")`, and `rewriteViaStrEqLenUnify`, which cvc5 elaborates by a macro),
+in the preprocessed input; a few orientations of shared equalities; cvc5
+times out on 1 (a looping word equation, on which telos answers `unknown`).
+cvc5's node ids, as the engine approximates them (`NodeOrder`): each
+preprocessing pass sees the nodes the passes before it created
+(`Pipeline.order`); the arithmetic rewriter numbers the nodes of the term it
+rewrites that the order lacks, in their order of occurrence
+(`NodeOrder.extend`); the solvers' constants `0` to `8` come after the first
+assertion (cvc5 builds its theories when it processes it); shared equalities
+between terms of the input or of preprocessing are oriented by these ids
+(`EE.ageLt`). On 300 larger benchmarks (seed 11, half with disjunctions),
+every answer agrees with cvc5's but 2 `unsat` that are `unknown`: their
+prefix conflicts, `(= "" (str.++ y "a"))`, need the same rewrites (or
+`len ≥ 0`).
+
+A literal the shared solver asserted to arithmetic is explained by the
+equality engine, even if it became a SAT literal after (cvc5's
+`d_propagationMap` keeps its first sender); taking it as a SAT literal gave
+reasons assigned after the literal they explain, which broke the SAT solver's
+conflict analysis (an index out of bounds, and a refutation of a satisfiable
+benchmark that the certificate rejected). One that the SAT solver asserted to
+the equality engine is its own explanation there.
 
 Not yet: the deep chains of skolems of some splits are slow (a benchmark that
 cvc5 solves in a second times out; the terms are trees whose size doubles with

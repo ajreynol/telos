@@ -94,7 +94,12 @@ def satExplainQuiet (lit : Node) : EngineM (Array Node × BaseTag) := do
     let e₀ ← withArith (Arith.explain lit)
     let main := ((e₀.map negate).push lit, cert.map (.arith (e₀.push (negate lit)) ·))
     return (exp, .derived (#[main] ++ (← stepClauses exp steps)))
-  let (exp, steps) ← match EE.explainLitV (← exCtx) lit with
+  -- (the verified explanation, if its literals are all the SAT solver's: one
+  -- that another theory propagated, such as a shared equality of arithmetic,
+  -- is explained in turn)
+  let asg := (← get).assignment
+  let fromSat (l : Node) : Bool := let (a, p) := atomOf l; asg.get? ⟨a⟩ == some p
+  let (exp, steps) ← match (EE.explainLitV (← exCtx) lit).filter (·.all fromSat) with
     | some exp => pure (exp, #[])
     | none =>
       modify fun s => { s with unverifiedExplains := s.unverifiedExplains + 1 }

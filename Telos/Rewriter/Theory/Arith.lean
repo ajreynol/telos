@@ -341,6 +341,7 @@ least absolute coefficient, after making the coefficients coprime integers
 reals. Certified by `arith_poly_norm_rel`, and by `rewriteEq` when the result is
 a constant. -/
 def normalizeEquality (n : Node) (o : NodeOrder := {}) : Option (Rw n) := do
+  let o := o.extend n
   let #[a, b] := n.getChildren | none
   if n.getKind != .EQUAL || !(isInt a || isReal a) then none
   let sum := (polyOf a).add ((polyOf b).scale (-1))
@@ -420,6 +421,9 @@ def preRewrite (n : Node) : RewriteResponse n :=
   | none => .done n
 
 def postRewrite (n : Node) (o : NodeOrder := {}) : RewriteResponse n :=
+  -- (the nodes of `n` the order does not have were created by the rewrites
+  -- that built `n`, in the order of their occurrence)
+  let o := o.extend n
   -- Rewrites to other operators are rewritten again from the start, as cvc5's
   -- `returnRewrite` does (`REWRITE_AGAIN_FULL`).
   let r : Option (RewriteStatus × Rw n) :=

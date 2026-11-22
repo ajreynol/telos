@@ -473,7 +473,17 @@ def ageKey (ids : Std.HashMap Key Nat) (t : Node) (decl : Std.HashMap String Nat
     | none => (rank, ids.getD ⟨t⟩ (1 <<< 62))
   | _ => (rank, ids.getD ⟨t⟩ (1 <<< 62))
 
-def ageLt (ids : Std.HashMap Key Nat) (a b : Node) (decl : Std.HashMap String Nat := {}) : Bool :=
+def ageLt (ids : Std.HashMap Key Nat) (a b : Node) (decl : Std.HashMap String Nat := {})
+    (o : NodeOrder := {}) : Bool :=
+  -- two terms of the input or of preprocessing: in the order cvc5 created
+  -- them (`NodeOrder`, with the solvers' constants after the first assertion;
+  -- a constant of the input or of preprocessing is not older than the terms
+  -- before it, as the solvers' own constants are)
+  let inInput (t : Node) : Option Nat :=
+    (o.id? t).filter (· < o.decl.size + o.ids.size)
+  match inInput a, inInput b with
+  | some i, some j => i < j
+  | _, _ =>
   let (r₁, i₁) := ageKey ids a decl
   let (r₂, i₂) := ageKey ids b decl
   r₁ < r₂ || (r₁ == r₂ && i₁ < i₂)
@@ -486,7 +496,7 @@ def notifyTriggerTermEquality (tag : Nat) (t₁ t₂ : Node) (value : Bool) : EE
   -- cvc5 orients by node ids, the older term first: approximated by the order
   -- in which the engine met the terms
   let ids := (← get).nodeIds
-  let (a, b) := if (← read).cvc5Order && ageLt ids t₂ t₁ (← read).declOrder then (t₂, t₁) else (t₁, t₂)
+  let (a, b) := if (← read).cvc5Order && ageLt ids t₂ t₁ (← read).declOrder (← read).order then (t₂, t₁) else (t₁, t₂)
   let eq := Node.eqNode a b
   let lit := if value then eq else Node.notNode eq
   if (← get).teConflict then return false
