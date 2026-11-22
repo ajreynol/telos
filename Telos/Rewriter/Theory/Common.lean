@@ -19,6 +19,15 @@ namespace Telos
 /-- Rewrite by a named CPC rewrite rule. -/
 def byRule (name : String) (n : Node) : Option (Rw n) := rewriteBy name n
 
+/-- Rewrite `n`, the right-hand side of the template rule `r` with the
+arguments `args`, to its left-hand side, statically (`StaticProc.template`). -/
+def byTemplateRev (r : TRule) (args : List Node) (n : Node) : Option (Rw n) := do
+  let m ← r.lhs args
+  if h : Profile.time "static: side conditions" (fun _ => repr r |>.pretty)
+      (fun _ => decide (r.Ok args m n)) = true then
+    some ⟨m, .static (.template r args true) (show r.Ok args m n from of_decide_eq_true h) (.refl m)⟩
+  else none
+
 /-- Rewrite `n` to `m`, validated by a CPC rule that takes the equation
 `(= n m)` as its argument (for example `aci_norm` or `absorb`). This is how
 results computed by unverified code are certified. -/

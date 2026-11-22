@@ -153,6 +153,15 @@ The interface is `StaticProc` (`Telos/Core/Static.lean`). To add a procedure:
    (`TelosProofs/Core/Static.lean`): the side condition implies
    `ProvesEq (p.cmds n m) n m`, that is, Logos's checker accepts the commands.
 
+For a **template rule**, a RARE rule whose program builds `(= lhs rhs)` from
+its arguments with no condition (`bool-double-not-elim`, `arith-elim-leq`), the
+procedure exists already: `StaticProc.template` (`Telos/Core/Template.lean`).
+Add the rule to `TRule` (`rule`, `ofRule`, `lhs`, `rhs`, and `intArgs` if the
+program writes an integer nil), and its case of `TRule.step_eq`
+(`TelosProofs/Core/Template.lean`), which unfolds the program on the
+translated arguments. The RARE matcher then takes every step by the rule
+statically (`RuleSpec.staticStep`); `byTemplateRev` takes it right to left.
+
 For a normalization rule (`= a b` accepted when Logos's normal forms of `a` and
 `b` agree), the proof has the shape of `TelosProofs/Core/PolyNorm.lean`:
 

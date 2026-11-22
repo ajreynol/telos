@@ -189,8 +189,8 @@ def tighten (s : Node) (c : Rat) (t : Node) : Option (Rw t) :=
 integer `s` and an integer `c`. -/
 def negTail (s : Node) (c : Rat) (t : Node) : Option (Rw t) := do
   let cN := constNode false c
-  let r ← applyCmds (.cons (stepCmd .arith_elim_leq [s, cN])
-    (.cons (.step .symm .nil (.cons 0 .nil)) .nil)) t
+  let r ← (byTemplateRev .arithElimLeq [s, cN] t).orElse fun _ =>
+    applyCmds (.cons (stepCmd .arith_elim_leq [s, cN]) (.cons (.step .symm .nil (.cons 0 .nil)) .nil)) t
   let r ← r.next? (byRule "arith-leq-norm")
   r.next? fun t => Rw.congrArg t 0 fun g => Rw.congrArg g 1 byEvaluate
 

@@ -1,4 +1,5 @@
 import TelosProofs.Core.ArithNorm
+import TelosProofs.Core.Template
 
 /-!
 # Statically justified steps are CPC steps
@@ -14,5 +15,7 @@ variable [LogosFacts] in
 theorem StaticProc.provesEq : ∀ (p : StaticProc) (n m : Node), p.Ok n m → ProvesEq (p.cmds n m) n m
   | .arithNorm _, n, _, ⟨rfl, h⟩ => arithNorm_provesEq h
   | .arithRel _ _, _, _, h => arithRel_provesEq h
+  | .template _ _ false, _, _, h => TRule.provesEq h
+  | .template _ _ true, _, _, h => TRule.provesEq_rev h
 
 end Telos

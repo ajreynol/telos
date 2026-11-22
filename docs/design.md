@@ -953,11 +953,21 @@ tested:
      model's typed nils, and `typeHint`'s fallback (`getTypeF`). `big_lia`
      (2,500 assertions): static side conditions 12.5ms to 3.6ms, the rewrite
      pass 316ms to 280ms, about 7% end to end. To do: more kinds in `kindTy`
-     (`APPLY_UF`, purification skolems, arrays, bit-vectors, strings), then
-     static procedures for the most frequent RARE rules (`arith-leq-norm`,
-     `arith-elim-*`, `bool-double-not-elim`, `symm`, `evaluate`), whose
-     checker runs now cost the most (about 55ms on `big_lia`, mostly
-     translating in and out).
+     (`APPLY_UF`, purification skolems, arrays, bit-vectors, strings).
+   - Template rules: a RARE rule whose program builds `(= lhs rhs)` from its
+     arguments with no condition is taken statically (`StaticProc.template`,
+     `Telos/Core/Template.lean`): telos builds both sides, the side condition
+     (`TRule.Ok`: the sides, and the types by `smtTypeF`) is decided without
+     Logos, and `TRule.provesEq` (`TelosProofs/Core/Template.lean`) proves the
+     step, also read right to left with `symm`. Rules: `bool-double-not-elim`,
+     `arith-elim-leq`, `arith-elim-lt`, `arith-elim-gt`, `arith-leq-norm`,
+     `eq-symm`, through the RARE matcher (`RuleSpec.staticStep`) and the
+     integer inequality normalization (`negTail`). `big_lia`: checker runs
+     8,819 to 2,072 (checking about 57ms to 13ms), rewrite pass 280ms to
+     237ms; 0.36s to 0.32s end to end (0.39s before `smtTypeF`). Remaining
+     checker runs there: `evaluate` of `(+ c 1)` (1,680) and
+     `arith-int-geq-tighten` (298). The largest Logos cost left is the parser
+     (`frontend`, about 90ms).
    - Conflicts without a CPC proof: when the circuit propagator finds a
      conflict, it records the assignment that found it (`conflictItem`), and
      non-clausal simplification is one `SemProc.learn` step from the

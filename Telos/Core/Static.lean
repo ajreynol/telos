@@ -1,4 +1,5 @@
 import Telos.Core.PolyNorm
+import Telos.Core.Template
 
 /-!
 # Statically justified steps
@@ -32,6 +33,9 @@ inductive StaticProc where
   /-- `n` to `m` by `arith_poly_norm_rel`, from the premise `(= a b)`, itself an
   `arith_poly_norm` step. -/
   | arithRel (a b : Node)
+  /-- `n` to `m` by the template rule `r` with the arguments `args`
+  (`Telos/Core/Template.lean`), read right to left with `rev`. -/
+  | template (r : TRule) (args : List Node) (rev : Bool)
 
 /-- `[arith_poly_norm (= n (arithNorm n o))]`. -/
 def StaticProc.arithNormCmds (n : Node) (o : NodeOrder := {}) : CCmdList :=
@@ -46,10 +50,12 @@ def StaticProc.arithRelCmds (n m a b : Node) : CCmdList :=
 def StaticProc.Ok : StaticProc → Node → Node → Prop
   | .arithNorm o, n, m => m = Arith.arithNorm n o ∧ Arith.ArithNormOk n (Arith.polyOf n) (Arith.arithNorm n o)
   | .arithRel a b, n, m => Arith.ArithRelOk n m a b
+  | .template r args rev, n, m => if rev then r.Ok args m n else r.Ok args n m
 
 /-- The CPC commands a step from `n` to `m` stands for. -/
 def StaticProc.cmds : StaticProc → Node → Node → CCmdList
   | .arithNorm o, n, _ => StaticProc.arithNormCmds n o
   | .arithRel a b, n, m => StaticProc.arithRelCmds n m a b
+  | .template r args rev, _, _ => r.cmds args rev
 
 end Telos

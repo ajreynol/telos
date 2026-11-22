@@ -317,10 +317,25 @@ def cmds (r : RuleSpec) (σ : Subst) (prove : Option PremiseProver := none) : Op
   let ruleStep := CCmd.step r.rule (toArgList args) indices
   return (steps ++ [ruleStep]).foldr .cons .nil
 
+/-- The step under the assignment `σ` by a template rule (`TRule`), taken
+statically (`StaticProc.template`), without running Logos's checker: for rules
+without premises or type arguments. -/
+def staticStep (r : RuleSpec) (n : Node) (σ : Subst) : Option (Rw n) := do
+  if !r.premises.isEmpty || !r.typeArgs.isEmpty || r.lhs.hasBvLit then none
+  let tr ← TRule.ofRule r.rule
+  let args ← r.args.mapM fun i => match (σ[i]? : Option (Option Binding)) with
+    | some (some (Binding.node c)) => some c
+    | _ => none
+  let m ← tr.rhs args
+  if h : Profile.time "static: side conditions" (fun _ => r.name)
+      (fun _ => decide (tr.Ok args n m)) = true then
+    some ⟨m, .static (.template tr args false) (show tr.Ok args n m from of_decide_eq_true h) (.refl m)⟩
+  else none
+
 /-- `apply`, before folding `int_to_bv` applications. -/
 def applyRaw (r : RuleSpec) (n : Node) (prove : Option PremiseProver := none) : Option (Rw n) :=
   Profile.time "strategy: RARE matching" (fun _ => r.name) (fun _ => r.allMatches n prove) |>.findSome? fun σ =>
-    r.cmds σ prove >>= fun cs =>
+    (r.staticStep n σ).orElse fun _ => r.cmds σ prove >>= fun cs =>
       if r.lhs.hasBvLit then
         -- The rule's left-hand side has `(@bv v w)`, which is `((_ int_to_bv w) v)`:
         -- write the matched literals that way first.
