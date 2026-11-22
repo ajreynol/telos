@@ -1797,6 +1797,41 @@ seed 1, 100): 50 the same events as cvc5 (42 with `--clauses`); the rest are
 E-matching (step 2), vacuous quantifiers in `sat` answers, and cvc5 timeouts;
 every `unsat` is certified.
 
+Step 2 (in progress; 2026-11-22): E-matching for UF, `QuantTrigger.lean`
+(trigger selection with `trigger-sel=min` and the filtering of instances,
+`literal-match=use`; the match generators' construction), `QuantInst.lean`
+(the instantiation manager, moved out of `Quantifiers.lean`),
+`QuantEMatching.lean` (candidate generators, the generic, simple and linear
+multi-trigger match generators, the strategy of automatic triggers with its
+regeneration every third round, ground-term purification `GT_PURIFY`,
+certified by `skolem_intro`). Fidelity notes:
+- the instantiation constants are the formula's bound variables; trigger terms
+  are ordered by the post-order of the body's substitution (cvc5's node ids);
+- regeneration shuffles the multi-trigger terms with cvc5's `Random`
+  (`Telos/Solver/Rand.lean`: `mt19937_64` seeded with `~0`, libstdc++'s
+  `std::shuffle`, checked against the C++);
+- an instance's nodes are numbered as the substitution creates them before its
+  rewrite (the equality engine's `freshIds`), for the orientation of its
+  equalities; the lemma cache starts with `true` (`TheoryInferenceManager`), so
+  an instance that rewrites to `true` is dropped;
+- `d_instWhenPhase` is `1 + inst-when-phase`, 3 (step 1 had 2);
+- cvc5 keeps the triggers of a formula in a `std::map<Trigger*, bool>`: they
+  are processed in the order of their heap addresses, which telos cannot
+  reproduce; it uses their creation order (the better of the two orders on
+  the fuzz runs). This, and preprocessing's orientation of an equality, are
+  the remaining differences of events.
+`fuzz-solve.py --triggers` also compares the triggers (cvc5's `-o trigger`,
+telos's `--trigger`). Fuzz (`ufq --ieval-off --triggers`, 100 each): seed 1
+71 the same events (77 with `--clauses`), seeds 2 and 3 with `--clauses` 66
+and 68; the rest are `sat` answers of vacuous quantifiers, cvc5 timeouts, and
+the differences above. On cvc5's `regress0/quantifiers`, the failures are
+outside step 2: user patterns (`:pattern`, `:qid` attributes, not parsed),
+arrays, quantified arithmetic (step 3), nonlinear arithmetic. Open in step 2:
+user patterns (`InstStrategyUserPatterns`, the pattern list through parsing,
+preprocessing and rewriting), relational and arithmetic triggers, the
+candidate generators of datatypes (selectors, single-constructor expansion),
+`getTermForType`, the certificate of `QUANTIFIERS_TDB_DEQ_CONG`.
+
 Steps, each with its fuzz generator, events and certificates:
 1. the engine's skeleton, skolemization, the instantiation manager, the term
    database, conflict-based instantiation (UF);

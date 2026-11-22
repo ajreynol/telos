@@ -6,7 +6,7 @@ import Telos
 ```
 telos [--proof] [--proof-dir DIR] [--profile] FILE
 telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE
-telos --theory-events [--theory-events-ee] [--no-preprocess] [--no-cvc5-order] [--via-sat] [--proof] [--proof-dir DIR] [PREPROCESSING OPTIONS] FILE
+telos --theory-events [--theory-events-ee] [--trigger] [--no-preprocess] [--no-cvc5-order] [--via-sat] [--proof] [--proof-dir DIR] [PREPROCESSING OPTIONS] FILE
 telos --replay TRACE [--theory-events-ee] FILE
 ```
 
@@ -46,7 +46,8 @@ the events at the interface of the theory solvers, as cvc5 prints them with
 `-o theory-events` (`cvc5-theory-events.patch`), then the answer
 (`Telos/Frontend/Solve.lean`). Other inputs are reported as unsupported. With
 `--theory-events-ee`, also the central equality engine's notifications, as
-cvc5's `-o theory-events-ee`. With `--no-preprocess`, the assertions are given
+cvc5's `-o theory-events-ee`. With `--trigger`, also the triggers E-matching
+makes, as cvc5's `-o trigger`. With `--no-preprocess`, the assertions are given
 to the engine as they are (for testing it on cvc5's own preprocessed
 assertions). With `--no-cvc5-order`, the engine does not imitate cvc5's order of
 nodes, which only decides the form of what it produces (the orientation of
@@ -72,6 +73,7 @@ structure Options where
   postAsserts : Bool := false
   theoryEvents : Bool := false
   theoryEventsEE : Bool := false
+  triggers : Bool := false
   noPreprocess : Bool := false
   /-- Do not imitate cvc5's order of nodes (`Solver.Config.cvc5Order`). -/
   noCvc5Order : Bool := false
@@ -90,6 +92,7 @@ def parseArgs : List String → Options → Except String Options
   | "--post-asserts" :: rest, o => parseArgs rest { o with postAsserts := true }
   | "--theory-events" :: rest, o => parseArgs rest { o with theoryEvents := true }
   | "--theory-events-ee" :: rest, o => parseArgs rest { o with theoryEventsEE := true }
+  | "--trigger" :: rest, o => parseArgs rest { o with triggers := true }
   | "--no-preprocess" :: rest, o => parseArgs rest { o with noPreprocess := true }
   | "--via-sat" :: rest, o => parseArgs rest { o with viaSat := true }
   | "--dimacs" :: rest, o => parseArgs rest { o with dimacs := true }
@@ -105,7 +108,7 @@ def parseArgs : List String → Options → Except String Options
     else parseArgs rest { o with file := some f }
 
 def usage : String :=
-  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE\n       telos --theory-events [--theory-events-ee] [--no-preprocess] [--no-cvc5-order] [--proof] [--proof-dir DIR] [PREPROCESSING OPTIONS] FILE\n       telos --replay TRACE [--theory-events-ee] FILE\n       telos --dimacs FILE"
+  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE\n       telos --theory-events [--theory-events-ee] [--trigger] [--no-preprocess] [--no-cvc5-order] [--proof] [--proof-dir DIR] [PREPROCESSING OPTIONS] FILE\n       telos --replay TRACE [--theory-events-ee] FILE\n       telos --dimacs FILE"
 
 def main (args : List String) : IO UInt32 := do
   let opts ← match parseArgs args {} with
@@ -132,7 +135,7 @@ def main (args : List String) : IO UInt32 := do
     | .error e => IO.eprintln s!"telos: {e}"; return 1
   if opts.theoryEvents then
     let withProof := opts.proof || opts.proofDir.isSome
-    match theoryEvents sc opts.pp opts.theoryEventsEE (!opts.noPreprocess) withProof (!opts.noCvc5Order) opts.viaSat with
+    match theoryEvents sc opts.pp opts.theoryEventsEE (!opts.noPreprocess) withProof (!opts.noCvc5Order) opts.viaSat opts.triggers with
     | .ok (out, unc, proof) =>
       IO.print out
       if let some e := unc then IO.eprintln s!"telos: {e}"

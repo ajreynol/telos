@@ -124,6 +124,8 @@ structure Config where
   /-- Also record the central equality engine's notifications
   (`-o theory-events-ee`). -/
   eeEvents : Bool := false
+  /-- Print the triggers made (`-o trigger`). -/
+  triggerEvents : Bool := false
   /-- Leave the explanation of a conflict to `run`, which certifies it
   (`certifyV`), rather than explaining it when it happens. -/
   defer : Bool := false
@@ -689,7 +691,17 @@ def quantCtx : EngineM Quant.Ctx := do
   for i in [0:ee.nodes.size] do
     if !ee.isInternal[i]! && EE.find ee i == i then reps := reps.push ee.nodes[i]!
   let ord := { c.order with fresh := ee.freshIds }
-  return { hasTerm := fun t => ee.nodeIds.contains ⟨t⟩, rep, areEqual, areDisequal,
+  let members (r : Node) : Array Node := Id.run do
+    let some i := ee.nodeIds.get? ⟨r⟩ | return #[r]
+    let mut out := #[]
+    let mut j := i
+    for _ in [0:ee.nodes.size] do
+      if !ee.isInternal[j]! then out := out.push ee.nodes[j]!
+      j := ee.enodes[j]!.next
+      if j == i then break
+    return out
+  return { hasTerm := fun t => ee.nodeIds.contains ⟨t⟩, rep, areEqual, areDisequal, members,
+           order := c.order, rewriteAt := fun o t => Telos.rewrite t o,
            lt := fun a b => EE.ageLt ee.nodeIds a b c.declOrder c.order, reps,
            facts := s.ufFacts ++ s.arithFacts ++ s.dtFacts ++ s.setsFacts ++ s.stringsFacts ++ s.quantFacts,
            rewrite := fun t => Telos.rewrite t ord }
@@ -697,12 +709,21 @@ def quantCtx : EngineM Quant.Ctx := do
 /-- Run an operation of the quantifiers engine, and act on its outputs: its
 skolems, and its lemmas, as a theory's (`TheoryEngine::lemma`); a model that
 is unsound (`setModelUnsound`), and a check asked for (`markUsed`). -/
-def quantRun (x : Quant.EM α) : EngineM α := do
+def quantRun (x : Quant.EM α) (flush : EngineM Unit := pure ()) : EngineM α := do
   let ctx ← quantCtx
   let q ← modifyGet fun s => (s.quant, { s with quant := {} })
+  let q := { q with fresh := (← get).ee.freshIds }
   let ((a, q), out) := ((x.run q).run {}).run ctx
-  modify fun s => { s with quant := q }
+  modify fun s => { s with quant := { q with fresh := {} }, ee := { s.ee with freshIds := q.fresh } }
   processNotes (out.skolems.map EE.Note.skolem)
+  -- the triggers made (`-o trigger`), printed when made, before the lemmas
+  -- pending (`doPending`)
+  if (← read).triggerEvents then
+    for (_, t) in out.triggers do
+      match t with
+      | .trigger q ns tag => emit (.trigger q ns tag)
+      | .noTrigger q => emit (.noTrigger q)
+  -- each lemma, then its atoms preregistered (`TheoryEngine::lemma`)
   for l in out.lemmas do
     emit (.lemma (← level) .THEORY_QUANTIFIERS l.id l.lem)
     if (← read).satMode then
@@ -710,6 +731,7 @@ def quantRun (x : Quant.EM α) : EngineM α := do
                                outputUsed := true, lemmasAdded := true }
     else
       modify fun s => { s with lemmaSent := true, lemmaQueue := s.lemmaQueue.push l.lem, lemmasAdded := true }
+    flush
   if out.modelUnsound then
     let l ← level
     emit (.modelUnsound l .THEORY_QUANTIFIERS "QUANTIFIERS")
@@ -1679,11 +1701,11 @@ def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
       let fact := s.quantFacts[s.quantHead]!
       modify fun s => { s with quantHead := s.quantHead + 1 }
       let (atom, pol) := atomOf fact
-      quantRun (Quant.assertQuantifier atom pol)
+      quantRun (Quant.assertQuantifier atom pol) flushLemmas
       flushLemmas
     if !(← get).inConflict then
       let st ← get
-      quantRun (Quant.check e (st.outputUsed || st.lemmasAdded) #[])
+      quantRun (Quant.check e (st.outputUsed || st.lemmasAdded) #[]) flushLemmas
       flushLemmas
   if T == .THEORY_UF && (← read).eeSolver then
     repeat
@@ -1885,7 +1907,7 @@ def check (e : Effort) : EngineM Unit := do
     for i in [0:ee.nodes.size] do
       if !ee.isInternal[i]! then all := all.push ee.nodes[i]!
     let all' := all
-    quantRun (Quant.check .lastCall false all')
+    quantRun (Quant.check .lastCall false all') flushLemmas
     flushLemmas
 
 /-- The explanation of a propagated literal (`TheoryEngine::getExplanation`,

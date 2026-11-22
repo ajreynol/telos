@@ -1,12 +1,12 @@
-import Telos.Solver.Theory.QuantConflictFind
+import Telos.Solver.Theory.QuantEMatching
 import Telos.Solver.Event
 
 /-!
 # The quantifiers engine
 
 A port of cvc5's `QuantifiersEngine` (`src/theory/quantifiers_engine.cpp`) and
-`TheoryQuantifiers`, with the conflict-based instantiation module only
-(`docs/theory-engine-plan.md`, Stage 10, step 1):
+`TheoryQuantifiers`, with the modules of conflict-based instantiation and
+E-matching (`QuantEMatching.lean`) (`docs/theory-engine-plan.md`, Stage 10):
 - a quantified formula is registered when preregistered or asserted
   (`registerQuantifierInternal`: the information of conflict-based
   instantiation, `QInfo`);
@@ -21,50 +21,10 @@ A port of cvc5's `QuantifiersEngine` (`src/theory/quantifiers_engine.cpp`) and
   (`shouldRecheck`, `term-db-mode=relevant-all-delay`), in which case another
   check is asked for.
 
-Instantiations (`Instantiate::addInstantiation`) are skipped when the instance
-is entailed (`inst-no-entail`) or recorded, and the lemma `(=> q body)` is
-rewritten and sent once (the inference manager's cache).
+Instantiation is `QuantInst.lean`.
 -/
 
 namespace Telos.Solver.Quant
-
-/-- The quantifiers engine's state. -/
-structure Eng where
-  st : State := {}
-  /-- The information of each registered formula (`d_qinfo`, user context). -/
-  qinfo : Std.HashMap Key QInfo := {}
-  /-- `d_func_rel_dom`: the formulas whose propagating variables have each
-  operator. -/
-  funcRelDom : Std.HashMap Key (Array Node) := {}
-  deriving Inhabited
-
-/-- What a call of the engine gives back. -/
-structure Out where
-  lemmas : Array Lemma := #[]
-  /-- The skolems created, in order. -/
-  skolems : Array Node := #[]
-  /-- The model is unsound (`setModelUnsound`, `QUANTIFIERS`). -/
-  modelUnsound : Bool := false
-  /-- Another check is asked for (`markUsed`). -/
-  markUsed : Bool := false
-  deriving Inhabited
-
-abbrev EM := StateT Eng (StateT Out (ReaderT Ctx Id))
-
-/-- Run an operation of the term database and the round's data. -/
-def runM (rd : Round) (x : M α) : EM (α × Round) := do
-  let c ← (read : ReaderT Ctx Id Ctx)
-  let e ← get
-  let (a, s) := (x.run c).run { st := e.st, rd }
-  set { e with st := s.st }
-  return (a, s.rd)
-
-def emitLemma (l : Lemma) : EM Bool := do
-  let e ← get
-  if e.st.lemmaCache.contains ⟨l.lem⟩ then return false
-  set { e with st := { e.st with lemmaCache := e.st.lemmaCache.insert ⟨l.lem⟩ } }
-  modifyThe Out fun o => { o with lemmas := o.lemmas.push l }
-  return true
 
 /-- `registerQuantifierInternal`: the conflict-based instantiation's
 information of `q`. -/
@@ -102,41 +62,6 @@ def assertQuantifier (q : Node) (pol : Bool) : EM Unit := do
     return
   registerQuantifier q
   modify fun e => { e with st := { (e.st.log .asserted) with asserted := e.st.asserted.push q } }
-
-/-- `Instantiate::addInstantiation`: false if the instance is entailed, recorded,
-or its lemma was sent. -/
-def addInstantiation (rd : Round) (q : Node) (terms : Array Node) (id : String) : EM (Bool × Round) := do
-  let vs := quantVars q
-  let subs : Subs := (vs.zip terms).foldl (fun m (v, t) => m.insert ⟨v⟩ t) {}
-  let (ent, rd) ← runM rd (isEntailed (quantBody q) subs false true)
-  if ent then return (false, rd)
-  let key : Key := ⟨Node.mkNode .AND (#[q] ++ terms)⟩
-  if (← get).st.insts.contains key then return (false, rd)
-  modify fun e => { e with st := { e.st with insts := e.st.insts.insert key } }
-  let body := substitute vs terms (quantBody q)
-  let c ← (read : ReaderT Ctx Id Ctx)
-  let lem₀ := Node.mkNode .IMPLIES #[q, body]
-  let lem := c.rewrite lem₀
-  return (← emitLemma { id, lem, inst := some (q, terms, lem₀) }, rd)
-
-/-- `FirstOrderModel::markRelevant`. -/
-def markRelevant (q : Node) : EM Unit :=
-  modify fun e =>
-    if e.st.lastRlv == some q then e else
-    { e with st := { e.st with rlvVec := (e.st.rlvVec.filter (· != q)).push q, lastRlv := some q } }
-
-/-- The asserted formulas in the order of relevance (`reset_round`). -/
-def orderedAsserted : EM (Array Node) := do
-  let st := (← get).st
-  if st.rlvVec.isEmpty then return st.asserted
-  let mut rest := st.asserted
-  let mut out := #[]
-  for i in [0:st.rlvVec.size] do
-    let q := st.rlvVec[st.rlvVec.size - 1 - i]!
-    if rest.contains q then
-      out := out.push q
-      rest := rest.erase q
-  return out ++ st.asserted.filter fun q => !out.contains q
 
 /-! ## Conflict-based instantiation -/
 
@@ -235,15 +160,22 @@ def check (e : Effort) (needCheck : Bool) (allTerms : Array Node) : EM Unit := d
   let anyAsserted := !st.asserted.isEmpty
   -- the modules that need a check: conflict-based instantiation, at full effort
   let qcfNeeds := anyAsserted && !st.conflictInst && e == .full
-  let needs := anyAsserted && (e == .lastCall || qcfNeeds)
+  -- E-matching (`getInstWhenNeedsCheck`, `inst-when=full-last-call`, with
+  -- `d_instWhenPhase` 3)
+  let emNeeds := anyAsserted && ((e == .full && st.ierCounter % 3 != 0) || e == .lastCall)
+  let needs := anyAsserted && (e == .lastCall || qcfNeeds || emNeeds)
   if needs then
     -- the utilities' reset (the term database, at full effort and last call)
     let (_, rd) ← runM {} (if e != .standard then resetTermDb else pure ())
     let mut rd := rd
+    -- the modules' `reset_round` (at the standard effort, those that need a
+    -- check)
+    if e != .standard || emNeeds then rd ← ematchResetRound rd
     -- the modules' efforts: conflict, standard, model, last call
     let lemmasBefore := (← getThe Out).lemmas.size
     for qe in [0, 1, 2, 3] do
       if qe == 0 && qcfNeeds then rd ← qcfCheck rd
+      if qe == 1 && emNeeds && !rd.inConflict then rd ← ematchCheck rd (e == .lastCall)
       for l in rd.pending do let _ ← emitLemma l
       rd := { rd with pending := #[] }
       if (← getThe Out).lemmas.size > lemmasBefore || rd.inConflict then break
@@ -251,7 +183,7 @@ def check (e : Effort) (needCheck : Bool) (allTerms : Array Node) : EM Unit := d
         -- `incrementInstRoundCounters`
         if e == .full then
           let st := (← get).st
-          if st.ierCounterLastLc != st.ierCounterLc || st.ierCounter % 2 != 0 then
+          if st.ierCounterLastLc != st.ierCounterLc || st.ierCounter % 3 != 0 then
             modify fun en => { en with st := { en.st with ierCounter := en.st.ierCounter + 1,
                                                           ierCounterLastLc := en.st.ierCounterLc } }
         else if e == .lastCall then
@@ -263,7 +195,7 @@ def check (e : Effort) (needCheck : Bool) (allTerms : Array Node) : EM Unit := d
   else
     if e == .full then
       let st := (← get).st
-      if st.ierCounterLastLc != st.ierCounterLc || st.ierCounter % 2 != 0 then
+      if st.ierCounterLastLc != st.ierCounterLc || st.ierCounter % 3 != 0 then
         modify fun en => { en with st := { en.st with ierCounter := en.st.ierCounter + 1,
                                                       ierCounterLastLc := en.st.ierCounterLc } }
     else if e == .lastCall then

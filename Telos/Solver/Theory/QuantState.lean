@@ -2,6 +2,7 @@ import Std.Data.HashMap
 import Std.Data.HashSet
 import Telos.Core.Node.Key
 import Telos.Core.Node.FastType
+import Telos.Core.Node.NodeOrder
 
 /-!
 # The state of the quantifiers engine
@@ -44,6 +45,13 @@ structure Ctx where
   terms. -/
   facts : Array Node
   rewrite : Node → Node
+  /-- The terms of the class of a representative, in the equality engine's
+  order (`EqClassIterator`). -/
+  members : Node → Array Node := fun n => #[n]
+  /-- cvc5's node order (`NodeOrder`, without the nodes made while solving),
+  and the rewriter at an order (for instances, whose nodes are numbered). -/
+  order : NodeOrder := {}
+  rewriteAt : NodeOrder → Node → Node := fun _ n => n
 
 /-- `TNodeTrie`: its children (or, at a leaf, the term), in cvc5's node order. -/
 inductive Trie where
@@ -114,6 +122,8 @@ structure Lemma where
   its rewrite, or the formula skolemized. -/
   inst : Option (Node × Array Node × Node) := none
   skolemize : Option Node := none
+  /-- The order the lemma was rewritten at. -/
+  order : Option NodeOrder := none
   deriving Inhabited
 
 structure State where

@@ -96,7 +96,7 @@ INPUTS = {"prereg", "assert", "check", "pop"}
 # `ALL` (their checks do nothing): their events are dropped from cvc5's traces.
 UNSAFE = re.compile(r"\bTHEORY_(FF|FP|SEP|BAGS)\b")
 ANSWERS = {"sat", "unsat", "unknown"}
-OUTPUTS = {"fact", "lemma", "conflict", "propagate", "explain", "phase", "model-unsound",
+OUTPUTS = {"fact", "lemma", "conflict", "propagate", "explain", "phase", "model-unsound", "trigger", "no-trigger",
            "refutation-unsound", "ee-new-class", "ee-merge", "ee-diseq"}
 SKOLEM = re.compile(r"@([a-z_]+?)_(\d+)\b")
 
@@ -667,6 +667,15 @@ def parse_events(text):
             answer = line
         elif line.startswith("(") and line[1:].split(" ", 1)[0] in INPUTS | OUTPUTS:
             e = fuzz.parse_sexpr(renumber(line))
+            if e[0] == "trigger" and len(e) >= 3 and isinstance(e[1], list) and isinstance(e[2], list):
+                # a trigger's terms are over its formula's variables: renamed by
+                # their position in the binder (cvc5 may name them internally)
+                q = fuzz.let_free(e[1])
+                if len(q) == 3 and q[0] in ("forall", "exists"):
+                    names = {d[0]: f"@tv_{i}" for i, d in enumerate(q[1]) if isinstance(d, list)}
+                    def ren(t):
+                        return names.get(t, t) if isinstance(t, str) else [ren(c) for c in t]
+                    e = [e[0], e[1], ren(fuzz.let_free(e[2]))] + e[3:]
             # terms are the arguments after the kind, level, theory and id
             events.append(tuple(norm_term(x) if isinstance(x, list) else x for x in e))
     return events, answer
@@ -820,6 +829,8 @@ def main():
     ap.add_argument("--decision", choices=["internal", "justification", "stoponly"],
                     help="the SAT solver's decision mode, for both (otherwise the logic's)")
     ap.add_argument("--ite", action="store_true", help="arithmetic literals with ite terms")
+    ap.add_argument("--triggers", action="store_true",
+                    help="compare the triggers made too (cvc5's -o trigger, telos's --trigger)")
     ap.add_argument("--ieval-off", action="store_true",
                     help="cvc5 with --ieval=off (the form of conflict-based instantiation telos ports); "
                          "safe mode allows one non-default option, so cvc5 runs without --safe-mode=safe "
@@ -894,6 +905,7 @@ def main():
             tpath = path.with_suffix(".pp.smt2")
             tpath.write_text(body)
         ours, err = run([str(TELOS), "--theory-events"] + (["--theory-events-ee"] if a.ee else []) +
+                        (["--trigger"] if a.triggers else []) +
                         (["--no-preprocess"] if a.cvc5_pp else []) + (["--via-sat"] if a.sat else []) +
                         ([f"--decision={a.decision}"] if a.decision else []), tpath)
         if err and "by certificate" in err:
@@ -911,6 +923,7 @@ def main():
             # (the decision mode is the logic's, as in telos, unless `--decision`)
             opts = [o for o in CVC5_OPTS if o != "--safe-mode=safe"] + ["--ieval=off"] if a.ieval_off else CVC5_OPTS
             theirs, cerr = run([a.cvc5, *opts] + (["-o", "theory-events-ee"] if a.ee else []) +
+                               (["-o", "trigger"] if a.triggers else []) +
                                (["--sat-solver=minisat"] if a.sat else []) +
                                ([f"--decision={a.decision}"] if a.decision else []), path)
         if theirs is None or "(error" in theirs:

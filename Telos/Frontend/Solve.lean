@@ -160,7 +160,7 @@ else to the SAT solver and the engine (`Solver.runSat`), as do conjunctions
 with `viaSat`. -/
 def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Bool := false)
     (preprocess : Bool := true) (wantProof : Bool := false) (cvc5Order : Bool := true)
-    (viaSat : Bool := false) :
+    (viaSat : Bool := false) (triggerEvents : Bool := false) :
     Except String (List Node × Solver.Result) := do
   let theories ← enabledTheories (sc.logic.getD "ALL")
   let (opts, as) ← ppInput sc u
@@ -171,7 +171,7 @@ def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Boo
   let engOrder := pre.2
   let named (n : Node) : String :=
     (substSkolems ((namedSkolems sc.dtNames out).map fun (k, v, _) => (k, v)) n).toSmtLibLet sc.dtNames
-  let cfg : Solver.Config := { theories, termBased := opts.termBased, eeEvents, wantProof, cvc5Order,
+  let cfg : Solver.Config := { theories, termBased := opts.termBased, eeEvents, triggerEvents, wantProof, cvc5Order,
                                 arith := { Solver.arithOptionsOf (sc.logic.getD "ALL") with order := engOrder },
                                 order := engOrder,
                                 decision := Solver.decisionModeOf (sc.logic.getD "ALL") (u.decision <|> sc.decision),
@@ -199,9 +199,9 @@ the CPC refutation of the literals of a certified `unsat`
 are printed as `--post-asserts` names them in the events. -/
 def theoryEvents (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Bool := false)
     (preprocess : Bool := true) (withProof : Bool := false) (cvc5Order : Bool := true)
-    (viaSat : Bool := false) :
+    (viaSat : Bool := false) (triggerEvents : Bool := false) :
     Except String (String × Option String × Option (Except String String)) := do
-  let (out, r) ← solveScript sc u eeEvents preprocess withProof cvc5Order viaSat
+  let (out, r) ← solveScript sc u eeEvents preprocess withProof cvc5Order viaSat triggerEvents
   -- the skolems of the input, then those that lemmas introduced
   let σ := (namedSkolems sc.dtNames (out ++ r.events.toList.flatMap Event.nodes)).map fun (k, v, _) => (k, v)
   let lines := (r.events.toList.map fun e => (e.map (substSkolems σ)).print sc.dtNames).filter (· != "")
