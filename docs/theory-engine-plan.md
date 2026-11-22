@@ -1537,23 +1537,46 @@ membership atoms that are true). Logos's map and set lemmas are new fields of
 `LogosFacts`, proved in `TelosFull/Main.lean`; `solve_sat_correct` still rests
 on the standard axioms only.
 
+### Certificates
+
+- **Lemmas** (`Telos/Solver/SetsLemma.lean`, `SetsLemma.prove`, an `EqProof` of
+  `(lem, true)` per inference): the proxies by `skolem_intro` (and, for a
+  singleton, congruence, `sets-member-singleton` and the rewriter); the upward
+  closure by congruence with the proxy's definition, one step of
+  `sets-union-member`, `sets-inter-member` or `sets-minus-member`, the
+  memberships of the element decided by the literals of the explanation (or by
+  congruence through its equalities, `atomProof`), then the rewriter; the
+  downward closure by the membership in the set of the explanation and the
+  rewrite in the node order (`EqProof.rwAt`, a new step: `t` and its rewrite in
+  an order `o`, sound by `rewriteWith_sound` for any order); `SETS_DEQ` by
+  `sets_ext` under the assumption of the disequality, closed by `scope`.
+- **Internal facts** in the equality engine's explanations (`EE.proveFact`):
+  `SETS_SINGLETON_EQ` (`x` is in `{x}`, so in `{y}`, which rewrites to
+  `(= x y)`), `SETS_MEM_EQ` and `SETS_EQ_MEM` (a member of a set equal to `{e}`
+  is `e`), by congruence and the rewriter.
+- **Conflicts** (`EE.conflictOfSets`, `Pending.sets`): a membership true of a set
+  equal to one in which the rewriter decides it false (`SETS_EQ_CONFLICT`,
+  `SETS_MEM_EQ_CONFLICT`, `SETS_EQ_MEM_CONFLICT`, and `SETS_DOWN_CLOSURE` when the
+  closure rewrites to `false`).
+
+Every certificate is checked when it is made (`EqProof.check`, and Logos's
+checker for its CPC steps); `solve_unsat_correct` rests on the standard axioms
+only.
+
 ### Results
 
 `fuzz-solve.py --sat --theory sets`, events and answers both as cvc5's: seed 1
-(100) 76, seed 2 (200) 144, seed 3 with clauses (200) 122, seed 4 with nested
-connectives (100) 41. Every answer that differs is an `unsat` telos answers
-`unknown` (sets lemmas are not certified yet). On 300 more random benchmarks,
-telos answers all 213 `sat` and 69 of the 87 `unsat`, never differently from
-cvc5. The event differences are mostly SAT decisions after a lemma, and the
-order of preprocessed equalities (the node order of preprocessing).
+(100) 78, seed 2 (200) 158, seed 3 with clauses (200) 129, seed 4 with nested
+connectives (100) 46, with no answer that differs. On 300 more random
+benchmarks, telos answers all 213 `sat` and all 87 `unsat`, as cvc5. The event
+differences are mostly SAT decisions after a lemma, and the order of
+preprocessed equalities (the node order of preprocessing). Recorded tests:
+`test/solve/sat-sets-*`.
 
 ### To do
 
-- Certificates: the lemmas (`SETS_DOWN_CLOSURE`, `SETS_UP_CLOSURE`,
-  `SETS_DEQ`, the proxies) by CPC rules (`sets-*-member`, `sets_ext`,
-  `sets_singleton_inj`), and the notifications' facts in `EE.proveFact`.
 - The care graph for sets of sets (`SETS_CG_SPLIT`), `set.choose`.
-- Recorded tests in `test/solve/`.
+- The remaining event differences.
 
 ## Order of work (all stages)
 

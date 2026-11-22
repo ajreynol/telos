@@ -113,6 +113,9 @@ partial def emitEq (A : Array Node) (pos : Array Nat) : EqProof → EmitM Nat
   | .rw t => do
     let r := Telos.rewriteCert t
     closeChain t (← emitChain r.2)
+  | .rwAt o t => do
+    let r := Telos.rewriteCert t o
+    closeChain t (← emitChain r.2)
 where
   emitArgs (A : Array Node) (pos : Array Nat) (cs : Array Node) :
       List (Option EqProof) → Nat → EmitM (List Nat)

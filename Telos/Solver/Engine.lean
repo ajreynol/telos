@@ -14,6 +14,7 @@ import Telos.Solver.Model
 import Telos.Solver.Cnf
 import Telos.Solver.SatProof
 import Telos.Solver.DtLemma
+import Telos.Solver.SetsLemma
 import Telos.Solver.Theory.Arith.Solver
 import Telos.Solver.Decision
 
@@ -219,6 +220,8 @@ inductive Pending where
   | dt (cf : DT.Conflict)
   /-- A conflict or a lemma of linear arithmetic, with its certificate. -/
   | arith (cert : LinCert)
+  /-- A conflict of the theory of sets: its inference and the conflict sent. -/
+  | sets (id : String) (conf : Node)
   deriving Inhabited
 
 /-- The source of a formula given to the CNF stream (`Cnf.ClauseTag.src`), for
@@ -534,7 +537,9 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
     | .lemma T id lem =>
       emit (.lemma (← level) T id lem)
       if (← read).satMode then
-        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lem, false, none, DtLemma.prove id lem),
+        let ord := (← read).order
+        let proof := if T == .THEORY_SETS then SetsLemma.prove id lem ord else DtLemma.prove id lem
+        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lem, false, none, proof),
                                  outputUsed := true, lemmasAdded := true }
       else
         modify fun s => { s with lemmaSent := true, lemmaQueue := s.lemmaQueue.push lem,
@@ -550,7 +555,9 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
       emit (.conflict (← level) T id exp)
       if (← read).satMode then
         let ee := (← get).ee
-        let kind := if T == .THEORY_DATATYPES then ee.dt.conflict.map Pending.dt else none
+        let kind := if T == .THEORY_DATATYPES then ee.dt.conflict.map Pending.dt
+          else if T == .THEORY_SETS then ee.sets.conflict.map fun (id, conf, _) => Pending.sets id conf
+          else none
         -- sets' conflict, as the theory engine explains it (`getExplanation`)
         let exp := if T == .THEORY_SETS then
             (ee.sets.conflict.map fun (_, _, a) => EE.mkAnd a).getD exp
@@ -1147,6 +1154,7 @@ def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (proof : O
     let cert := match kind with
       | some (.constants a b) => (EE.conflictOfConstants ee exp exp a b).toOption
       | some (.dt cf) => (EE.conflictOfDt ee exp cf).toOption
+      | some (.sets id conf) => (EE.conflictOfSets ee exp id conf).toOption
       | _ => none
     let src ← match kind with
       | some (.arith p) => newSatSource (.arith (some (exp, p)))
@@ -1750,7 +1758,7 @@ def certifyV (lits : List Node) (ee : EE.EqualityEngine) : Pending → Option (A
         | none => none
       else none
     | _, _ => none
-  | .dt _ | .arith _ => none
+  | .dt _ | .arith _ | .sets .. => none
 
 /-- The explanation of a pending conflict by the equality engine's own
 explanation (`EE.explainLit`, not verified), and the certificate of the
@@ -1767,6 +1775,7 @@ def explainPending (s : State) : Pending → Array Node × Except String (Array 
     (exp, EE.conflictOfConstants s.ee s.asserted exp a b)
   | .dt cf => (#[], EE.conflictOfDt s.ee s.asserted cf)
   | .arith _ => (#[], .error "a conflict of linear arithmetic, outside the SAT solver")
+  | .sets id conf => (#[], EE.conflictOfSets s.ee s.asserted id conf)
 
 /-- The event of a pending conflict, with its explanation. -/
 def Pending.event (k : Nat) (exp : Array Node) : Pending → Event
@@ -1774,6 +1783,7 @@ def Pending.event (k : Nat) (exp : Array Node) : Pending → Event
   | .constants _ _ => .conflict k .THEORY_BUILTIN "EQ_CONSTANT_MERGE" (EE.mkAnd exp)
   | .dt cf => .conflict k .THEORY_DATATYPES cf.id (EE.mkAnd exp)
   | .arith _ => .conflict k .THEORY_ARITH "" (EE.mkAnd exp)
+  | .sets id _ => .conflict k .THEORY_SETS id (EE.mkAnd exp)
 
 /-- Run `solve` on `lits`. An `unsat` answer stands only if it is certified:
 by the verified explanation of its conflict (`certifyV`), or else by a

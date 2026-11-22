@@ -39,3 +39,10 @@ The `*-unate-*` cases check the order of the disjuncts of unate lemmas, which
 is cvc5's order of node ids (`NodeOrder`): of the nodes a rewrite creates
 (`sat-uflia-unate-rewrite`), and of an equality split into two inequalities,
 over integers (`sat-lia-unate-split`) and over reals (`sat-lra-unate-split`).
+`sat-sets-*` exercise the theory of sets (`Telos/Solver/Theory/Sets.lean`): the
+disequality lemma `SETS_DEQ` (`sat-sets-deq`), with the upward closure and the
+proxies (`sat-sets-up-closure`), a conflict of a member of a set equal to the
+empty set during the search (`sat-sets-mem-eq-conflict`), and certified `unsat`
+answers whose refutations use the lemmas' and conflicts' certificates
+(`Telos/Solver/SetsLemma.lean`, `EE.conflictOfSets`): with the downward closure
+(`sat-sets-unsat-down-closure`) and the upward one (`sat-sets-unsat`).

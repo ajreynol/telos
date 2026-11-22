@@ -157,7 +157,7 @@ mutual
         let cands := [Node.eqNode a b, Node.eqNode b a] ++
           (if b == Node.mkTrue then [a] else []) ++ (if a == Node.mkTrue then [b] else [])
         for conc in cands do
-          if let some (id, exp) := ee.dt.facts.get? ⟨conc⟩ then
+          if let some (id, exp) := ee.dt.facts.get? ⟨conc⟩ <|> ee.sets.facts.get? ⟨conc⟩ then
             let p ← proveFact C conc id exp
             let (x, y) := EqProof.assumptionEq conc
             if x == a && y == b then return p
@@ -297,6 +297,37 @@ mutual
         | some e => qs := qs.push (.trans (.symm (.congAt a #[some e])) pa)
         | none => qs := qs.push pa
       return .orElim k v qs.toList
+    | "SETS_SINGLETON_EQ" =>
+      -- `{x} = {y}`: `x` is in `{x}`, so in `{y}`, which is `(= x y)`
+      let .app (.kind .EQUAL) #[s₁@(.app (.kind .SET_SINGLETON) #[x]), s₂] := exp
+        | throw "a singleton equality without singletons"
+      let some p ← proveT C s₁ s₂ | throw "a singleton equality of identical terms"
+      let m₁ := Node.mkNode .SET_MEMBER #[x, s₁]
+      let m₂ := Node.mkNode .SET_MEMBER #[x, s₂]
+      if Telos.rewrite m₁ != Node.mkTrue || Telos.rewrite conc != Telos.rewrite m₂ then
+        throw "a singleton equality the rewriter does not decide"
+      let t : EqProof := .trans (.rw conc) (.trans (.symm (.rw m₂)) (.trans (.symm (.congAt m₁ #[none, some p])) (.rw m₁)))
+      return .fromTrue t
+    | "SETS_MEM_EQ" | "SETS_EQ_MEM" =>
+      -- `(set.member x s)` with `s` equal to `{e}`: `(set.member x {e})`, which is
+      -- `(= x e)`
+      let parts := match exp with
+        | .app (.kind .AND) ps => ps
+        | e => #[e]
+      let some atom := parts.find? fun l => match l with | .app (.kind .SET_MEMBER) _ => true | _ => false
+        | throw "a membership fact without its membership"
+      let .app (.kind .SET_MEMBER) #[x, s] := atom | throw "a membership fact without its membership"
+      let some (.app (.kind .EQUAL) #[_, sg]) := parts.find? fun l => match l with
+          | .app (.kind .EQUAL) _ => true
+          | _ => false
+        | throw "a membership fact without its singleton"
+      let some pa ← proveT C atom Node.mkTrue | throw "a membership that is true"
+      let m' := Node.mkNode .SET_MEMBER #[x, sg]
+      if Telos.rewrite conc != Telos.rewrite m' then throw "a membership fact the rewriter does not decide"
+      let q : EqProof := match ← proveT C s sg with
+        | some ps => .trans (.symm (.congAt atom #[none, some ps])) pa
+        | none => pa
+      return .fromTrue (.trans (.rw conc) (.trans (.symm (.rw m')) q))
     | _ => throw s!"an internal fact of {id} is not supported"
 
   /-- The arguments of a term, as the builder counts them. -/
@@ -350,9 +381,10 @@ def conflictOfPropagation (ee : EqualityEngine) (lits : Array Node) (E : Array N
     Except String (Array Node × EqProof) :=
   -- the premises of internal facts reach other asserted literals; the
   -- explanation's reasons that are internal facts are not assumptions
-  let E := if ee.dt.facts.isEmpty then E else E.filter lits.contains
+  let noFacts := ee.dt.facts.isEmpty && ee.sets.facts.isEmpty
+  let E := if noFacts then E else E.filter lits.contains
   let A := E.push neg
-  let A := if ee.dt.facts.isEmpty then A else A ++ lits.filter (fun l => !A.contains l)
+  let A := if noFacts then A else A ++ lits.filter (fun l => !A.contains l)
   let C := buildCtx ee A lits
   let n := E.size
   build A do
@@ -483,6 +515,49 @@ def conflictOfDt (ee : EqualityEngine) (lits : Array Node) (cf : DT.Conflict) :
       let lem := Node.eqNode (Node.eqNode on T) Node.mkFalse
       let v := EqProof.valid lem [DT.ruleStep .dt_cycle lem]
       return .trans (.symm (.eqTrue P0)) v
+    | id => throw s!"a conflict of {id} is not supported"
+
+/-- A certificate of a conflict of the theory of sets, `conf` sent with the
+identifier `id` (`Telos/Solver/Theory/Sets.lean`), from the literals `lits`. In
+each, a membership is true of a set equal to one in which the rewriter decides
+it false: `{x}` equal to the empty set (`SETS_EQ_CONFLICT`); a member of a set
+equal to the empty set (`SETS_MEM_EQ_CONFLICT`, `SETS_EQ_MEM_CONFLICT`); a
+member of a set whose membership rewrites to `false` (`SETS_DOWN_CLOSURE`). -/
+def conflictOfSets (ee : EqualityEngine) (lits : Array Node) (id : String) (conf : Node) :
+    Except String (Array Node × EqProof) :=
+  let C := buildCtx ee lits lits
+  build lits do
+    let parts := match conf with
+      | .app (.kind .AND) ps => ps
+      | e => #[e]
+    -- `(set.member x s)` true, `s` equal to `t`, and `(set.member x t)` false
+    let memberConflict (atom t : Node) (pa : EqProof) : BuildM EqProof := do
+      let .app (.kind .SET_MEMBER) #[x, s] := atom | throw "a conflict without a membership"
+      let m' := Node.mkNode .SET_MEMBER #[x, t]
+      if Telos.rewrite m' != Node.mkFalse then throw "a conflict the rewriter does not decide"
+      let q : EqProof := match ← proveT C s t with
+        | some ps => .trans (.symm (.congAt atom #[none, some ps])) pa
+        | none => pa
+      return .trans (.symm q) (.rw m')
+    match id with
+    | "SETS_EQ_CONFLICT" =>
+      let .app (.kind .EQUAL) #[a, b] := conf | throw "a conflict without an equality"
+      let (sg, e) := match a with
+        | .app (.kind .SET_SINGLETON) _ => (a, b)
+        | _ => (b, a)
+      let .app (.kind .SET_SINGLETON) #[x] := sg | throw "a conflict without a singleton"
+      let atom := Node.mkNode .SET_MEMBER #[x, sg]
+      if Telos.rewrite atom != Node.mkTrue then throw "a conflict the rewriter does not decide"
+      memberConflict atom e (.rw atom)
+    | "SETS_MEM_EQ_CONFLICT" | "SETS_EQ_MEM_CONFLICT" | "SETS_DOWN_CLOSURE" =>
+      let some atom := parts.find? fun l => match l with | .app (.kind .SET_MEMBER) _ => true | _ => false
+        | throw "a conflict without a membership"
+      let some (.app (.kind .EQUAL) #[_, t]) := parts.find? fun l => match l with
+          | .app (.kind .EQUAL) _ => true
+          | _ => false
+        | throw "a conflict without an equality"
+      let some pa ← proveT C atom Node.mkTrue | throw "a membership that is true"
+      memberConflict atom t pa
     | id => throw s!"a conflict of {id} is not supported"
 
 end Telos.Solver.EE

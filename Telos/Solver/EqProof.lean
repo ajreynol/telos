@@ -73,6 +73,8 @@ inductive EqProof where
   | orElim (k : Nat) (p : EqProof) (qs : List EqProof)
   | congAt (t : Node) (args : Array (Option EqProof))
   | rw (t : Node)
+  /-- `t` and its rewrite in the node order `o` (`Telos.rewrite t o`). -/
+  | rwAt (o : NodeOrder) (t : Node)
   deriving Inhabited
 
 namespace EqProof
@@ -144,6 +146,7 @@ def check (A : Array Node) : EqProof → Option (Node × Node)
     let ds ← checkArgs A cs args.toList 0
     some (t, .app op ds.toArray)
   | .rw t => if decide t.WellTyped then some (t, Telos.rewrite t) else none
+  | .rwAt o t => if decide t.WellTyped then some (t, Telos.rewrite t o) else none
 where
   /-- Each proof proves its literal false. -/
   checkFalses (A : Array Node) : List Node → List EqProof → Bool

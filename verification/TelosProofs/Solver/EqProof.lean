@@ -413,23 +413,31 @@ theorem check_sound (A : Array Node) (hT : ∀ l ∈ A.toList, HasBoolType l.toE
   | case14 t hwt =>
     intro a b h
     simp [EqProof.check, hwt] at h
-  | case15 =>
+  | case15 o t hwt =>
+    intro a b h
+    simp only [EqProof.check, hwt, ↓reduceIte, Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    exact CondEquiv.of_equiv (rewriteWith_sound (theoryRewriterOf o) defaultFuel t (of_decide_eq_true hwt))
+  | case16 o t hwt =>
+    intro a b h
+    simp [EqProof.check, hwt] at h
+  | case17 =>
     rename_i _ l hl; simp at hl
-  | case16 l ls q qs ihq ih =>
+  | case18 l ls q qs ihq ih =>
     rename_i hf x hx
     simp only [EqProof.check.checkFalses, Bool.and_eq_true, beq_iff_eq] at hf
     rcases List.mem_cons.1 hx with rfl | hx
     · have := ihq _ _ hf.1; rwa [toEo_false] at this
     · exact ih hf.2 x hx
-  | case17 t x h₁ h₂ =>
+  | case19 t x h₁ h₂ =>
     rename_i hf _ _
     exfalso
     cases x <;> cases t <;> simp_all [EqProof.check.checkFalses]
-  | case18 cs i =>
+  | case20 cs i =>
     rename_i ds h _
     simp only [EqProof.check.checkArgs, Option.some.injEq] at h
     subst h; simp
-  | case19 cs rest i ih =>
+  | case21 cs rest i ih =>
     rename_i ds h hcs
     simp only [EqProof.check.checkArgs, Option.bind_eq_bind, Option.bind_eq_some_iff,
       Option.some.injEq] at h
@@ -440,7 +448,7 @@ theorem check_sound (A : Array Node) (hT : ∀ l ∈ A.toList, HasBoolType l.toE
     refine List.Forall₂.cons ?_ (ih ds' hds' hcs)
     have hw := hcs _ (Array.mem_toList_iff.2 (Array.getElem_mem hi))
     exact CondEquiv.refl _ hw
-  | case20 cs q rest i ihq ih =>
+  | case22 cs q rest i ihq ih =>
     rename_i ds h hcs
     simp only [EqProof.check.checkArgs, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
     obtain ⟨c, hc, ⟨a, d⟩, hq, h⟩ := h
