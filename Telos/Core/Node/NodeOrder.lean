@@ -125,11 +125,11 @@ partial def visit (ids : Std.HashMap Key Nat) (t : Node) : Std.HashMap Key Nat :
 the ones numbered (by preprocessing, which creates its subterms first). -/
 def add (o : NodeOrder) (t : Node) : NodeOrder := { o with ids := visit o.ids t }
 
-/-- Number the subterms of `t` that `o` does not number, after all of its own,
-in `fresh` (which this replaces): a term built (a lemma, before its rewrite)
-after the nodes `o` numbers. An empty order stays empty (`Node.lt`). -/
-partial def withLocal (o : NodeOrder) (t : Node) : NodeOrder :=
-  if o.decl.isEmpty && o.ids.isEmpty then o else
+/-- `fresh` with the subterms of `t` that neither `o` nor `fresh` numbers, after
+them: the nodes of a term built during solving (a lemma, before its rewrite),
+created after all the others, children first, as cvc5's node ids are. -/
+partial def numberFresh (o : NodeOrder) (fresh : Std.HashMap Key Nat) (t : Node) : Std.HashMap Key Nat :=
+  if o.decl.isEmpty && o.ids.isEmpty then fresh else
   let rec go (m : Std.HashMap Key Nat) (t : Node) : Std.HashMap Key Nat :=
     if m.contains ⟨t⟩ || (o.ids.contains ⟨t⟩) then m else
     let m := match t with
@@ -143,7 +143,31 @@ partial def withLocal (o : NodeOrder) (t : Node) : NodeOrder :=
     match t with
     | .var name _ => if o.decl.contains name then m else m.insert ⟨t⟩ m.size
     | _ => m.insert ⟨t⟩ m.size
-  { o with fresh := go {} t }
+  go fresh t
+
+/-- The nodes cvc5's arithmetic rewriter creates on the way to the rewrite of
+`t`, in order: for `(> a c)` (`c` an integer), `(<= a c)`, `(not (<= a c))`,
+then, rewriting the former, `(>= a c+1)` and `(not (>= a c+1))`. -/
+partial def rewriteIntermediates (acc : Array Node) (t : Node) : Array Node :=
+  match t with
+  | .app (.kind k) cs =>
+    let acc := cs.foldl rewriteIntermediates acc
+    match k, cs with
+    | .GT, #[a, .const (.integer c)] =>
+      let le := Node.app (.kind .LEQ) #[a, .const (.integer c)]
+      let ge := Node.app (.kind .GEQ) #[a, .const (.integer (c + 1))]
+      acc ++ #[le, .app (.kind .NOT) #[le], ge, .app (.kind .NOT) #[ge]]
+    | _, _ => acc
+  | _ => acc
+
+/-- `numberFresh` of `t`, then of the nodes its rewrite creates
+(`rewriteIntermediates`). -/
+def numberFreshRewrite (o : NodeOrder) (fresh : Std.HashMap Key Nat) (t : Node) : Std.HashMap Key Nat :=
+  (rewriteIntermediates #[] t).foldl o.numberFresh (o.numberFresh fresh t)
+
+/-- The order with the subterms of `t` numbered after its own (`numberFresh`
+from none). -/
+def withLocal (o : NodeOrder) (t : Node) : NodeOrder := { o with fresh := o.numberFresh {} t }
 
 /-- The order of an input: the declared constants `decls`, in order, and the
 assertions `as`, in order. -/

@@ -147,7 +147,7 @@ enabled (whose lemmas need the SAT solver), and the engine handles the
 theories. -/
 def useSat (cfg : Solver.Config) (out : List Node) (viaSat : Bool) : Bool :=
   cfg.satSupported && !hasDistinctAtom out &&
-    (viaSat || cfg.arithSolver || cfg.setsSolver || (literalsOf out matches .error _))
+    (viaSat || cfg.arithSolver || cfg.setsSolver || cfg.stringsSolver || (literalsOf out matches .error _))
 
 /-- cvc5's node ids, approximated, for the rewriter (`inputOrder`) when
 imitating cvc5's order; else the structural order. -/

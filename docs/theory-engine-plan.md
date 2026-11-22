@@ -1578,6 +1578,43 @@ preprocessed equalities (the node order of preprocessing). Recorded tests:
 - The care graph for sets of sets (`SETS_CG_SPLIT`), `set.choose`.
 - The remaining event differences.
 
+## Stage 9: strings (planned)
+
+cvc5's theory of strings (`src/theory/strings/`, about 29k lines with its
+rewriter, of which telos has the rewriter and the preprocessing reductions) in
+safe mode, where it is mostly enabled: lazy preprocessing of extended functions
+(`stringLazyPreproc`), the eager solver (`stringEagerSolver`), eager evaluation
+of applications to constants in the equality engine (`stringEagerEval`),
+model-based reduction at last-call effort (`stringModelBasedReduction`).
+Lengths are integer terms shared with arithmetic, so strings come with linear
+arithmetic (QF_SLIA) and theory combination.
+
+The strategy (`strategy.cpp`), at full effort: `checkInit`, the constant
+classes, the evaluation of extended functions, cycles, flat forms, the eager
+reductions and memberships, the normal forms of equalities (propagation, then
+equalities), the evaluation again, the normal forms of disequalities, codes,
+the lengths of classes, sequence arrays, the reductions of extended functions,
+memberships, cardinality; at last call, evaluation, reductions and memberships
+again.
+
+Stages, each with its fuzz generator, events, models and certificates:
+1. **Word equations with lengths**: `str.++`, `str.len`, constants, equalities
+   and disequalities of strings. The equality engine's evaluation of
+   interpreted applications to constants (`addFunctionKind` with eager
+   evaluation, and the constant edges in the proof builder); the term registry
+   (`STRINGS_REGISTER_TERM`, `STRINGS_REGISTER_TERM_ATOMIC`, proxy variables),
+   the solver state and `EqcInfo`, the eager solver, the inference manager and
+   skolem cache; the base solver (`checkInit`, constant classes, cardinality)
+   and the core solver (cycles, flat forms, normal forms of equalities and
+   disequalities, lengths of classes).
+2. **Extended functions**: `str.substr`, `str.at`, `str.contains`, `str.indexof`,
+   `str.replace`, `str.prefixof`, `str.suffixof`, `str.to_int`, `str.from_int`,
+   `str.<`, `str.<=`, codes (`extf_solver.cpp`, `strings_entail.cpp`): eager
+   evaluation, lazy reductions, model-based reduction at last call.
+3. **Regular expressions** (`regexp_solver.cpp`, `regexp_operation.cpp`): the
+   unfolding of memberships, intersection and inclusion.
+4. **Sequences**: `seq.unit`, `seq.nth`, `seq.update` (`array_solver.cpp`).
+
 ## Order of work (all stages)
 
 1. **Equality engine.** Port `theory/uf/equality_engine.cpp` (about 3k lines)

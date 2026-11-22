@@ -45,11 +45,11 @@ arrays rewriter rewrites equalities of indices (cvc5's `mkEqNode`) with the
 rewriters of the other theories: indices are not arrays here. -/
 def theoryRewriterAt (o : NodeOrder := {}) : Nat → TheoryId → TheoryRewriter
   | 0 => fun t => match t with
-    | .THEORY_ARRAYS => .arrays (rewriteWith (baseTheoryRewriterWith (.strings Rw.id) o) indexFuel)
-    | .THEORY_QUANTIFIERS => .quantifiers (rewriteWith (baseTheoryRewriterWith (.strings Rw.id) o) indexFuel)
-    | t => baseTheoryRewriterWith (.strings Rw.id) o t
+    | .THEORY_ARRAYS => .arrays (rewriteWith (baseTheoryRewriterWith (.strings Rw.id o) o) indexFuel)
+    | .THEORY_QUANTIFIERS => .quantifiers (rewriteWith (baseTheoryRewriterWith (.strings Rw.id o) o) indexFuel)
+    | t => baseTheoryRewriterWith (.strings Rw.id o) o t
   | k + 1 =>
-    let strings := TheoryRewriter.strings (rewriteWith (theoryRewriterAt o k) indexFuel)
+    let strings := TheoryRewriter.strings (rewriteWith (theoryRewriterAt o k) indexFuel) o
     fun t => match t with
     | .THEORY_ARRAYS => .arrays (rewriteWith (baseTheoryRewriterWith strings o) indexFuel)
     | .THEORY_QUANTIFIERS => .quantifiers (rewriteWith (baseTheoryRewriterWith strings o) indexFuel)

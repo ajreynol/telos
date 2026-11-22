@@ -276,7 +276,7 @@ def propSolve (formulas : List Node) : PropM Sat.Solver.Result := do
   onEngine do
     if c.eeSolver then
       let ctx ← eeCtx
-      modify fun s => { s with ee := { EE.init ctx with dt := { enabled := c.dtSolver }, sets := { enabled := c.setsSolver } } }
+      modify fun s => { s with ee := { EE.init ctx with dt := { enabled := c.dtSolver }, sets := { enabled := c.setsSolver }, strings := { enabled := c.stringsSolver } } }
   -- `PropEngine::finishInit`: `true` and `(not false)`, at level 0
   -- (the inputs of the certificate: these two, then the formulas)
   onEngineTop do

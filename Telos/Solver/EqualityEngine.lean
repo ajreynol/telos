@@ -6,6 +6,7 @@ import Telos.Core.Node.NodeOrder
 import Telos.Solver.Event
 import Telos.Solver.Theory.DtState
 import Telos.Solver.Theory.SetsState
+import Telos.Solver.Theory.StringsState
 
 /-!
 # The equality engine
@@ -150,6 +151,7 @@ structure Counters where
   deducedReasons : Nat
   propLog : Nat
   tsetLog : Nat
+  evalLog : Nat
   done : Bool
   deriving Inhabited
 
@@ -247,6 +249,19 @@ structure EqualityEngine where
   /-- The state of the theory of sets, likewise
   (`Telos/Solver/Theory/Sets.lean`). -/
   sets : Sets.State := {}
+  /-- The state of the theory of strings, likewise
+  (`Telos/Solver/Theory/Strings.lean`). -/
+  strings : Strings.State := {}
+  /-- The number of children of each interpreted application not yet equal to
+  a constant (`d_subtermsToEvaluate`). -/
+  toEvaluate : Array Nat := #[]
+  /-- The applications whose count went down, in order (`d_subtermEvaluates`). -/
+  evalLog : Array Nat := #[]
+  /-- The applications to evaluate (`d_evaluationQueue`). -/
+  evalQueue : Array Nat := #[]
+  /-- The nodes built during solving, numbered after those of the context's
+  order, as cvc5's node ids (which are not undone on backtracking). -/
+  freshIds : Std.HashMap Key Nat := {}
   deriving Inhabited
 
 /-- What the engine reads from its owner. -/
@@ -268,6 +283,12 @@ structure Ctx where
   declOrder : Std.HashMap String Nat := {}
   /-- cvc5's node ids, approximated, for the theories' rewrites. -/
   order : NodeOrder := {}
+  /-- The congruence kinds that are interpreted (`addFunctionKind` with
+  `interpreted`): an application whose children are all equal to constants is
+  evaluated, by the rewriter, and merged with its value. -/
+  interpretedKinds : Kind → Bool := fun _ => false
+  /-- The value of an interpreted application of constants (cvc5's rewriter). -/
+  evaluate : Node → Node := id
 
 abbrev EEM := ReaderT Ctx (StateM EqualityEngine)
 
@@ -286,6 +307,20 @@ def notify (n : Note) : EEM Unit := do
 def modifyDt (f : DT.State → DT.State) : EEM Unit := do
   let dt ← modifyGet fun s => (s.dt, { s with dt := {} })
   modify fun s => { s with dt := f dt }
+
+/-- The context's order with the nodes of `t` numbered (`NodeOrder.numberFresh`):
+for the rewrite of a term built during solving. -/
+def numbered (t : Node) : EEM NodeOrder := do
+  let o := (← read).order
+  let f ← modifyGet fun s => (s.freshIds, { s with freshIds := {} })
+  let f := o.numberFreshRewrite f t
+  modify fun s => { s with freshIds := f }
+  return { o with fresh := f }
+
+/-- Update the state of the theory of strings in place. -/
+def modifyStrings (f : Strings.State → Strings.State) : EEM Unit := do
+  let st ← modifyGet fun s => (s.strings, { s with strings := {} })
+  modify fun s => { s with strings := f st }
 
 /-- Update the state of the theory of sets in place. -/
 def modifySets (f : Sets.State → Sets.State) : EEM Unit := do
@@ -316,7 +351,8 @@ def newNode (t : Node) : EEM Nat :=
       termTriggers := s.termTriggers.push none
       isConstant := s.isConstant.push false
       isInternal := s.isInternal.push true
-      isEquality := s.isEquality.push false })
+      isEquality := s.isEquality.push false
+      toEvaluate := s.toEvaluate.push 0 })
 
 /-- `storeApplicationLookup`: `funId` is the application of its normalized
 form; an equality of a class with itself is true, of two constants false. -/
@@ -528,6 +564,14 @@ def propagateTriggerTermDiseqs (tags : Nat) (ts : Option TSet) (diseqs : Array T
           modify fun s => { s with done := true }
   return !(← get).done
 
+/-- `subtermEvaluates`: one more child of the interpreted application `id` is
+equal to a constant; with none left, it is evaluated. -/
+def subtermEvaluates (id : Nat) : EEM Unit :=
+  modify fun s =>
+    let n := s.toEvaluate[id]! - 1
+    { s with toEvaluate := s.toEvaluate.set! id n, evalLog := s.evalLog.push id,
+             evalQueue := if n == 0 then s.evalQueue.push id else s.evalQueue }
+
 /-- `merge`: the class `c₂` into the class `c₁`. Returns the triggers fired. -/
 def merge (c₁ c₂ : Nat) : EEM (Array Nat × Bool) := do
   let s ← get
@@ -575,6 +619,10 @@ def merge (c₁ c₂ : Nat) : EEM (Array Nat × Bool) := do
         let use := s.useNodes[uid]!
         let funId := use.app
         let fn := (s.apps[funId]!.map (·.2)).getD default
+        -- an interpreted application with one more child equal to a constant
+        if fn.type == .interpreted && const₁ && !s.isInternal[cur]! then
+          subtermEvaluates (s.nodeIds.getD ⟨s.nodes[funId]!⟩ funId)
+        let s ← get
         let norm : FunApp := { type := fn.type, a := find s fn.a, b := find s fn.b }
         match s.lookup.get? norm with
         | some other =>
@@ -614,15 +662,38 @@ def merge (c₁ c₂ : Nat) : EEM (Array Nat × Bool) := do
       if tags₁ != tags₂ then setTermTriggers c₁ (some merged)
   return (fired, true)
 
-/-- `propagate`: process the merge queue. -/
-def propagate : EEM Unit := do
+/-- `evaluateTerm`: an interpreted application with its children replaced by
+their constant representatives, rewritten. -/
+def evaluateTerm (id : Nat) : EEM Node := do
+  let s ← get
+  let t := s.nodes[id]!
+  match t with
+  | .app op cs =>
+    let cs' := cs.map fun c => match s.nodeIds.get? ⟨c⟩ with
+      | some i => s.nodes[find s i]!
+      | none => c
+    return (← read).evaluate (.app op cs')
+  | _ => return t
+
+/-- `propagate`: process the evaluation queue (`processEvaluationQueue`, the
+value of each application added with `addT`) and the merge queue. -/
+def propagateWith (addT : Node → EEM Unit) : EEM Unit := do
   if (← get).inPropagate then return
   modify fun s => { s with inPropagate := true }
   repeat
     let s ← get
-    if s.qhead ≥ s.queue.size then break
+    if s.qhead ≥ s.queue.size && s.evalQueue.isEmpty then break
     if s.done then
-      modify fun s => { s with queue := #[], qhead := 0 }
+      modify fun s => { s with queue := #[], qhead := 0, evalQueue := #[] }
+      continue
+    if !s.evalQueue.isEmpty then
+      let q := s.evalQueue
+      modify fun s => { s with evalQueue := #[] }
+      for id in q do
+        let v ← evaluateTerm id
+        addT v
+        let vid ← nodeId v
+        enqueue { t1 := id, t2 := vid, type := .constants, reason := Node.mkTrue }
       continue
     let cand := s.queue[s.qhead]!
     modify fun s => { s with qhead := s.qhead + 1 }
@@ -706,12 +777,22 @@ partial def addTermInternal (t : Node) (isOperator : Bool := false) : EEM Unit :
         -- APPLY_UF is not an external operator kind: its operator is internal
         addTermInternal op true
         let mut res ← nodeId op
+        let ik := (← read).interpretedKinds
+        let interp := match t with
+          | .app (.kind k) _ => ik k
+          | _ => false
         for c in cs do
           addTermInternal c
-          res ← newApplicationNode t res (← nodeId c) .uninterpreted
+          res ← newApplicationNode t res (← nodeId c) (if interp then .interpreted else .uninterpreted)
         let res' := res
         modify fun s => { s with isInternal := s.isInternal.set! res' false,
                                  isConstant := s.isConstant.set! res' (isConstNode t) }
+        if interp then
+          -- the children not yet equal to constants
+          modify fun s => { s with toEvaluate := s.toEvaluate.set! res' cs.size }
+          for c in cs do
+            let s ← get
+            if s.isConstant[find s (s.nodeIds.getD ⟨c⟩ 0)]! then subtermEvaluates res'
         pure res
       | none => do
         let res ← newNode t
@@ -725,10 +806,13 @@ partial def addTermInternal (t : Node) (isOperator : Bool := false) : EEM Unit :
     -- constants are trigger terms for every tag (`d_constantsAreTriggers`)
     if (← get).isConstant[result]! then
       setTermTriggers result (some ((Array.range numTags).map (·, result)))
-  propagate
+  propagateWith (addTermInternal ·)
 
 /-- `addTerm`. -/
 def addTerm (t : Node) : EEM Unit := addTermInternal t
+
+/-- `propagate`. -/
+def propagate : EEM Unit := propagateWith addTerm
 
 /-- The initial engine, with `true` and `false` (`init`). Their classes are not
 notified, as in cvc5, whose notification class is set after `init`. -/
@@ -1009,14 +1093,15 @@ def counters (s : EqualityEngine) : Counters :=
   { nodes := s.nodes.size, assertedEqs := s.assertedEqs.size, lookups := s.appLookups.size,
     triggers := s.triggers.size, deducedDiseqs := s.deducedDiseqs.size,
     deducedReasons := s.deducedReasonsSize, propLog := s.propLog.size, tsetLog := s.tsetLog.size,
-    done := s.done }
+    evalLog := s.evalLog.size, done := s.done }
 
 /-- Enter a new context level. -/
 def push (s : EqualityEngine) : EqualityEngine :=
   let dt := s.dt
   let sets := s.sets
-  let s := { s with dt := {}, sets := {} }
-  { s with saved := s.saved.push (counters s), dt := dt.push, sets := sets.push }
+  let strs := s.strings
+  let s := { s with dt := {}, sets := {}, strings := {} }
+  { s with saved := s.saved.push (counters s), dt := dt.push, sets := sets.push, strings := strs.push }
 
 /-- `undoMerge`: separate the class `c₂` from the class `c₁` it was merged
 into. -/
@@ -1080,6 +1165,12 @@ def backtrack (s : EqualityEngine) (c : Counters) : EqualityEngine := Id.run do
       let i := s.appLookups.size - 1 - k
       s := { s with lookup := s.lookup.erase s.appLookups[i]! }
     s := { s with appLookups := s.appLookups.take c.lookups }
+  -- the interpreted applications' counts
+  if c.evalLog < s.evalLog.size then
+    for k in [0:s.evalLog.size - c.evalLog] do
+      let id := s.evalLog[s.evalLog.size - 1 - k]!
+      s := { s with toEvaluate := s.toEvaluate.modify id (· + 1) }
+    s := { s with evalLog := s.evalLog.take c.evalLog, evalQueue := #[] }
   if c.nodes < s.nodes.size then
     for k in [0:s.nodes.size - c.nodes] do
       let i := s.nodes.size - 1 - k
@@ -1091,6 +1182,7 @@ def backtrack (s : EqualityEngine) (c : Counters) : EqualityEngine := Id.run do
           s := { s with enodes := s.enodes.modify x fun n => { n with useList := top.next },
                         useNodes := s.useNodes.pop }
     let n := c.nodes
+    s := { s with toEvaluate := s.toEvaluate.take n }
     s := { s with nodes := s.nodes.take n, apps := s.apps.take n, nodeTriggers := s.nodeTriggers.take n,
                   isConstant := s.isConstant.take n, isEquality := s.isEquality.take n,
                   termTriggers := s.termTriggers.take n,
@@ -1121,8 +1213,9 @@ def popTo (s : EqualityEngine) (k : Nat) : EqualityEngine :=
     -- `s` is consumed by the update, so that `backtrack` updates in place
     let dt := s.dt
     let sets := s.sets
-    let s := backtrack { s with saved := s.saved.take k, dt := {}, sets := {} } c
-    { s with dt := dt.popTo k, sets := sets.popTo k }
+    let strs := s.strings
+    let s := backtrack { s with saved := s.saved.take k, dt := {}, sets := {}, strings := {} } c
+    { s with dt := dt.popTo k, sets := sets.popTo k, strings := strs.popTo k }
   else s
 
 end Telos.Solver.EE

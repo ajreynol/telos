@@ -116,6 +116,11 @@ def setupAtom (atom : Node) : ArithM Unit := do
   if (← get).unsupported.isSome then return
   let _ ← ageOf atom
   let _ ← ageOf (Node.notNode atom)
+  -- the atom and its negation (`addLiteral`), numbered among the nodes built
+  -- during solving
+  modify fun s =>
+    let o := s.opts.order
+    { s with opts := { s.opts with order := { o with fresh := o.numberFresh o.fresh (Node.notNode atom) } } }
   let c ← modifyGet fun s => let (s, c) := s.addLiteral atom natom; (c, s)
   markSetup atom
   let lit := ((← get).constraint c).literal.get!

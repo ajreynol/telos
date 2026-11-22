@@ -8,6 +8,7 @@ import Telos.Solver.EqualityEngine
 import Telos.Solver.Theory.UF
 import Telos.Solver.Theory.Datatypes
 import Telos.Solver.Theory.Sets
+import Telos.Solver.Theory.Strings
 import Telos.Solver.EqBuild
 import Telos.Solver.Explain
 import Telos.Solver.Model
@@ -182,8 +183,11 @@ def Config.arithSolver (c : Config) : Bool := c.theories.contains .THEORY_ARITH
 part: arithmetic answers `unknown` until its solver is complete): they are
 among UF, datatypes and arithmetic, and the logic is quantifier-free. -/
 def Config.satSupported (c : Config) : Bool :=
-  c.theories.all ([.THEORY_BUILTIN, .THEORY_BOOL, .THEORY_UF, .THEORY_DATATYPES, .THEORY_ARITH,
-    .THEORY_SETS].contains ·)
+  c.theories.all fun T => [.THEORY_BUILTIN, .THEORY_BOOL, .THEORY_UF, .THEORY_DATATYPES, .THEORY_ARITH,
+    .THEORY_SETS, .THEORY_STRINGS].contains T ||
+    -- strings enable quantifiers (`strings-exp`), which have nothing to check on
+    -- quantifier-free inputs
+    (T == .THEORY_QUANTIFIERS && c.theories.contains .THEORY_STRINGS)
 
 /-- The central equality engine runs, with UF and datatypes: the theories are
 supported (with arithmetic or not). -/
@@ -194,6 +198,10 @@ def Config.dtSolver (c : Config) : Bool := c.eeSolver && c.theories.contains .TH
 
 /-- The theory of sets is enabled, and solved (`Telos/Solver/Theory/Sets.lean`). -/
 def Config.setsSolver (c : Config) : Bool := c.eeSolver && c.theories.contains .THEORY_SETS
+
+/-- The theory of strings is enabled (`Telos/Solver/Theory/Strings.lean`, in
+progress). -/
+def Config.stringsSolver (c : Config) : Bool := c.eeSolver && c.theories.contains .THEORY_STRINGS
 
 /-- The answer to `check-sat`. -/
 inductive Answer where
@@ -251,6 +259,8 @@ structure Saved where
   dtHead : Nat
   setsFacts : Nat
   setsHead : Nat
+  stringsFacts : Nat
+  stringsHead : Nat
   arithFacts : Nat
   arithHead : Nat
   factsAsserted : Bool
@@ -286,6 +296,11 @@ structure State where
   /-- The atoms registered with the SAT solver (context dependent, as a lemma's
   atoms are registered again after a backtrack), and their order. -/
   registered : Std.HashSet Key := {}
+  /-- The atoms waiting to be preregistered (`d_preregisterQueue`), and whether
+  one is being preregistered (`d_inPreregister`): an atom met while another is
+  (the atom of a lemma sent then) is preregistered after it. -/
+  preregQueue : Array Node := #[]
+  inPrereg : Bool := false
   registerLog : Array Key := #[]
   /-- The theories each term was preregistered with, as a set of theory
   indices (`PreRegisterVisitor::d_visited`). -/
@@ -322,6 +337,9 @@ structure State where
   next to process. -/
   setsFacts : Array Node := #[]
   setsHead : Nat := 0
+  /-- The facts asserted to the theory of strings, and the next to process. -/
+  stringsFacts : Array Node := #[]
+  stringsHead : Nat := 0
   /-- The facts of arithmetic, and how many it has processed (context
   dependent). -/
   arithFacts : Array Node := #[]
@@ -430,15 +448,21 @@ def eeCtx : EngineM EE.Ctx := do
   let asg := (← get).assignment
   let dt := (← read).dtSolver
   let sets := (← read).setsSolver
+  let strs := (← read).stringsSolver
+  let ord := (← read).order
   let base : EE.Ctx := { congruenceKinds := fun k => UF.congruenceKind k || (dt && DT.congruenceKind k) ||
-                                                     (sets && Sets.congruenceKind k),
+                                                     (sets && Sets.congruenceKind k) ||
+                                                     (strs && Strings.congruenceKind k),
+                         interpretedKinds := fun k => strs && Strings.interpretedKind k,
+                         evaluate := fun t => Telos.rewrite t ord,
                          value := fun a => asg.get? ⟨a⟩, cvc5Order := (← read).cvc5Order,
                          declOrder := (← read).declOrder, order := (← read).order }
   -- the theories' handlers, in the order of their ids
   let onNote := fun n ee =>
     let ee := if dt then DT.onNote base n ee else ee
-    if sets then Sets.onNote base n ee else ee
-  return if dt || sets then { base with onNote } else base
+    let ee := if sets then Sets.onNote base n ee else ee
+    if strs then Strings.onNote base n ee else ee
+  return if dt || sets || strs then { base with onNote } else base
 
 /-- Run an operation of the equality engine, and take its notes. -/
 def runEE (x : EE.EEM α) : EngineM (α × Array EE.Note) := do
@@ -502,7 +526,8 @@ def assertShared (T : Theory) (lit : Node) : EngineM Unit := do
   -- also taken as given while telos's orientation of equalities between
   -- applications only approximates cvc5's node ids)
   let marked := (← get).markedBuiltin
-  if marked.contains (markKey T norm) || marked.contains (markKey T (flipEq norm)) then return
+  if marked.contains (markKey T norm) then return
+  if !(← read).stringsSolver && marked.contains (markKey T (flipEq norm)) then return
   modify fun s => { s with markedBuiltin := s.markedBuiltin.insert (markKey T norm),
                            sharedLog := s.sharedLog.push (.markedBuiltin (markKey T norm)),
                            factsAsserted := true,
@@ -510,6 +535,7 @@ def assertShared (T : Theory) (lit : Node) : EngineM Unit := do
   emit (.assert (← level) T norm)
   if T == .THEORY_DATATYPES then modify fun s => { s with dtFacts := s.dtFacts.push norm }
   if T == .THEORY_SETS then modify fun s => { s with setsFacts := s.setsFacts.push norm }
+  if T == .THEORY_STRINGS then modify fun s => { s with stringsFacts := s.stringsFacts.push norm }
   if T == .THEORY_ARITH then modify fun s => { s with arithFacts := s.arithFacts.push norm }
 
 /-- Process the notes of the central equality engine
@@ -551,6 +577,8 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
         assertShared .THEORY_DATATYPES lit
       else if tag == Theory.THEORY_ARITH.tag && (← read).arithSolver then
         assertShared .THEORY_ARITH lit
+      else if tag == Theory.THEORY_STRINGS.tag && (← read).stringsSolver then
+        assertShared .THEORY_STRINGS lit
     | .conflict T id exp =>
       emit (.conflict (← level) T id exp)
       if (← read).satMode then
@@ -606,8 +634,11 @@ ensures (`Valuation::ensureLiteral`, which needs the CNF stream) on, they are
 left to `flushArithDeferred`, which the caller (`theoryCheck`) runs next. -/
 def withArith (x : Arith.ArithM α) : EngineM α := do
   let st ← modifyGet fun s => (s.arith, { s with arith := {} })
-  let st := { st with opts := (← read).arith }
+  let c ← read
+  -- the nodes built during solving are numbered by the equality engine
+  let st := { st with opts := { c.arith with order := { c.arith.order with fresh := (← get).ee.freshIds } } }
   let (a, st) := x.run st
+  modify fun s => { s with ee := { s.ee with freshIds := st.opts.order.fresh } }
   let outs := st.outputs
   modify fun s => { s with arith := { st with outputs := #[] } }
   for o in outs do
@@ -619,16 +650,6 @@ def withArith (x : Arith.ArithM α) : EngineM α := do
   if let some why := st.unsupported then
     modify fun s => { s with satError := s.satError <|> some s!"arithmetic: {why}" }
   return a
-
-def theoryPreRegister (T : Theory) (t : Node) : EngineM Unit := do
-  if T == .THEORY_ARITH && (← read).arithSolver then withArith (Arith.preRegisterTerm t)
-  if T == .THEORY_UF && (← read).eeSolver then
-    withEE (UF.preRegisterTerm t)
-    -- (`d_functionsTerms`)
-    if let .app (.node .APPLY_UF _) _ := t then
-      modify fun s => { s with ufFunctionTerms := s.ufFunctionTerms.push t }
-  if T == .THEORY_DATATYPES && (← read).dtSolver then withEE (DT.preRegisterTerm t)
-  if T == .THEORY_SETS && (← read).setsSolver then withEE (Sets.preRegisterTerm t)
 
 /-- The theory that owns a type (`Theory::theoryOf(TypeNode)`). -/
 def typeTheory (T : TypeNode) : Theory := Theory.ofTheoryId T.theoryId
@@ -673,49 +694,10 @@ def setVisited (cur : Node) (v : Nat) : EngineM Unit := do
   let log := log.push (⟨cur⟩, old)
   modify fun s => { s with preregVisited := pv, preregLog := log }
 
-/-- `PreRegisterVisitor::visit`: preregister `cur` with its theory, its
-parent's, and its type's when they differ or the type is finite. -/
-def visitPrereg (cur parent : Node) : EngineM Unit := do
-  let c ← read
-  let mut visited := (← get).preregVisited.getD ⟨cur⟩ 0
-  let ct := c.theoryOf cur
-  let mut ths : Array Theory := #[ct]
-  if cur != parent then
-    let pt := c.theoryOf parent
-    ths := ths.push pt
-    match cur.typeHint with
-    | some T => if ct != pt || isFiniteType T then ths := ths.push (typeTheory T)
-    | none => pure ()
-  for T in ths do
-    if !hasTheory visited T then
-      visited := visited ||| theoryBit T
-      setVisited cur visited
-      theoryPreRegister T cur
-  setVisited cur visited
-
 /-- The children of a term, as cvc5 iterates them (without the operator). -/
 def children : Node → Array Node
   | .app _ cs => cs
   | _ => #[]
-
-/-- `NodeVisitor<PreRegisterVisitor>::run`: a post-order traversal, the children
-pushed in order and so visited last first. -/
-def preRegisterVisit (atom : Node) : EngineM Unit := do
-  -- (node, parent, children added)
-  let mut stack : Array (Node × Node × Bool) := #[(atom, atom, false)]
-  while h : stack.size > 0 do
-    let (cur, parent, added) := stack[stack.size - 1]
-    if ← alreadyVisited cur parent then
-      stack := stack.pop
-    else if added then
-      visitPrereg cur parent
-      stack := stack.pop
-    else
-      stack := stack.set! (stack.size - 1) (cur, parent, true)
-      for c in children cur do
-        if !(← alreadyVisited c cur) then stack := stack.push (c, cur, false)
-
-/-! ### Sharing -/
 
 /-- `SharedTermsDatabase::addSharedTerm`: `term` of `atom` is shared by the
 theories `theories`. -/
@@ -732,60 +714,6 @@ def addSharedTerm (atom term : Node) (theories : Nat) : EngineM Unit := do
   | some old =>
     modify fun s => { s with termTheories := s.termTheories.insert k (theories ||| old),
                              sharedLog := s.sharedLog.push (.termTheories k (some old)) }
-
-/-- `NodeVisitor<SharedTermsVisitor>::run`: preregistration with sharing, by a
-traversal of the atom of its own (`d_visited`), with the context-dependent
-record of the theories each term was preregistered with (`d_preregistered`);
-a term visited by a theory other than its own is a shared term of the atom. -/
-def sharedVisit (atom : Node) : EngineM Unit := do
-  let c ← read
-  let mut visited : Std.HashMap Key Nat := {}
-  let isVisited (visited : Std.HashMap Key Nat) (cur parent : Node) : Bool :=
-    let closure := match parent with
-      | .app (.kind k) _ => (k == .FORALL || k == .EXISTS) && cur != parent
-      | _ => false
-    closure || match visited.get? ⟨cur⟩ with
-      | none => false
-      | some v => isAlreadyVisited c v cur parent
-  let mut stack : Array (Node × Node × Bool) := #[(atom, atom, false)]
-  while h : stack.size > 0 do
-    let (cur, parent, added) := stack[stack.size - 1]
-    if isVisited visited cur parent then
-      stack := stack.pop
-    else if added then
-      -- `visit`
-      let mut vis := visited.getD ⟨cur⟩ 0
-      let prereg := (← get).preregVisited.getD ⟨cur⟩ 0
-      let ct := c.theoryOf cur
-      let mut ths : Array Theory := #[ct]
-      if cur != parent then
-        let pt := c.theoryOf parent
-        ths := ths.push pt
-        match cur.typeHint with
-        | some T => if ct != pt || isFiniteType T then ths := ths.push (typeTheory T)
-        | none => pure ()
-      for T in ths do
-        if !hasTheory vis T then
-          vis := vis ||| theoryBit T
-          if !hasTheory prereg T then theoryPreRegister T cur
-      visited := visited.insert ⟨cur⟩ vis
-      setVisited cur (prereg ||| vis)
-      if (vis ^^^ (vis &&& theoryBit ct)) != 0 then addSharedTerm atom cur vis
-      stack := stack.pop
-    else
-      stack := stack.set! (stack.size - 1) (cur, parent, true)
-      for ch in children cur do
-        if !isVisited visited ch cur then stack := stack.push (ch, cur, false)
-
-/-- `SharedSolver::preRegister`: with sharing, the visitor of shared terms, and
-an equality is propagated by the shared terms database too (a trigger of the
-central equality engine), unless it has a SAT value. -/
-def preRegisterAtom (atom : Node) : EngineM Unit := do
-  if !(← read).sharing then return ← preRegisterVisit atom
-  sharedVisit atom
-  if let .app (.kind .EQUAL) _ := atom then
-    if (← read).eeSolver && !(← get).assignment.contains ⟨atom⟩ then
-      withEE (EE.addTriggerPredicate atom)
 
 /-- `SharedSolver::preNotifySharedFact`: the theories sharing the terms of the
 atom, not yet notified, are notified (`Theory::addSharedTerm`, which makes them
@@ -809,7 +737,8 @@ def preNotifySharedFact (atom : Node) : EngineM Unit := do
         withArith (Arith.notifySharedTerm term)
       let sets := T == .THEORY_SETS && (← read).setsSolver
       if sets then modify fun s => { s with setsShared := s.setsShared.push term }
-      if (← read).eeSolver && (T == .THEORY_UF || T == .THEORY_DATATYPES || arith || sets) then
+      let strs := T == .THEORY_STRINGS && (← read).stringsSolver
+      if (← read).eeSolver && (T == .THEORY_UF || T == .THEORY_DATATYPES || arith || sets || strs) then
         withEE (EE.addTriggerTerm term T.tag)
     -- `SharedTermsDatabase::markNotified`: the trigger terms again
     if newly != 0 then
@@ -832,15 +761,6 @@ def exCtx : EngineM EE.ExCtx := do
   let s ← get
   return { ee := s.ee, roots := s.atoms, paths := s.atomPaths }
 
-/-- `TheoryEngine::preRegister`, for an atom met by the CNF stream. -/
-def preRegister (atom : Node) : EngineM Unit := do
-  if (← get).registered.contains ⟨atom⟩ then return
-  modify fun s => { s with registered := s.registered.insert ⟨atom⟩, registerLog := s.registerLog.push ⟨atom⟩ }
-  if !isTheoryAtom (← read) atom then return
-  emit (.prereg (← level) atom)
-  addRoot atom
-  preRegisterAtom atom
-
 /-- `Theory::assertFact`, via `TheoryEngine::assertFact`: the literal is given
 to the theory of its atom. -/
 def assertFact (lit : Node) (fromSat : Bool := true) (to : Option Theory := none) : EngineM Unit := do
@@ -861,7 +781,18 @@ def assertFact (lit : Node) (fromSat : Bool := true) (to : Option Theory := none
   if T == .THEORY_UF then modify fun s => { s with ufFacts := s.ufFacts.push lit }
   if T == .THEORY_DATATYPES then modify fun s => { s with dtFacts := s.dtFacts.push lit }
   if T == .THEORY_SETS then modify fun s => { s with setsFacts := s.setsFacts.push lit }
+  if T == .THEORY_STRINGS then modify fun s => { s with stringsFacts := s.stringsFacts.push lit }
   if T == .THEORY_ARITH then modify fun s => { s with arithFacts := s.arithFacts.push lit }
+  -- an equality goes to the shared solver too (`THEORY_BUILTIN`), unless its
+  -- theory uses the central equality engine (it is marked already): asserted
+  -- to the equality engine now (`SharedTermsDatabase::assertShared`)
+  if fromSat && c.sharing && c.eeSolver && atom.getKind == .EQUAL && T == .THEORY_ARITH then
+    let k : Key := ⟨lit⟩
+    if !(← get).markedBuiltin.contains k then
+      modify fun s => { s with markedBuiltin := s.markedBuiltin.insert k,
+                               sharedLog := s.sharedLog.push (.markedBuiltin k) }
+      let (_, pol) := atomOf lit
+      withEE (do let _ ← EE.assertEquality atom pol lit)
 
 /-- The SAT solver assigns `lit` and asserts it. -/
 def assign (lit : Node) : EngineM Unit := do
@@ -879,7 +810,7 @@ instance : Inhabited Key := ⟨⟨default⟩⟩
 def pushLevel : EngineM Unit :=
   modify fun s =>
     let sv : Saved := ⟨s.assignTrail.size, s.preregLog.size, s.ufFacts.size, s.ufHead,
-      s.dtFacts.size, s.dtHead, s.setsFacts.size, s.setsHead, s.arithFacts.size, s.arithHead, s.factsAsserted, s.inConflict, s.theoryConflict, s.propagated.size, s.asserted.size,
+      s.dtFacts.size, s.dtHead, s.setsFacts.size, s.setsHead, s.stringsFacts.size, s.stringsHead, s.arithFacts.size, s.arithHead, s.factsAsserted, s.inConflict, s.theoryConflict, s.propagated.size, s.asserted.size,
       s.sharedLog.size, s.registerLog.size, s.skActive.size, s.ufFunctionTerms.size, s.arithShared.size,
       s.setsShared.size⟩
     { s with saved := s.saved.push sv, level := s.level + 1, ee := EE.push s.ee, arith := s.arith.push }
@@ -994,6 +925,7 @@ def popTo (k : Nat) : EngineM Unit := do
     ufFacts := s.ufFacts.take sv.ufFacts, ufHead := sv.ufHead,
     dtFacts := s.dtFacts.take sv.dtFacts, dtHead := sv.dtHead,
     setsFacts := s.setsFacts.take sv.setsFacts, setsHead := sv.setsHead,
+    stringsFacts := s.stringsFacts.take sv.stringsFacts, stringsHead := sv.stringsHead,
     arithFacts := s.arithFacts.take sv.arithFacts, arithHead := sv.arithHead,
     factsAsserted := sv.factsAsserted, inConflict := sv.inConflict,
     theoryConflict := sv.theoryConflict, propagated := s.propagated.take sv.propagated,
@@ -1054,39 +986,23 @@ def explainAll (lits : Array Node) (all : Bool) : EngineM (Array Node) := do
 
 /-! ### The CNF stream (`Config.satMode`) -/
 
-/-- `TheoryEngine::preRegister` of an atom that got a SAT literal, or again
-after a backtrack (`TheoryPreregistrar`). -/
-def tePreRegister (atom : Node) : EngineM Unit := do
-  emit (.prereg (← level) atom)
-  if atom.isConst then return
-  if !(← get).registered.contains ⟨atom⟩ then
-    modify fun s => { s with registered := s.registered.insert ⟨atom⟩ }
-    addRoot atom
-  preRegisterAtom atom
-
-/-- `TheoryPreregistrar::notifySatLiteral` (eager): the atom is preregistered,
-and remembered with the level. -/
-def notifySatLiteral (atom : Node) : EngineM Unit := do
-  modify fun s => { s with satLiterals := s.satLiterals.push (atom, s.level) }
-  tePreRegister atom
-
-/-- `TheoryPreregistrar::notifyBacktrack`: the atoms preregistered above the
-current level are preregistered again, at it, the latest first. -/
-def satBacktrack : EngineM Unit := do
-  let lvl ← level
-  let n := (← get).satLiterals.size
-  for i in [0:n] do
-    let (atom, l) := (← get).satLiterals[n - 1 - i]!
-    if l ≤ lvl then break
-    modify fun s => { s with satLiterals := s.satLiterals.set! (n - 1 - i) (atom, lvl) }
-    tePreRegister atom
-
 /-- Run an operation of the CNF stream, on the stream of the state. -/
 def withCnf (x : StateT Cnf.State EngineM α) : EngineM α := do
   let c ← modifyGet fun s => (s.cnf, { s with cnf := {} })
   let (a, c) ← x.run c
   modify fun s => { s with cnf := c }
   return a
+
+/-- `Valuation::hasSatValue`: the atom is assigned, or a unit clause of it waits
+for the SAT solver (which assigns it when it is added, as a lemma's conjunct is,
+before the lemma's atoms are preregistered). -/
+def hasSatValue (atom : Node) : EngineM Bool := do
+  let s ← get
+  if s.assignment.contains ⟨atom⟩ then return true
+  let some l := s.cnf.nodeToLit.get? ⟨atom⟩ | return false
+  return s.cnf.ops.any fun
+    | .clause ls _ _ => ls.size == 1 && ls[0]!.var == l.var
+    | _ => false
 
 /-- Run an operation of the engine from the CNF stream: the stream goes back
 in the state meanwhile, as the operation may use it (a lemma's atoms). -/
@@ -1098,50 +1014,192 @@ def atEngine (x : EngineM α) : StateT Cnf.State EngineM α := do
   set c
   return a
 
-/-- The engine as the CNF stream's host. -/
-def cnfHost (c : Config) : Cnf.Host (StateT Cnf.State EngineM) where
-  notifySatLiteral atom := atEngine (notifySatLiteral atom)
-  isInternalBoolVar n :=
-    c.theoryOf n == .THEORY_BOOL && match n with
-      | .var .. | .skolem .. => true
-      | _ => false
-
 /-- The equalities of a formula oriented as cvc5's node ids would (see
 `flushLemmas`). -/
 partial def orientEqs (ids : Std.HashMap Key Nat) (n : Node) (decl : Std.HashMap String Nat := {}) : Node :=
   match n with
   | .app (.kind .EQUAL) #[l, r] =>
     if l.typeHint == some .boolean then .app (.kind .EQUAL) #[orientEqs ids l decl, orientEqs ids r decl]
-    -- (an arithmetic equality is oriented by its normal form, a set equality by
-    -- node order, by the rewriter)
+    -- (an arithmetic equality is oriented by its normal form, a set or string
+    -- equality by node order, by the rewriter)
     else if l.typeHint == some .integer || l.typeHint == some .real then n
-    else if (match l.typeHint with | some (.set _) => true | _ => false) then n
+    else if (match l.typeHint with | some (.set _) | some .string => true | _ => false) then n
     else if EE.ageLt ids r l decl then Node.eqNode r l else n
   | .app (.kind k) cs =>
     if Cnf.isConnective n || k == .NOT then .app (.kind k) (cs.map (orientEqs ids · decl)) else n
   | _ => n
 
-/-- The outputs of the linear solver from a literal it ensures on: the
-literal gets its SAT literal (the CNF stream preregisters its atoms), a phase
-is preferred (`OutputChannel::preferPhase`), and the rest as usual. -/
-def flushArithDeferred : EngineM Unit := do
-  let outs ← modifyGet fun s => (s.arithDeferred, { s with arithDeferred := #[] })
-  let c ← read
-  for o in outs do
-    match o with
-    | .ensureLiteral n => if c.satMode then withCnf (Cnf.ensureLiteral (cnfHost c) n)
-    | .phase n pol =>
-      emit (.phase (← level) n pol)
-      if c.satMode then withCnf (Cnf.preferPhase n pol)
-    | o => arithOutput o
-
 /-- A new source of clauses, by index. -/
 def newSatSource (src : SatSource) : EngineM Nat :=
   modifyGet fun s => (s.satSources.size, { s with satSources := s.satSources.push src })
 
+/-- The engine as the CNF stream's host. -/
+def cnfHostWith (notify : Node → EngineM Unit) (c : Config) : Cnf.Host (StateT Cnf.State EngineM) where
+  notifySatLiteral atom := atEngine (notify atom)
+  isInternalBoolVar n :=
+    c.theoryOf n == .THEORY_BOOL && match n with
+      | .var .. | .skolem .. => true
+      | _ => false
+
+/-! ### Preregistration and lemmas (mutually recursive: a theory may send a lemma while it preregisters a term, whose atoms are preregistered then) -/
+
+mutual
+partial def theoryPreRegister (T : Theory) (t : Node) : EngineM Unit := do
+  if T == .THEORY_ARITH && (← read).arithSolver then withArith (Arith.preRegisterTerm t)
+  if T == .THEORY_UF && (← read).eeSolver then
+    withEE (UF.preRegisterTerm t)
+    -- (`d_functionsTerms`)
+    if let .app (.node .APPLY_UF _) _ := t then
+      modify fun s => { s with ufFunctionTerms := s.ufFunctionTerms.push t }
+  if T == .THEORY_DATATYPES && (← read).dtSolver then withEE (DT.preRegisterTerm t)
+  if T == .THEORY_SETS && (← read).setsSolver then withEE (Sets.preRegisterTerm t)
+  if T == .THEORY_STRINGS && (← read).stringsSolver then
+    -- each lemma's atoms are preregistered as it is sent
+    let c ← read
+    let ops : Strings.Ops EngineM := {
+      run := fun x => do let a ← withEE x; flushLemmas; pure a
+      hasSatValue := hasSatValue
+      phase := fun n pol => do
+        emit (.phase (← level) n pol)
+        if c.satMode then withCnf (Cnf.preferPhase n pol) }
+    Strings.preRegisterTerm ops t
+
+/-- `PreRegisterVisitor::visit`: preregister `cur` with its theory, its
+parent's, and its type's when they differ or the type is finite. -/
+partial def visitPrereg (cur parent : Node) : EngineM Unit := do
+  let c ← read
+  let mut visited := (← get).preregVisited.getD ⟨cur⟩ 0
+  let ct := c.theoryOf cur
+  let mut ths : Array Theory := #[ct]
+  if cur != parent then
+    let pt := c.theoryOf parent
+    ths := ths.push pt
+    match cur.typeHint with
+    | some T => if ct != pt || isFiniteType T then ths := ths.push (typeTheory T)
+    | none => pure ()
+  for T in ths do
+    if !hasTheory visited T then
+      visited := visited ||| theoryBit T
+      setVisited cur visited
+      theoryPreRegister T cur
+  setVisited cur visited
+
+/-- `NodeVisitor<PreRegisterVisitor>::run`: a post-order traversal, the children
+pushed in order and so visited last first. -/
+partial def preRegisterVisit (atom : Node) : EngineM Unit := do
+  -- (node, parent, children added)
+  let mut stack : Array (Node × Node × Bool) := #[(atom, atom, false)]
+  while h : stack.size > 0 do
+    let (cur, parent, added) := stack[stack.size - 1]
+    if ← alreadyVisited cur parent then
+      stack := stack.pop
+    else if added then
+      visitPrereg cur parent
+      stack := stack.pop
+    else
+      stack := stack.set! (stack.size - 1) (cur, parent, true)
+      for c in children cur do
+        if !(← alreadyVisited c cur) then stack := stack.push (c, cur, false)
+
+/-- `NodeVisitor<SharedTermsVisitor>::run`: preregistration with sharing, by a
+traversal of the atom of its own (`d_visited`), with the context-dependent
+record of the theories each term was preregistered with (`d_preregistered`);
+a term visited by a theory other than its own is a shared term of the atom. -/
+partial def sharedVisit (atom : Node) : EngineM Unit := do
+  let c ← read
+  let mut visited : Std.HashMap Key Nat := {}
+  let isVisited (visited : Std.HashMap Key Nat) (cur parent : Node) : Bool :=
+    let closure := match parent with
+      | .app (.kind k) _ => (k == .FORALL || k == .EXISTS) && cur != parent
+      | _ => false
+    closure || match visited.get? ⟨cur⟩ with
+      | none => false
+      | some v => isAlreadyVisited c v cur parent
+  let mut stack : Array (Node × Node × Bool) := #[(atom, atom, false)]
+  while h : stack.size > 0 do
+    let (cur, parent, added) := stack[stack.size - 1]
+    if isVisited visited cur parent then
+      stack := stack.pop
+    else if added then
+      -- `visit`
+      let mut vis := visited.getD ⟨cur⟩ 0
+      let prereg := (← get).preregVisited.getD ⟨cur⟩ 0
+      let ct := c.theoryOf cur
+      let mut ths : Array Theory := #[ct]
+      if cur != parent then
+        let pt := c.theoryOf parent
+        ths := ths.push pt
+        match cur.typeHint with
+        | some T => if ct != pt || isFiniteType T then ths := ths.push (typeTheory T)
+        | none => pure ()
+      for T in ths do
+        if !hasTheory vis T then
+          vis := vis ||| theoryBit T
+          if !hasTheory prereg T then theoryPreRegister T cur
+      visited := visited.insert ⟨cur⟩ vis
+      setVisited cur (prereg ||| vis)
+      if (vis ^^^ (vis &&& theoryBit ct)) != 0 then addSharedTerm atom cur vis
+      stack := stack.pop
+    else
+      stack := stack.set! (stack.size - 1) (cur, parent, true)
+      for ch in children cur do
+        if !isVisited visited ch cur then stack := stack.push (ch, cur, false)
+
+/-- `SharedSolver::preRegister`: with sharing, the visitor of shared terms, and
+an equality is propagated by the shared terms database too (a trigger of the
+central equality engine), unless it has a SAT value. -/
+partial def preRegisterAtom (atom : Node) : EngineM Unit := do
+  if !(← read).sharing then return ← preRegisterVisit atom
+  sharedVisit atom
+  if let .app (.kind .EQUAL) _ := atom then
+    if (← read).eeSolver && !(← hasSatValue atom) then
+      withEE (EE.addTriggerPredicate atom)
+
+/-- `TheoryEngine::preRegister`, for an atom met by the CNF stream. -/
+partial def preRegister (atom : Node) : EngineM Unit := do
+  if (← get).registered.contains ⟨atom⟩ then return
+  modify fun s => { s with registered := s.registered.insert ⟨atom⟩, registerLog := s.registerLog.push ⟨atom⟩ }
+  if !isTheoryAtom (← read) atom then return
+  emit (.prereg (← level) atom)
+  addRoot atom
+  preRegisterQueued atom
+
+/-- `TheoryEngine::preRegister` of an atom that got a SAT literal, or again
+after a backtrack (`TheoryPreregistrar`). -/
+partial def tePreRegister (atom : Node) : EngineM Unit := do
+  emit (.prereg (← level) atom)
+  if atom.isConst then return
+  if !(← get).registered.contains ⟨atom⟩ then
+    modify fun s => { s with registered := s.registered.insert ⟨atom⟩ }
+    addRoot atom
+  preRegisterQueued atom
+
+/-- The queue of `TheoryEngine::preRegister`. -/
+partial def preRegisterQueued (atom : Node) : EngineM Unit := do
+  modify fun s => { s with preregQueue := s.preregQueue.push atom }
+  if (← get).inPrereg then return
+  modify fun s => { s with inPrereg := true }
+  repeat
+    let q ← modifyGet fun s => (s.preregQueue, { s with preregQueue := #[] })
+    if q.isEmpty then break
+    -- the first first; those queued meanwhile after the rest
+    let first := q[0]!
+    modify fun s => { s with preregQueue := q.extract 1 q.size ++ s.preregQueue }
+    preRegisterAtom first
+  modify fun s => { s with inPrereg := false }
+
+/-- `TheoryPreregistrar::notifySatLiteral` (eager): the atom is preregistered,
+and remembered with the level. -/
+partial def notifySatLiteral (atom : Node) : EngineM Unit := do
+  -- the CNF stream creates the atom's negation with its literal (`newLiteral`)
+  let o := (← read).order
+  modify fun s => { s with satLiterals := s.satLiterals.push (atom, s.level),
+                           ee := { s.ee with freshIds := o.numberFresh s.ee.freshIds (Node.notNode atom) } }
+  tePreRegister atom
+
 /-- Give a lemma (rewritten, as cvc5's `TheoryPreprocessor` does), or the
 negation of a conflict's explanation, to the CNF stream. -/
-def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (proof : Option EqProof := none) :
+partial def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (proof : Option EqProof := none) :
     EngineM Unit := do
   let c ← read
   if isConflict then
@@ -1159,13 +1217,13 @@ def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (proof : O
     let src ← match kind with
       | some (.arith p) => newSatSource (.arith (some (exp, p)))
       | _ => newSatSource (.theory cert)
-    withCnf (Cnf.convertAndAssert (cnfHost c) (EE.mkAnd exp) false (negated := true) src)
+    withCnf (Cnf.convertAndAssert (cnfHostWith notifySatLiteral c) (EE.mkAnd exp) false (negated := true) src)
     -- (`PropEngine::assertLemmasInternal` notifies the decision engine)
     modify fun s => { s with decisionQueue := s.decisionQueue.push (Node.notNode (EE.mkAnd exp)) }
   else
     let lem₀ := lem
     -- the lemma's nodes are created before its rewrite (cvc5's node ids)
-    let lem := Telos.rewrite lem ((← read).order.withLocal lem)
+    let lem := Telos.rewrite lem (← withEE (EE.numbered lem))
     let ids := (← get).ee.nodeIds
     let lem := if c.cvc5Order then orientEqs ids lem c.declOrder else lem
     -- the formula's proof, from the lemma's
@@ -1179,12 +1237,12 @@ def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (proof : O
       | _ =>
         let cert := proof.bind (DtLemma.forFormula lem₀ lem) |>.map (lem, ·)
         newSatSource (.lemma cert)
-    withCnf (Cnf.convertAndAssert (cnfHost c) lem false (src := src))
+    withCnf (Cnf.convertAndAssert (cnfHostWith notifySatLiteral c) lem false (src := src))
     modify fun s => { s with decisionQueue := s.decisionQueue.push lem }
 
 /-- `TheoryEngine::lemma`, after the event: the lemma, preprocessed (rewritten),
 goes to the CNF stream, which preregisters its new atoms. -/
-def flushLemmas : EngineM Unit := do
+partial def flushLemmas : EngineM Unit := do
   if (← read).satMode then
     repeat
       let q ← modifyGet fun s => (s.satLemmaQueue, { s with satLemmaQueue := #[] })
@@ -1211,6 +1269,36 @@ def flushLemmas : EngineM Unit := do
             else if EE.ageLt ids r l decl then Node.eqNode r l else atom
           | _ => Telos.rewrite atom ord
         preRegister atom
+
+end
+
+/-- The engine as the CNF stream's host. -/
+def cnfHost (c : Config) : Cnf.Host (StateT Cnf.State EngineM) := cnfHostWith notifySatLiteral c
+
+/-- `TheoryPreregistrar::notifyBacktrack`: the atoms preregistered above the
+current level are preregistered again, at it, the latest first. -/
+def satBacktrack : EngineM Unit := do
+  let lvl ← level
+  let n := (← get).satLiterals.size
+  for i in [0:n] do
+    let (atom, l) := (← get).satLiterals[n - 1 - i]!
+    if l ≤ lvl then break
+    modify fun s => { s with satLiterals := s.satLiterals.set! (n - 1 - i) (atom, lvl) }
+    tePreRegister atom
+
+/-- The outputs of the linear solver from a literal it ensures on: the
+literal gets its SAT literal (the CNF stream preregisters its atoms), a phase
+is preferred (`OutputChannel::preferPhase`), and the rest as usual. -/
+def flushArithDeferred : EngineM Unit := do
+  let outs ← modifyGet fun s => (s.arithDeferred, { s with arithDeferred := #[] })
+  let c ← read
+  for o in outs do
+    match o with
+    | .ensureLiteral n => if c.satMode then withCnf (Cnf.ensureLiteral (cnfHost c) n)
+    | .phase n pol =>
+      emit (.phase (← level) n pol)
+      if c.satMode then withCnf (Cnf.preferPhase n pol)
+    | o => arithOutput o
 
 /-- Run an operation of the equality engine, process its notes, and register
 the atoms of the lemmas sent. -/
@@ -1280,6 +1368,13 @@ def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
       modify fun s => { s with dtHead := s.dtHead + 1 }
       withEEF (DT.assertFact fact)
     dtPostCheck (e == .full)
+  if T == .THEORY_STRINGS && (← read).stringsSolver then
+    repeat
+      let s ← get
+      if s.inConflict || s.stringsHead ≥ s.stringsFacts.size then break
+      let fact := s.stringsFacts[s.stringsHead]!
+      modify fun s => { s with stringsHead := s.stringsHead + 1 }
+      withEEF (Strings.assertFact fact)
   if T == .THEORY_SETS && (← read).setsSolver then
     repeat
       let s ← get
@@ -1691,7 +1786,7 @@ def replay (c : Config) (inputs : List Input) : Array Event × Nat :=
   let act : EngineM Unit := do
     if c.ufSolver then
       let ctx ← eeCtx
-      modify fun s => { s with ee := { EE.init ctx with dt := { enabled := c.dtSolver }, sets := { enabled := c.setsSolver } } }
+      modify fun s => { s with ee := { EE.init ctx with dt := { enabled := c.dtSolver }, sets := { enabled := c.setsSolver }, strings := { enabled := c.stringsSolver } } }
     for i in inputs do replayInput i
   let st := ((act.run c).run {}).2
   (st.events, st.unverifiedExplains)

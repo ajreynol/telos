@@ -156,12 +156,12 @@ def rewriteLength (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
   | _ => none
 
 /-- cvc5's `rewriteEquality`. -/
-def rewriteEquality (n : Node) : Option (Rw n) :=
+def rewriteEquality (o : NodeOrder) (n : Node) : Option (Rw n) :=
   match n.getChildren with
   | #[a, b] =>
     if a == b then byRule "eq-refl" n
     else if a.isConst && b.isConst then byEvaluate n
-    else if b.lt a then byRule "eq-symm" n
+    else if o.lt b a then byRule "eq-symm" n
     else none
   | _ => none
 
@@ -1431,11 +1431,11 @@ def evalConst (n : Node) : Option (Rw n) :=
   else none
 
 /-- cvc5's `SequencesRewriter::postRewrite`. -/
-def postRewrite (rw : (m : Node) → Rw m) (n : Node) : RewriteResponse n :=
+def postRewrite (rw : (m : Node) → Rw m) (o : NodeOrder) (n : Node) : RewriteResponse n :=
   let r : Option (Rw n) := match n.getKind with
     | .STRING_CONCAT => rewriteConcat n
     | .STRING_LENGTH => rewriteLength rw n
-    | .EQUAL => rewriteEquality n
+    | .EQUAL => rewriteEquality o n
     | .STRING_CHARAT => byRule "str-at-elim" n
     | .STRING_SUBSTR => rewriteSubstr rw n
     | .STRING_PREFIX | .STRING_SUFFIX => rewritePrefixSuffix rw n
@@ -1473,8 +1473,8 @@ def postRewrite (rw : (m : Node) → Rw m) (n : Node) : RewriteResponse n :=
 end StringsRewriter
 
 /-- cvc5's strings rewriter. Its pre-rewrite is the identity. -/
-def TheoryRewriter.strings (rw : (m : Node) → Rw m) : TheoryRewriter where
+def TheoryRewriter.strings (rw : (m : Node) → Rw m) (o : NodeOrder := {}) : TheoryRewriter where
   preRewrite := .done
-  postRewrite := StringsRewriter.postRewrite rw
+  postRewrite := StringsRewriter.postRewrite rw o
 
 end Telos
