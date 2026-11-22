@@ -1,5 +1,6 @@
 import Telos.Solver.DtLemma
 import Telos.Core.Node.OfEo
+import Telos.Preprocess.Theory.StringsStaticRewrite
 
 /-!
 # Proofs of the core inferences of the theory of strings
@@ -318,9 +319,20 @@ def conclude (C : Node) (j : Nat) (conc : Node) : M Nat := do
     let (atom, pol) := match C with
       | .app (.kind .NOT) #[a] => (a, false)
       | a => (a, true)
-    if Telos.rewrite atom != Node.mkBool (!pol) then throw "a conclusion that is not false"
+    -- (`(atom, ¬pol)`: by the rewriter, or for an equality of strings by
+    -- cvc5's extended equality rewriting, `rewriteStrEqualityExt`, whose
+    -- CPC proof is checked)
+    let byRw : Option EqProof :=
+      if Telos.rewrite atom == Node.mkBool (!pol) then some (.rw atom)
+      else if pol && atom.getKind == .EQUAL then do
+        let r ← Preprocess.strEqualityExt atom
+        if r.1 != Node.mkFalse then none
+        let cs ← Proof.cmdsOf r
+        some (.valid (Node.eqNode atom Node.mkFalse) cs)
+      else none
+    let some v := byRw | throw "a conclusion that is not false"
     -- `(true, false)`, as `(false, true)`
-    let contra : EqProof := if pol then .trans (.symm pc) (.rw atom) else .trans (.symm (.rw atom)) pc
+    let contra : EqProof := if pol then .trans (.symm pc) v else .trans (.symm v) pc
     let (_, i) ← litFact (.symm contra)
     return i
   let some q := bridge C conc | throw "a conclusion that does not bridge"

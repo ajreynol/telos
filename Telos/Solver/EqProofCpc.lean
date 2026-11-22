@@ -14,7 +14,7 @@ the certificate is the CPC fact `(= a b)`:
 - `cong`: `cong` (or `nary_cong`) on the application, with `refl` for the
   arguments without a proof (`Proof.congStep`);
 - `eqTrue`: `true_intro` on `(= a b)`;
-- `valid F cs`: the steps of `cs` (which prove `F`), then as `assume`;
+- `valid F cs`: the steps of `cs` (which prove `F`, `Proof.emitCmds`), then as `assume`;
 - `fromTrue`: `true_elim`, then as `assume`;
 - `andElim i`: `true_elim`, `and_elim i`, `true_intro`;
 - `orElim k`: `true_elim`, then `resolution` with each `(not lᵢ)` (from
@@ -48,17 +48,6 @@ def asEq (l : Node) (p : Nat) : EmitM Nat := do
   | none => return p
   | some r => push ⟨r, [], [p], .step⟩
 
-/-- The steps of the CPC commands `cs` (steps without premises). -/
-def emitCmds : List CCmd → EmitM Nat
-  | [] => throw "an empty proof"
-  | [.step r as _] => push ⟨r, argList as, [], .step⟩
-  | .step r as _ :: rest => do let _ ← push ⟨r, argList as, [], .step⟩; emitCmds rest
-  | _ => throw "a proof that is not of steps"
-where
-  argList : CArgList → List PArg
-    | .nil => []
-    | .cons a rest => .term a :: argList rest
-
 /-- The steps of a certificate's facts, given the positions of the assumptions. -/
 partial def emitEq (A : Array Node) (pos : Array Nat) : EqProof → EmitM Nat
   | .assume i => do
@@ -83,7 +72,7 @@ partial def emitEq (A : Array Node) (pos : Array Nat) : EqProof → EmitM Nat
     let eqs ← emitArgs A pos cs args.toList 0
     congStep t op eqs
   | .eqTrue p => do let q ← emitEq A pos p; push ⟨.true_intro, [], [q], .step⟩
-  | .valid F cs => do let q ← emitCmds cs; asEq F q
+  | .valid F cs => do let q ← Proof.emitCmds (cs.foldr CCmdList.cons .nil); asEq F q
   | .fromTrue p => do
     let some (F, _) := EqProof.check A p | throw "a step that does not check"
     let q ← emitEq A pos p

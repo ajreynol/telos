@@ -1,5 +1,6 @@
 import Telos.Rewriter.Rewrite
 import Telos.Rewriter.Theory.Strings
+import Telos.Preprocess.Theory.StringsLenUnify
 
 /-!
 # Static rewriting of string equalities
@@ -24,8 +25,9 @@ telos certifies each case by CPC rules:
   (`str-substr-eq-empty`, `str-substr-eq-empty-leq-len`,
   `str-substr-z-eq-empty-leq`).
 
-Not ported: the length-based unifications (`rewriteViaStrEqLenUnifyPrefix`,
-`rewriteViaStrEqLenUnify`). Regular expression equalities (`RE_EQ_ELIM`) are
+The length-based unification `rewriteViaStrEqLenUnifyPrefix`
+(`Telos/Preprocess/Theory/StringsLenUnify.lean`). Not ported:
+`rewriteViaStrEqLenUnify`. Regular expression equalities (`RE_EQ_ELIM`) are
 not ported either.
 -/
 
@@ -224,6 +226,6 @@ def strEqualityExt (n : Node) : Option (Rw n) := do
   let isStrTerm (t : Node) : Bool := !t.isConst && t.getKind.theoryId == .THEORY_STRINGS
   if !(isStrTerm a || isStrTerm b) then none
   firstOf [fun _ => eqNctn n, fun _ => eqNfix n, fun _ => strEqUnify n, fun _ => strEqReplace n,
-    fun _ => strEmpSubstr n]
+    fun _ => strEmpSubstr n, fun _ => strEqLenUnifyPrefix n]
 
 end Telos.Preprocess

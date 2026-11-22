@@ -345,7 +345,10 @@ def registerTermAtomic (n : Node) (s : LengthStatus) : m Unit := do
   let caseEmpty ← ops.run (rw (Node.mkNode .AND #[lenZ, emp]))
   -- the preferred phases, in the order of node ids (`std::map`)
   let phases ← if caseEmpty.isConst then pure [] else do
-    pure [(← ops.run (rw lenZ)), (← ops.run (rw emp))]
+    let a ← ops.run (rw lenZ)
+    let b ← ops.run (rw emp)
+    let older ← ops.run (do return ageLt (← get).nodeIds b a (← read).declOrder (← read).order)
+    pure (if older then [b, a] else [a, b])
   let _ ← ops.run (trustedLemma lem "STRINGS_REGISTER_TERM_ATOMIC")
   for p in phases do ops.phase p true
 

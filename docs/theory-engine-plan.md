@@ -1696,23 +1696,25 @@ follows from the lemma's literals as the certificate has them, by their
 rewrites.
 
 Testing: `fuzz-solve.py --theory strings` (QF_SLIA word equations with
-lengths). With the SAT solver, 100 benchmarks: 85 the same events as cvc5
-(seed 1; 87 with seed 2). The others: the length-based unifications of
-`rewriteStrEqualityExt` that telos lacks (`(= "" (str.++ y y))` is
-`(= y "")`, and `rewriteViaStrEqLenUnify`, which cvc5 elaborates by a macro),
-in the preprocessed input; a few orientations of shared equalities; cvc5
-times out on 1 (a looping word equation, on which telos answers `unknown`).
-cvc5's node ids, as the engine approximates them (`NodeOrder`): each
+lengths). With the SAT solver, 100 benchmarks: 93 the same events as cvc5
+(seed 1; 94 with seed 2). The others: nodes cvc5 creates in its entailment
+checks during preprocessing (such as the length of a variable, which then
+orders a sum of lengths), the orientation of some inequalities, a few
+`explain` events; cvc5 times out on 1 (a looping word equation, on which
+telos answers `unknown`). The length-based unification
+`rewriteViaStrEqLenUnifyPrefix` is ported and certified
+(`Telos/Preprocess/Theory/StringsLenUnify.lean`); `rewriteViaStrEqLenUnify` is
+not. cvc5's node ids, as the engine approximates them (`NodeOrder`): each
 preprocessing pass sees the nodes the passes before it created
 (`Pipeline.order`); the arithmetic rewriter numbers the nodes of the term it
 rewrites that the order lacks, in their order of occurrence
 (`NodeOrder.extend`); the solvers' constants `0` to `8` come after the first
 assertion (cvc5 builds its theories when it processes it); shared equalities
 between terms of the input or of preprocessing are oriented by these ids
-(`EE.ageLt`). On 300 larger benchmarks (seed 11, half with disjunctions),
-every answer agrees with cvc5's but 2 `unsat` that are `unknown`: their
-prefix conflicts, `(= "" (str.++ y "a"))`, need the same rewrites (or
-`len ≥ 0`).
+(`EE.ageLt`), and with strings an equality and its flip are distinct facts.
+On 300 larger benchmarks (seed 11, half with disjunctions), every answer
+agrees with cvc5's and every `unsat` is certified (the prefix conflicts by
+`rewriteStrEqualityExt`'s CPC proof).
 
 A literal the shared solver asserted to arithmetic is explained by the
 equality engine, even if it became a SAT literal after (cvc5's

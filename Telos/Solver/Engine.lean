@@ -804,7 +804,10 @@ def assertFact (lit : Node) (fromSat : Bool := true) (to : Option Theory := none
   -- theories; a theory is not given it twice (`markPropagation`)
   let T := to.getD (c.theoryOf atom)
   let marked := (← get).markedBuiltin
-  if marked.contains (markKey T lit) || marked.contains (markKey T (flipEq lit)) then return
+  -- (the flipped equality too, but with strings, where telos's orientation
+  -- of equalities follows cvc5's node ids closely enough to keep them apart,
+  -- as cvc5 does)
+  if marked.contains (markKey T lit) || (!c.stringsSolver && marked.contains (markKey T (flipEq lit))) then return
   modify fun s => { s with markedBuiltin := s.markedBuiltin.insert (markKey T lit),
                            sharedLog := s.sharedLog.push (.markedBuiltin (markKey T lit)) }
   emit (.assert (← level) T lit)
