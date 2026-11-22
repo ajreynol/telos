@@ -1,6 +1,7 @@
 import Std.Data.HashMap
 import Telos.Core.Node.Key
 import Telos.Core.Node.Order
+import Telos.Core.Node.FastType
 
 /-!
 # cvc5's order of node ids, approximated
@@ -29,21 +30,68 @@ is `Node.lt`. -/
 structure NodeOrder where
   /-- The declared constants, by name, in order of declaration. -/
   decl : Std.HashMap String Nat := {}
-  /-- The other terms of the input, in order of first occurrence. -/
+  /-- The other terms: of the input, in order of first occurrence, then those
+  numbered after (`add`). -/
   ids : Std.HashMap Key Nat := {}
+  /-- The number of terms of the input (the first ids). -/
+  inputSize : Nat := 0
   deriving Inhabited
 
 instance : Repr NodeOrder := ⟨fun o _ => s!"<NodeOrder: {o.decl.size} declared, {o.ids.size} terms>"⟩
 
 namespace NodeOrder
 
-/-- The approximate id of `t`, if it is in the table. -/
+/-- Whether `t` has an integral real constant (`cvx` changes it). -/
+partial def hasIntegralRat : Node → Bool
+  | .const (.rational q) => q.den == 1
+  | .app _ cs => cs.any hasIntegralRat
+  | _ => false
+
+/-- The node cvc5's rewriter builds for the rewritten node `t`: its arithmetic
+is mixed, so an integral constant of a real term is an integer (`(>= s 2)`,
+where the parser's `(>= s 2.0)` is another node). -/
+partial def cvx (t : Node) : Node :=
+  match t with
+  | .const (.rational q) => if q.den == 1 then .const (.integer q.num) else t
+  | .app op cs => if hasIntegralRat t then .app op (cs.map cvx) else t
+  | t => t
+
+/-- Whether the arithmetic rewriter builds nodes of `t`'s shape: an arithmetic
+relation, its negation, or an arithmetic term (decided by the operator, not
+the type, to be cheap; not, say, a conjunction a pass built). -/
+def rewriterShape : Node → Bool
+  | .app (.kind k) cs =>
+    k == .GEQ || k == .GT || k == .LEQ || k == .LT || k == .ADD || k == .MULT ||
+      k == .NEG || k == .SUB || k == .TO_REAL || k == .DIVISION ||
+      (k == .NOT && cs.size == 1 && match cs[0]! with
+        | .app (.kind k') _ => k' == .GEQ || k' == .EQUAL
+        | _ => false) ||
+      (k == .EQUAL && cs.any fun c => match c with
+        | .const (.rational _) => true
+        | .app (.kind k') _ => k' == .ADD || k' == .MULT || k' == .TO_REAL
+        | _ => false)
+  | .const (.rational _) => true
+  | _ => false
+
+/-- `acc` with `cvx t` when the rewriter builds `t` and it has an integral
+real constant (otherwise `cvx t` is `t`, already in `acc`). -/
+def pushCvx (acc : Array Node) (t : Node) : Array Node :=
+  if rewriterShape t && hasIntegralRat t then acc.push (cvx t) else acc
+
+/-- The approximate id of `t`, if it is in the table: of the node cvc5's
+rewriter builds for it (`cvx`; a node with an integral real constant is not a
+pass's node of the same shape), or else, for a term of the input, its own
+(the rewrite of an unchanged input atom has no node in a certificate). -/
 def id? (o : NodeOrder) (t : Node) : Option Nat :=
   match t with
   | .var name _ => match o.decl.get? name with
     | some i => some i
     | none => (o.ids.get? ⟨t⟩).map (· + o.decl.size)
-  | _ => (o.ids.get? ⟨t⟩).map (· + o.decl.size)
+  | _ =>
+    let r := if hasIntegralRat t then
+        (o.ids.get? ⟨cvx t⟩) <|> ((o.ids.get? ⟨t⟩).filter (· < o.inputSize))
+      else o.ids.get? ⟨t⟩
+    r.map (· + o.decl.size)
 
 /-- `a` has a smaller id than `b` (cvc5: `a.getId() < b.getId()`). -/
 def lt (o : NodeOrder) (a b : Node) : Bool :=
@@ -68,11 +116,16 @@ partial def visit (ids : Std.HashMap Key Nat) (t : Node) : Std.HashMap Key Nat :
     | _ => ids
   ids.insert ⟨t⟩ ids.size
 
+/-- Number `t`'s subterms not numbered yet (`visit`), as a node created after
+the ones numbered (by preprocessing, which creates its subterms first). -/
+def add (o : NodeOrder) (t : Node) : NodeOrder := { o with ids := visit o.ids t }
+
 /-- The order of an input: the declared constants `decls`, in order, and the
 assertions `as`, in order. -/
 def ofInput (decls : List String) (as : List Node) : NodeOrder :=
+  let ids := as.foldl visit {}
   { decl := decls.zipIdx.foldl (fun m (x, i) => if m.contains x then m else m.insert x i) {},
-    ids := as.foldl visit {} }
+    ids := ids, inputSize := ids.size }
 
 end NodeOrder
 

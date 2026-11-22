@@ -27,9 +27,15 @@ speculative scope) and conflicts. `sat-uflra-*` combine UF and arithmetic:
 a split of the care graph (`COMBINATION_SPLIT`) that arithmetic then refutes
 (`sat-uflra-split-unsat`), and a model with the values of arithmetic for the
 classes of the equality engine (`sat-uflra-model`); `sat-uflia-split*` the
-same over integers. `sat-dtlia-*` have datatypes with integer fields: values
+same over integers. `sat-dtlia-*` have datatypes with integer fields (`sat-dtlia-fresh-dependent`: a
+fresh value that a constructor term depends on): values
 of arithmetic applications evaluated from their arguments (`sat-dtlia-model`),
 fresh values of datatypes with integer fields (`sat-dtlia-fresh`), datatypes'
 split skipped after arithmetic's lemma (`sat-dtlia-needcheck`), and a shared
 disequality that rewrites to `true` (`sat-dtlia-constant-fact`). With `--proofs`,
 the refutation of each `unsat` is also checked by Ethos.
+
+The `*-unate-*` cases check the order of the disjuncts of unate lemmas, which
+is cvc5's order of node ids (`NodeOrder`): of the nodes a rewrite creates
+(`sat-uflia-unate-rewrite`), and of an equality split into two inequalities,
+over integers (`sat-lia-unate-split`) and over reals (`sat-lra-unate-split`).

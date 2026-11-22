@@ -142,14 +142,21 @@ def orCert : Node → Option LinCert
   | .app (.kind .OR) cs => clauseCert cs
   | _ => none
 
-/-- `proveOr`: `(or la lb)`, its disjuncts ordered by node id. -/
+/-- `proveOr`: `(or la lb)`, its disjuncts ordered by node id: by the order of
+the input and its rewriting (`NodeOrder`), then, for the nodes created later,
+by first occurrence (`ageOf`). -/
 def proveOr (a b : Nat) : ArithM Node := do
   let s ← get
   let la := (s.constraint a).literal.get!
   let lb := (s.constraint b).literal.get!
   let ia ← ageOf la
   let ib ← ageOf lb
-  return if ia < ib then .app (.kind .OR) #[la, lb] else .app (.kind .OR) #[lb, la]
+  let key (l : Node) (age : Nat) : Nat × Nat := match s.opts.order.id? l with
+    | some i => (0, i)
+    | none => (1, age)
+  let (ka, kb) := (key la ia, key lb ib)
+  let lt := ka.1 < kb.1 || (ka.1 == kb.1 && ka.2 < kb.2)
+  return if lt then .app (.kind .OR) #[la, lb] else .app (.kind .OR) #[lb, la]
 
 /-- `implies`: `a ⇒ b`. -/
 def implies (a b : Nat) : ArithM Node := do proveOr ((← get).constraint a).negation b

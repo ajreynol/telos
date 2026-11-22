@@ -72,6 +72,26 @@ def engineAssertions (as : List Node) (opts : Preprocess.PPOptions) (preprocess 
     | .app (.kind .AND) cs => if 2 ≤ cs.size then cs.toList.dropLast else [.app (.kind .AND) cs]
     | n => [n]
 
+/-- The assertions given to the engine (`engineAssertions`), and the order of
+the engine: the nodes that preprocessing created come after the input's, in
+the order the pipeline's certificate creates them (`certNodes`). One run of
+the preprocessor gives both. -/
+def preprocessed (as : List Node) (opts : Preprocess.PPOptions) (preprocess : Bool)
+    (o : NodeOrder := {}) : List Node × NodeOrder :=
+  if as.isEmpty || !preprocess then (as, o) else
+    let p := Preprocess.preprocessCert as opts o
+    let out := match p.1 with
+      | .app (.kind .AND) cs => if 2 ≤ cs.size then cs.toList.dropLast else [.app (.kind .AND) cs]
+      | n => [n]
+    (out, if o.decl.isEmpty && o.ids.isEmpty then o else
+      let ns := Profile.time "order" (fun _ => "certNodes") fun _ => certNodes #[] p.2
+      Profile.time "order" (fun _ => "add") fun _ => ns.foldl NodeOrder.add o)
+
+theorem preprocessed_fst (as : List Node) (opts : Preprocess.PPOptions) (pp : Bool) (o : NodeOrder) :
+    (preprocessed as opts pp o).1 = engineAssertions as opts pp o := by
+  unfold preprocessed engineAssertions
+  split <;> rfl
+
 /-- The definitions of the variables that preprocessing solved (`x := t`), from
 the pipeline's definitions slot. -/
 def engineDefs (as : List Node) (opts : Preprocess.PPOptions) (preprocess : Bool)
@@ -131,7 +151,7 @@ def useSat (cfg : Solver.Config) (out : List Node) (viaSat : Bool) : Bool :=
 /-- cvc5's node ids, approximated, for the rewriter (`inputOrder`) when
 imitating cvc5's order; else the structural order. -/
 def orderFor (cvc5Order : Bool) (sc : Script) (as : List Node) : NodeOrder :=
-  if cvc5Order then inputOrder sc as else {}
+  if cvc5Order then Profile.time "order" (fun _ => "input") fun _ => inputOrder sc as else {}
 
 /-- Solve the assertions of `sc`: the assertions given to the engine, and the
 engine's result. A conjunction of literals goes to the engine alone
@@ -145,12 +165,15 @@ def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Boo
   let theories ← enabledTheories (sc.logic.getD "ALL")
   let (opts, as) ← ppInput sc u
   let order := orderFor cvc5Order sc as
-  let out := engineAssertions as opts preprocess order
+  let pre := preprocessed as opts preprocess order
+  let out := pre.1
+  -- the order of the engine, with the nodes that preprocessing created
+  let engOrder := pre.2
   let named (n : Node) : String :=
     (substSkolems ((namedSkolems sc.dtNames out).map fun (k, v, _) => (k, v)) n).toSmtLibLet sc.dtNames
   let cfg : Solver.Config := { theories, termBased := opts.termBased, eeEvents, wantProof, cvc5Order,
-                                arith := { Solver.arithOptionsOf (sc.logic.getD "ALL") with order },
-                                order,
+                                arith := { Solver.arithOptionsOf (sc.logic.getD "ALL") with order := engOrder },
+                                order := engOrder,
                                 decision := Solver.decisionModeOf (sc.logic.getD "ALL") (u.decision <|> sc.decision),
                                 declOrder := (sc.symbols.flatMap (·.names)).zipIdx.foldl
                                   (fun m (x, i) => m.insert x i) {} }

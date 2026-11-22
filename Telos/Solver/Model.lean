@@ -729,8 +729,19 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
   for r in reps do
     if let some v := value 64 {} r then
       if (dtRep r).isSome then used := used.push v
-  -- a fresh value for each class without a constructor term
+  -- a fresh value for each class without a constructor term, which makes no
+  -- two classes equal that were not (the classes whose values depend on it,
+  -- such as `(cons x t)` for a fresh `t`, included)
+  let dtReps := reps.filter fun r => (dtRep r).isSome
+  let collisions (fresh : Std.HashMap Nat MVal) : Nat := Id.run do
+    let vs := dtReps.filterMap (value 64 fresh)
+    let mut seen : Array MVal := #[]
+    let mut k := 0
+    for v in vs do
+      if seen.contains v then k := k + 1 else seen := seen.push v
+    return k
   let mut fresh : Std.HashMap Nat MVal := {}
+  let mut base := collisions fresh
   for r in reps do
     if cons.contains r || virtual.contains r then continue
     let some (s, dd) := dtRep r | continue
@@ -742,8 +753,11 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
       for c in allowed do
         if let some v := consValueAt 16 s dd c k then
           if !used.contains v then
-            found := some v
-            break
+            let n := collisions (fresh.insert r v)
+            if n ≤ base then
+              found := some v
+              base := n
+              break
     if let some v := found then
       fresh := fresh.insert r v
       used := used.push v

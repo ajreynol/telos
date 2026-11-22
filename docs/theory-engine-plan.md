@@ -818,34 +818,49 @@ cvc5 makes some choices by node id, which telos cannot reproduce:
   for.
 
 **`NodeOrder`** (`Telos/Core/Node/NodeOrder.lean`) approximates the ids as
-cvc5's parser creates them: the declared constants in order of declaration,
-then the subterms of the input assertions in order of first occurrence
-(children first, left to right); a term created later comes after them, and
-two such terms are in the structural order (`Node.lt`). Built once from the
-input (`Frontend.inputOrder`), it is passed to the rewriter (the arithmetic
-rewriter's `monoLt`), so to every preprocessing pass that rewrites, to the
-engine's rewriting of lemmas and atoms, and to the linear solver
-(`normalizedVariablePart`, the Diophantine solver's order). It is untrusted:
-`StaticProc.arithNorm` carries the order, and its proof
-(`arithNorm_provesEq`) holds for every order, since sorting is a
-permutation. The certificates' own rewrites (`EqProof.rw`) keep the
-structural order: they relate two terms through a common normal form. It
-costs one pass over the input and a hash lookup per comparison (within the
-noise on 2,500-assertion inputs). On the fuzz sets it raised the agreement of
-the events from 166 to 196 of 200 (uflra), 164 to 195 and 165 to 190 (uflia,
-seeds 1 and 9), 186 to 196 and 184 to 189 (dtlia), and left uf, dt, lra and
-lia unchanged (their sums have only declared constants, whose order of
-declaration is also their structural order there).
+cvc5 creates them:
+- the declared constants in order of declaration, then the subterms of the
+  input assertions in order of first occurrence (children first, left to
+  right), as the parser creates them (`Frontend.inputOrder`). The rewriter
+  uses this order during preprocessing (the arithmetic rewriter's `monoLt`:
+  the monomials of a sum, so the sign of a normalized inequality and the
+  variable an equality is solved for);
+- then the nodes that preprocessing creates, in the order its certificate
+  creates them (`certNodes`: the result of each step; below an operator, the
+  children's nodes, then the rebuilt application), for the engine: its
+  rewriting of lemmas and atoms, and the linear solver (`proveOr`, the order of
+  the disjuncts of unate lemmas, which falls back to the solver's own order of
+  first occurrence for nodes created later; `normalizedVariablePart`; the
+  Diophantine solver's order). One run of the preprocessor gives both the
+  assertions and this order (`Frontend.preprocessed`);
+- a term not in the table comes after those in it, and two such terms are in
+  the structural order (`Node.lt`).
 
-`cvc5-deterministic-order.patch` makes the first two follow the order of the
-equality engine and of discovery. It is no slower: a vector instead of a
-set. The third is the rewriter's normal form, and is left alone.
+cvc5's arithmetic is mixed: its rewriter writes an integral constant of a real
+term as an integer, so its `(>= s 2)` is not the parser's (or a pass's)
+`(>= s 2.0)`, which telos cannot tell apart. A node is looked up by the node
+cvc5's rewriter builds for it (`cvx`), numbered when a step's result or a
+rewritten child has an arithmetic shape. So in QF_LRA, where `static-rewrite`
+splits `(= s 2.0)` into `(and (<= s 2.0) (>= s 2.0))`, the rewritten
+`(>= (- s) -2)` comes before `(>= s 2)`, which the rewriter builds later from
+`(>= s 2.0)`; in QF_LIA the split's `(>= s 4)` is already cvc5's node, and
+comes before the `(not (>= s 5))` of `(<= s 4)` (both checked on cvc5 with
+variants). An input atom the rewriter leaves unchanged keeps its id of the
+input (cvc5 builds its node in the first `rewrite` pass, a little later).
 
-`cvc5-theory-events-ids.patch` (on top of `cvc5-theory-events.patch`) adds
-`-o theory-events-ids`, which prints `(node-id t id)` for each class of the
-central equality engine and each atom registered. With it, a replay can make
-cvc5's choices exactly: orient equalities, order the splits, order the
-explanations. It changes nothing in cvc5's behaviour.
+It is untrusted: `StaticProc.arithNorm` carries the order, and its proof
+(`arithNorm_provesEq`) holds for every order, since sorting is a permutation.
+The certificates' own rewrites (`EqProof.rw`) keep the structural order: they
+relate two terms through a common normal form. It costs a pass over the input
+and one over the preprocessing certificate (35 ms on 2,500-assertion inputs,
+of 350 ms), and a hash lookup per comparison.
+
+On the fuzz sets (`fuzz-solve.py --sat`), the events agree with cvc5's on: uf
+150/150, lra 149/150, lia 150/150 (from 134), uflra 197/200 (from 166), uflia
+199/200 and 195/200 (seeds 1 and 9, from 164 and 165), dtlia 198/200 and
+192/200 (seed 9 with size 8, from 186 and 184); dt 141/150 and dt `--bool`
+77/100 are unchanged (their differences are not arithmetic). The preprocessor
+agrees with cvc5's on 8 more of 300 `fuzz-pp.py --mixed` benchmarks.
 
 ### Certified `unsat`
 
@@ -1208,12 +1223,12 @@ core is about 13k lines of C++: `theory_arith_private.cpp` (6k),
    applied to them (`getInstCons`), and integer and real fields count as
    infinite for fresh datatype values. QF_UFLIA (`--theory uflia`) and
    datatypes with integer fields (`--theory dtlia`): with cvc5's node ids
-   approximated (`NodeOrder`, "Node order" in Stage 5), the events of 95–98%
-   of the benchmarks agree; the rest are the order of unate lemmas' disjuncts,
-   explanations, and the orientation of equalities with constants that
-   preprocessing made. Two dtlia benchmarks (seed 1, s137; seed 9, size 8,
-   s85) answer `unknown` because the combined model does not satisfy the
-   input (with or without `NodeOrder`). cvc5's record of the literals given to the theories
+   approximated (`NodeOrder`, "Node order" in Stage 5), the events of 96–99%
+   of the benchmarks agree, and every answer. A fresh datatype value is
+   chosen so that it makes no two classes equal that were not, counting the
+   classes whose values depend on it (`(icons x (itl l))` for a fresh
+   `(itl l)`): before, `m` could get the value of `(icons x (itl l))`
+   although they are disequal, and the model check answered `unknown`. cvc5's record of the literals given to the theories
    (`markPropagation`) is keyed by the literal; telos also takes the flipped
    equality as given, while the orientation is approximate.
 5. Later: nonlinear arithmetic (`nl-ext`).
@@ -1436,10 +1451,13 @@ disequality's split), so that its atoms are preregistered before the check goes
 on, as cvc5's `TheoryEngine::lemma` does; and the Diophantine solver orders two
 skolems by node id (approximated by first occurrence), as `VarList::cmp` does.
 Certificates use the rewritten lemma's literals, and a disequality split may
-be of integers. On 200 benchmarks each, QF_LRA with `ite` terms differs from
-cvc5 only in the order of unate lemmas' disjuncts (173 agree; 146 with
-clauses); QF_LIA in that order and in 6 cuts or branches (151 agree), every
-`unsat` certified.
+be of integers. On 200 benchmarks each (`--sat`), with `NodeOrder`, QF_LRA
+with `ite` terms agrees with cvc5 on 164 (139 with clauses) and QF_LIA on 158,
+every `unsat` certified. Most of the rest is the order of the disjuncts of the
+unate lemmas of a split equality between a purification skolem and a constant
+(`(= k 0)`): cvc5's `(>= k 0)` comes before its `(>= (- k) 0)`, unlike for
+`(= (+ x y) 2)`, which `NodeOrder` does not explain yet; and the orientation of
+such equalities (`(= 0 k)` where cvc5 has `(= k 0)`).
 
 Not yet:
 - at a conflict at decision level 0, cvc5's MiniSat finalizes its proof
@@ -1448,8 +1466,6 @@ Not yet:
   fact, silently (`explainLevelZero`). An arithmetic propagation of a long
   row that a level-0 refutation uses shows the difference;
 - the random skipping of long rows in propagation;
-- the order of unate lemmas' disjuncts where cvc5's node ids differ from the
-  order of first occurrence (above);
 - the Diophantine solver's decomposition lemmas (`exportDioDecompositions` is
   off) and restarts after `maxCutsInContext` (65535) cuts.
 

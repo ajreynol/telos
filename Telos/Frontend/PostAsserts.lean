@@ -127,9 +127,47 @@ def ppInput (sc : Script) (u : Preprocess.UserOptions) :
     | .error e => throw s!"{e}: {a.source}"
   return (opts, as)
 
+/-- A Boolean connective other than `not`: its applications are not compared
+by id. -/
+def connective : Op → Bool
+  | .kind k => k == .AND || k == .OR || k == .IMPLIES || k == .XOR || k == .ITE
+  | _ => false
+
+/-- The nodes a certified rewrite creates, in order (as cvc5's rewriter would
+create them): the result of each step, and for a rewrite below an operator,
+the children's nodes, then the rebuilt application. -/
+def certNodes {n m : Node} (acc : Array Node) : Certified n m → Array Node
+  | .refl _ => acc
+  | @Certified.step _ k _ _ _ r => certNodes (NodeOrder.pushCvx (acc.push k) k) r
+  | @Certified.static _ k _ _ _ r => certNodes (NodeOrder.pushCvx (acc.push k) k) r
+  | @Certified.semantic _ k _ _ _ r => certNodes (acc.push k) r
+  | @Certified.tri _ k _ _ _ _ r => certNodes (acc.push k) r
+  | @Certified.congrArg op cs _ i c' _ _ _ hc r =>
+    let acc := NodeOrder.pushCvx (certNodes acc hc) c'
+    -- a rebuilt conjunction (of the pipeline, say) has no id of interest, and
+    -- building it again for each conjunct would be quadratic
+    certNodes (if connective op then acc else acc.push (.app op (cs.set i c'))) r
+  | @Certified.congr op cs ds _ hsize _ _ hc r =>
+    -- each child rewritten, then the node cvc5's rewriter builds for it
+    -- (`cvx`), if it changed; then the application, if a child changed
+    -- (sizes, not arrays, are kept, so that `acc` is updated in place; an
+    -- unchanged child is skipped, its certificate not looked up)
+    let n₀ := acc.size
+    let acc := (List.finRange cs.size).foldl (fun acc j =>
+      let d := ds[j.1]'(hsize ▸ j.2)
+      if cs[j.1] == d then acc else
+      let n := acc.size
+      let acc := certNodes acc (hc j.1 j.2)
+      if acc.size == n then acc else NodeOrder.pushCvx acc d) acc
+    certNodes (if connective op || acc.size == n₀ then acc else acc.push (.app op ds)) r
+  | @Certified.congrBody k vs _ body' _ pats _ _ hc r =>
+    certNodes ((certNodes acc hc).push (.app (.kind k) ⟨vs :: body' :: pats⟩)) r
+
 /-- cvc5's node ids for the script `sc` with the assertions `as`,
 approximated (`NodeOrder`): the declared symbols, then the terms of the
-assertions in the order cvc5's parser creates them. -/
+assertions in the order cvc5's parser creates them. The nodes that
+preprocessing creates are added from its certificate (`certNodes`,
+`Frontend.preprocessed`). -/
 def inputOrder (sc : Script) (as : List Node) : NodeOrder :=
   NodeOrder.ofInput (sc.symbols.flatMap (·.names)) as
 
