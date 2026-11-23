@@ -21,7 +21,9 @@ import Telos.Solver.StringsLemma
 import Telos.Solver.QuantLemma
 import Telos.Solver.Theory.Arith.Solver
 import Telos.Solver.NlLemma
+import Telos.Solver.Unknown
 import Telos.Solver.Decision
+import Telos.Preprocess.Passes.TheoryPreprocess
 
 /-!
 # The theory engine, on conjunctions of literals
@@ -355,6 +357,16 @@ structure State where
   arith : Arith.State := {}
   /-- The nonlinear extension (`Telos/Solver/Theory/Arith/Nl/`). -/
   nl : Arith.Nl.NlState := {}
+  /-- The theory and inference id of each lemma and conflict sent, and the
+  label of each source of clauses (for the diagnosis of a certificate that
+  does not check). -/
+  lemmaIds : Std.HashMap Key String := {}
+  srcLabels : Std.HashMap Nat String := {}
+  /-- cvc5's `TheoryPreprocessor` for lemmas (`preprocessLemma`), for the whole
+  run: its cache and the terms it purified. -/
+  tpp : Preprocess.TppState := {}
+  /-- The theory and id of the last `modelUnsound` event. -/
+  modelUnsoundWhy : Option (String × String) := none
   /-- The model of arithmetic as the nonlinear extension repaired it, at its
   last full-effort check (`d_arithModelCache`). -/
   nlModel : Option (Array (Node × Rat)) := none
@@ -508,11 +520,18 @@ became active (its local assertions). -/
   lemmasAdded : Bool := false
   /-- Something the SAT solver cannot be given (a literal with no SAT
   literal): the answer is then `unknown`. -/
-  satError : Option String := none
+  satError : Option Unknown := none
 
 abbrev EngineM := ReaderT Config (StateM State)
 
 def emit (e : Event) : EngineM Unit := do
+  -- (the lemmas' and conflicts' theories and ids, to name those whose clauses
+  -- lack a certificate, `SatSource` labels)
+  match e with
+  | .lemma _ T id lem => modify fun s => { s with lemmaIds := s.lemmaIds.insert ⟨lem⟩ s!"{T.name} {id}" }
+  | .conflict _ T id exp => modify fun s => { s with lemmaIds := s.lemmaIds.insert ⟨exp⟩ s!"{T.name} {id} (conflict)" }
+  | .modelUnsound _ T id => modify fun s => { s with modelUnsoundWhy := some (T.name, id) }
+  | _ => pure ()
   if (← read).events then modify fun s => { s with events := s.events.push e }
 
 def level : EngineM Nat := do return (← get).level
@@ -874,7 +893,7 @@ def withArith (x : Arith.ArithM α) : EngineM α := do
     if deferring then modify fun s => { s with arithDeferred := s.arithDeferred.push o }
     else arithOutput o
   if let some why := st.unsupported then
-    modify fun s => { s with satError := s.satError <|> some s!"arithmetic: {why}" }
+    modify fun s => { s with satError := s.satError <|> some (.unsupported s!"arithmetic: {why}") }
   return a
 
 /-- The theory that owns a type (`Theory::theoryOf(TypeNode)`). -/
@@ -1069,6 +1088,28 @@ def skolemOfDefinition (f : Node) : Option Node :=
     if isPurifySkolem a && a.typeHint == some .boolean then some a
     else if isPurifySkolem b && b.typeHint == some .boolean then some b else none
   | _ => none
+
+/-- The lemma has what term formula removal purifies: a non-Boolean `ite`, or
+a Boolean term (not a constant) inside a term. -/
+partial def hasTermFormula (n : Node) (inTerm : Bool := false) : Bool :=
+  (n.getKind == .ITE && n.typeHint != some .boolean) ||
+  (inTerm && n.typeHint == some .boolean && !n.isConst && !isPurifySkolem n) ||
+  (!n.getKind.isQuantifier &&
+    n.getChildren.any (hasTermFormula · (inTerm || Preprocess.hasNestedTermChildren n)))
+
+/-- `TheoryPreprocessor::preprocessLemma`: the lemma with its term formulas
+removed (and the theories' `ppRewrite`), certified; the lemmas of the
+skolems it introduced, each with a proof of `(F, true)` (`skolem_intro`,
+`ite_eq`); and the CPC proof of `(= lem lem')`. -/
+def lemmaPreprocess (lem : Node) : EngineM (Node × Array (Node × Option EqProof) × Option (List Eo.CCmd)) := do
+  let st ← modifyGet fun s => (s.tpp, { s with tpp := {} })
+  let st := { st with order := (← read).order }
+  let (r, st) := (Preprocess.preprocessAssertion lem).run st
+  let lems := st.allLemmas
+  modify fun s => { s with tpp := { st with allLemmas := #[] } }
+  let skl := lems.map fun l =>
+    (l.1, (Proof.cmdsOf l).map fun cs => EqProof.symm (.valid (Node.eqNode Node.mkTrue l.1) cs))
+  return (r.1, skl, if r.1 == lem then none else Proof.cmdsOf r)
 
 /-- `SkolemDefManager::notifyAsserted`: the definitions of the skolems of an
 asserted literal that were not active, now active. -/
@@ -1563,6 +1604,8 @@ partial def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (p
             | some (A, q) => (A.map negate, some (.theory A q))
             | none => (lits.map negate, none)
           newSatSource (.derived (#[main] ++ (← stepClauses exp (steps.filter (·.arith)))))
+    let lbl := ((← get).lemmaIds.get? ⟨lem⟩).getD "a theory conflict"
+    modify fun s => { s with srcLabels := s.srcLabels.insert src lbl }
     withCnf (Cnf.convertAndAssert (cnfHostWith notifySatLiteral c) (EE.mkAnd exp) false (negated := true) src)
     -- (`PropEngine::assertLemmasInternal` notifies the decision engine)
     modify fun s => { s with decisionQueue := s.decisionQueue.push (Node.notNode (EE.mkAnd exp)) }
@@ -1573,6 +1616,11 @@ partial def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (p
     let ids := (← get).ee.nodeIds
     let lem := if c.cvc5Order && !(match kind with | some .quant => true | _ => false) then
       orientEqs ids lem c.declOrder else lem
+    -- `TheoryPreprocessor::preprocessLemma`, when the lemma has term formulas
+    -- (not for arithmetic's, which have none)
+    let isArith := match kind with | some (.arith _) => true | _ => false
+    let (lemF, skLems, tppCmds) ← if !isArith && hasTermFormula lem then lemmaPreprocess lem
+      else pure (lem, #[], none)
     -- the formula's proof, from the lemma's
     let src ← match kind with
       | some (.arith p) =>
@@ -1597,10 +1645,24 @@ partial def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (p
           let main := (lits₀, some (SatProof.Just.arith (lits₀.map negate) p))
           newSatSource (.derived (#[main] ++ (rel.filterMap id).map fun (d, j) => (d, some j)))
       | _ =>
-        let cert := proof.bind (DtLemma.forFormula lem₀ lem) |>.map (lem, ·)
+        -- through the preprocessing, if any: `(= lem lemF)` by its CPC proof
+        let cert := proof.bind (DtLemma.forFormula lem₀ lem) |>.bind fun q =>
+          if lemF == lem then some (lem, q)
+          else tppCmds.map fun cs => (lemF, .trans (.symm (.valid (Node.eqNode lem lemF) cs)) q)
         newSatSource (.lemma cert)
-    withCnf (Cnf.convertAndAssert (cnfHostWith notifySatLiteral c) lem false (src := src))
-    modify fun s => { s with decisionQueue := s.decisionQueue.push lem }
+    let lbl := ((← get).lemmaIds.get? ⟨lem₀⟩).getD "a theory lemma"
+    modify fun s => { s with srcLabels := s.srcLabels.insert src lbl }
+    withCnf (Cnf.convertAndAssert (cnfHostWith notifySatLiteral c) lemF false (src := src))
+    modify fun s => { s with decisionQueue := s.decisionQueue.push lemF }
+    -- the skolems' lemmas (`assertLemmasInternal`): skolem definitions of the
+    -- decision engine, which waits until they are relevant
+    for (F, q) in skLems do
+      let ssrc ← newSatSource (.lemma (q.map (F, ·)))
+      modify fun s => { s with srcLabels := s.srcLabels.insert ssrc s!"{lbl} (a skolem's lemma)" }
+      withCnf (Cnf.convertAndAssert (cnfHostWith notifySatLiteral c) F false (src := ssrc))
+      match skolemOfDefinition F with
+      | some k => if c.decision != .internal then modify fun s => { s with skDefs := s.skDefs.insert ⟨k⟩ F }
+      | none => modify fun s => { s with decisionQueue := s.decisionQueue.push F }
 
 /-- `TheoryEngine::lemma`, after the event: the lemma, preprocessed (rewritten),
 goes to the CNF stream, which preregisters its new atoms. -/
@@ -2342,9 +2404,12 @@ def replay (c : Config) (inputs : List Input) : Array Event × Nat :=
 structure Result where
   answer : Answer
   events : Array Event
-  /-- Why an `unsat` of the engine was not certified, and so answered
-  `unknown`. -/
-  uncertified : Option String := none
+  /-- Why the answer is `unknown` (`Telos/Solver/Unknown.lean`). -/
+  why : Option Unknown := none
+  /-- Why a `sat` answer rests on the model check alone (a part of cvc5 a
+  theory does not port): a model that does not satisfy the input is then that
+  gap, not a failure of the certificate. -/
+  restsOnModel : Option Unknown := none
   /-- The certificate of an `unsat` answer. -/
   cert : Option (Array Node × EqProof) := none
   /-- The `unsat` was certified by a certificate, not by the verified
@@ -2432,6 +2497,12 @@ def Pending.event (k : Nat) (exp : Array Node) : Pending → Event
   | .strings id _ => .conflict k .THEORY_STRINGS id (EE.mkAnd exp)
   | .quant => .conflict k .THEORY_QUANTIFIERS "" (EE.mkAnd exp)
 
+/-- Why the engine alone answered `unknown`, if it did. -/
+def incompleteOf (a : Answer) (s : State) : Option Unknown :=
+  if a != .unknown then none
+  else if s.lemmaSent then some .needsSat
+  else some (.notPorted s!"the engine alone does not solve {", ".intercalate (s.used.toList.map (·.name))}")
+
 /-- Run `solve` on `lits`. An `unsat` answer stands only if it is certified:
 by the verified explanation of its conflict (`certifyV`), or else by a
 certificate that refutes `lits` (`certifies`); it is `unknown` otherwise. The
@@ -2439,7 +2510,8 @@ explanation of the conflict, the last event, is computed here. -/
 def run (c : Config) (lits : List Node) : Result :=
   let c := { c with defer := true }
   let (a, s) := ((solve lits).run c).run {}
-  if a != .unsat then { answer := a, events := s.events, ee := s.ee, asserted := s.asserted } else
+  if a != .unsat then { answer := a, events := s.events, ee := s.ee, asserted := s.asserted,
+                         why := incompleteOf a s } else
   match s.pending with
   | some p =>
     match certifyV lits s.ee p with
@@ -2458,16 +2530,16 @@ def run (c : Config) (lits : List Node) : Result :=
         | .dt _ => s.events
         | _ => s.events.push (p.event s.level exp)
       match cert with
-      | .error e => { answer := .unknown, events, uncertified := some e }
+      | .error e => { answer := .unknown, events, why := some (.missingProof [e]) }
       | .ok (A, q) =>
         if certifies lits A q then { answer := .unsat, events, cert := some (A, q), byCertificate := true }
-        else { answer := .unknown, events, uncertified := some "the certificate does not check" }
+        else { answer := .unknown, events, why := some (.certBroken "the certificate does not check") }
   | none =>
     match s.cert with
-    | .error e => { answer := .unknown, events := s.events, uncertified := some e }
+    | .error e => { answer := .unknown, events := s.events, why := some (.missingProof [e]) }
     | .ok (A, q) =>
       if certifies lits A q then { answer := .unsat, events := s.events, cert := some (A, q) }
-      else { answer := .unknown, events := s.events, uncertified := some "the certificate does not check" }
+      else { answer := .unknown, events := s.events, why := some (.certBroken "the certificate does not check") }
 
 /-- **An `unsat` answer is certified**: by the verified explanation of a
 conflict, or by a certificate that refutes the literals.

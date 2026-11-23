@@ -2243,12 +2243,12 @@ theorem solveScript_sat (sc : Script) (u : UserOptions) (ee pp wp co vs : Bool)
   · simp at h
   · -- whichever solved it, the answer is `sat` only if the model satisfies the
     -- input
-    have key : ∀ (o : NodeOrder) (r0 : Solver.Result) (msg : String), (if r0.answer != .sat then r0 else
+    have key : ∀ (o : NodeOrder) (r0 : Solver.Result) (w : Solver.Unknown), (if r0.answer != .sat then r0 else
         if (Solver.buildModel r0.ee (Solver.relevantTerms r0.asserted) (Solver.freeConsts as)
             (engineDefs as opts pp o) as r0.arithModel r0.asserted).satisfies as then
           { r0 with model := some (Solver.buildModel r0.ee (Solver.relevantTerms r0.asserted)
             (Solver.freeConsts as) (engineDefs as opts pp o) as r0.arithModel r0.asserted) }
-        else { r0 with answer := .unknown, uncertified := some msg }).answer = .sat →
+        else rejectModel r0 w).answer = .sat →
         ∃ M, model_wf M ∧ TrueIn M (inputNode as).toEo := by
       intro _ r0 _ hs
       split at hs
@@ -2257,7 +2257,8 @@ theorem solveScript_sat (sc : Script) (u : UserOptions) (ee pp wp co vs : Bool)
       · split at hs
         · rename_i hsat
           exact ⟨_, Solver.satisfies_sound hsat⟩
-        · simp at hs
+        · rw [rejectModel_answer] at hs
+          cases hs
     split at h
     · try simp only [Except.ok.injEq, Prod.mk.injEq] at h
       obtain ⟨rfl, rfl⟩ := h

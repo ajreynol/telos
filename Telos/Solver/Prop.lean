@@ -184,7 +184,7 @@ def cnfState : PropM Cnf.State := do return (← getThe PropState).eng.cnf
 
 /-- A failure: the answer will be `unknown`. -/
 def satFail (why : String) : PropM Unit :=
-  onEngine (modify fun s => { s with satError := s.satError <|> some why })
+  onEngine (modify fun s => { s with satError := s.satError <|> some (.internal why) })
 
 /-- The SAT literal of a node. -/
 def satLit (n : Node) : PropM Lit := do
@@ -395,6 +395,47 @@ def buildCert (p : PropState) : Option SatProof.Cert := do
   let learned ← p.learned.mapM toNodes
   return { clauses, learned := derived ++ learned }
 
+/-- The clauses that `buildCert` leaves out for want of a certificate, with the
+label of their source (the theory and inference of the lemma or conflict):
+for the diagnosis of a certificate that does not check. -/
+def unjustifiedClauses (p : PropState) : Array (SatProof.Clause × String) := Id.run do
+  let toNodes (c : Array Lit) : Option SatProof.Clause := c.mapM (Cnf.getNode? p.eng.cnf)
+  let label (k : Nat) : String := (p.eng.srcLabels.get? k).getD s!"source {k}"
+  let hasCert (k : Nat) : Bool :=
+    match p.eng.satSources[k]? with
+    | some (.input _) | some (.theory (some _)) | some (.lemma (some _)) | some (.arith (some _)) => true
+    | _ => false
+  let mut out := #[]
+  for (c, tag) in p.base do
+    match tag with
+    | .cnf (.src k) =>
+      match p.eng.satSources[k]? with
+      | some (.derived aux) =>
+        for (d, j) in aux do
+          if j.isNone then out := out.push (d, label k)
+      | _ => if !hasCert k then if let some c := toNodes c then out := out.push (c, label k)
+    | .theory none => if let some c := toNodes c then out := out.push (c, "a theory conflict")
+    | .derived aux =>
+      for (d, j) in aux do
+        if j.isNone then out := out.push (d, "a propagation's explanation")
+    | _ => pure ()
+  return out
+
+/-- Why a certificate of a refutation does not check, with its code:
+`cert-unsat/bad-justification` (a clause's certificate does not check),
+`cert-unsat/missing-proof` (the refutation follows once the clauses with no
+certificate are added: their lemmas need proofs), else `cert-unsat/broken`. -/
+def diagnoseCert (p : PropState) (inputs : Array Node) (cert : SatProof.Cert) : Unknown :=
+  let why := cert.why inputs
+  if why.startsWith "the justification" || why.startsWith "a clause has" then .badJustification why
+  else
+    let un := unjustifiedClauses p
+    let db := cert.clauses.map (·.1) ++ un.map (·.1)
+    if SatProof.checkLearned db cert.learned.toList then
+      let labels := un.foldl (fun (acc : Array String) (_, l) => if acc.contains l then acc else acc.push l) #[]
+      .missingProof labels.toList
+    else .certBroken why
+
 /-- **Solve formulas** with the SAT solver and the theory engine. A `sat`
 answer comes with the engine's state, from which the caller builds a model
 (and checks it); the SAT solver's Boolean variables are added to the
@@ -406,7 +447,7 @@ def runSat (c : Config) (formulas : List Node) : Result :=
   let (r, p) := ((propSolve formulas).run c).run {}
   let e := p.eng
   if let some why := e.satError then
-    { answer := .unknown, events := e.events, uncertified := some why }
+    { answer := .unknown, events := e.events, why := some why }
   else match r with
   | .sat =>
     -- the values of the SAT solver's own Boolean variables
@@ -428,7 +469,25 @@ def runSat (c : Config) (formulas : List Node) : Result :=
         (T == .THEORY_STRINGS && c.stringsSolver && !e.ee.strings.incomplete) ||
         -- quantifiers, unless the model is unsound
         (T == .THEORY_QUANTIFIERS && c.quantSolver)) && e.modelUnsoundAt.isNone
-    { answer := if solved then .sat else .unknown, events := e.events, ee := e.ee,
+    let unsolved := e.used.toList.filter fun T =>
+      !([.THEORY_UF, .THEORY_DATATYPES, .THEORY_SETS].contains T && (c.eeSolver || arithOk) ||
+        (T == .THEORY_ARITH && arithOk) ||
+        (T == .THEORY_STRINGS && c.stringsSolver && !e.ee.strings.incomplete) ||
+        (T == .THEORY_QUANTIFIERS && c.quantSolver))
+    let why : Option Unknown := if solved then none
+      else if e.modelUnsoundAt.isSome then
+        match e.modelUnsoundWhy with
+        | some (T, id) => match IncompleteId.ofName? id with
+          | some i => some (.intentional T i)
+          | none => some (.notPorted s!"{T} set the model unsound ({id}), which cvc5 does not")
+        | none => some (.internal "the model is unsound, and no theory said so")
+      else if e.ee.strings.incomplete && unsolved.contains .THEORY_STRINGS then
+        some (.notPorted "strings: the last full check met terms of a stage not ported (extended functions, loops)")
+      else some (.notPorted s!"not solved: {", ".intercalate (unsolved.map (·.name))}")
+    let restsOnModel : Option Unknown := if e.ee.strings.negMemUnchecked then
+        some (.notPorted "strings: negative memberships are not unfolded (STRINGS_RE_UNFOLD_NEG)")
+      else none
+    { answer := if solved then .sat else .unknown, events := e.events, ee := e.ee, why, restsOnModel,
       asserted := e.asserted ++ bools,
       arithModel := if !arithOk then #[] else
         let lin := Arith.modelValues e.arith
@@ -447,10 +506,10 @@ def runSat (c : Config) (formulas : List Node) : Result :=
     | some cert =>
       if cert.check inputs then { answer := .unsat, events := e.events, satCert := some (inputs, cert) }
       else { answer := .unknown, events := e.events,
-             uncertified := some s!"the certificate of the SAT solver's refutation does not check: {cert.why inputs}" }
+             why := some (diagnoseCert p inputs cert) }
     | none => { answer := .unknown, events := e.events,
-                uncertified := some "a clause of the SAT solver's refutation has no literals of terms" }
-  | .unknown => { answer := .unknown, events := e.events }
+                why := some (.internal "a clause of the SAT solver's refutation has no literals of terms") }
+  | .unknown => { answer := .unknown, events := e.events, why := some (.internal "the SAT solver stopped") }
 
 end Telos.Solver
 

@@ -1794,7 +1794,10 @@ def checkUnfold (mems : Array (Node × Array Node)) : EEM Unit := do
   let all ← sortNodes (mems.foldl (fun acc (_, as) => acc ++ as) #[])
   for assertion in all do
     let (pol, atom) := atomOf assertion
-    if !pol then continue
+    if !pol then
+      -- (unfolded at last call by cvc5, which telos does not port)
+      modifyStrings fun s => { s with negMemUnchecked := true }
+      continue
     if (← st).reduced.contains ⟨assertion⟩ then continue
     match reduceRegExpPos atom with
     | some conc =>
@@ -1941,7 +1944,7 @@ strategy, repeated while it had something pending and sent no lemma.
 def postCheck (full : Bool) (relevant : Std.HashSet Key) (needCheck : m Bool) : m Unit := do
   doPendingFacts ops
   if !full || (← ops.run inConflict) || (← needCheck) then return
-  ops.run (modifyStrings fun s => { s with incomplete := false, chk := { relevant } })
+  ops.run (modifyStrings fun s => { s with incomplete := false, negMemUnchecked := false, chk := { relevant } })
   -- a relevant term of a later stage: the check is incomplete
   if relevant.toArray.any (fun k => laterKind k.node.getKind) then
     ops.run (modifyStrings fun s => { s with incomplete := true })

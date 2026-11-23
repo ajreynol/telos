@@ -175,6 +175,10 @@ structure State where
   /-- A step was incomplete (`setModelUnsound`) in the last full-effort check:
   a `sat` answer is not justified. -/
   incomplete : Bool := false
+  /-- The last full-effort check left a negative membership unprocessed
+  (`STRINGS_RE_UNFOLD_NEG`, at last call, is not ported): a `sat` answer rests
+  on the model check. -/
+  negMemUnchecked : Bool := false
   /-- `d_numCurrentFacts`, `d_numCurrentLemmas` since the last `reset`. -/
   sentFacts : Nat := 0
   sentLemmas : Nat := 0

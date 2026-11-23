@@ -194,6 +194,24 @@ See [`docs/design.md`](docs/design.md) for the architecture and roadmap,
 [`docs/solver-plan.md`](docs/solver-plan.md) for the original, broader plan for a
 verified solver, and [`TRUSTED.md`](TRUSTED.md) for what the theorems rely on.
 
+### When telos answers `unknown`
+
+Every `unknown` of `telos --solve` says why, with a code (`Telos/Solver/Unknown.lean`):
+- `intentional`: a theory declared the model incomplete with one of cvc5's
+  own `IncompleteId`s, where cvc5 does (nonlinear arithmetic's `ARITH_NL`,
+  the quantifiers engine's);
+- `not-ported`: a part of cvc5 that telos does not port (a theory or a stage of
+  one, an operator the engine treats as uninterpreted), on which cvc5 would
+  decide;
+- `cert-sat/model-false`, `cert-sat/not-evaluated`: a `sat` whose model makes
+  the input false (a bug), or that the evaluator cannot evaluate (a gap);
+- `cert-unsat/missing-proof` (with the theories and inferences of the lemmas
+  without a certificate that the refutation needs), `cert-unsat/bad-justification`,
+  `cert-unsat/broken` (bugs);
+- `unsupported`, `internal`.
+
+The goal is that only `intentional` remains on the inputs telos supports.
+
 ## Layout
 
 Two Lake projects, so the rewriter and preprocessor build without Mathlib:

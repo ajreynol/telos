@@ -155,7 +155,7 @@ def orderFor (cvc5Order : Bool) (sc : Script) (as : List Node) : NodeOrder :=
 
 /-- Why the model does not satisfy the assertions: the first that is not true,
 and its value. -/
-def modelRejection (N : DtNames) (M : Solver.Model) (as : List Node) : String :=
+def modelRejection (N : DtNames) (M : Solver.Model) (as : List Node) : Solver.Unknown :=
   -- (into conjunctions: the first conjunct that is not true)
   let rec culprit (fuel : Nat) (a : Node) : Node :=
     match fuel, a with
@@ -171,6 +171,9 @@ def modelRejection (N : DtNames) (M : Solver.Model) (as : List Node) : String :=
         | some (.bool false) => "false"
         | some _ => "a non-Boolean value"
         | none => "not evaluated"
+      let isFalse := match M.eval a with
+        | some (.bool false) => true
+        | _ => false
       -- the values of its constants
       let rec showV (v : Solver.MVal) : String := match v with
         | .bool b => toString b
@@ -186,9 +189,50 @@ def modelRejection (N : DtNames) (M : Solver.Model) (as : List Node) : String :=
       let vars := (a.vars.take 12).filterMap fun (x : Node) => match x with
         | .var name T => (M.const name T).map fun v => s!"{name}={showV v}"
         | _ => none
-      s!": {(a.toSmtLibLet N).take 300} is {v} (with {", ".intercalate vars})"
-    | none => if M.tablesOk && M.constsOk then "" else ": its tables or constants are ill-typed"
-  s!"the model does not satisfy the input{why}"
+      (isFalse, s!": {(a.toSmtLibLet N).take 300} is {v} (with {", ".intercalate vars})")
+    | none => if M.tablesOk && M.constsOk then (true, "")
+      else (false, ": its tables or constants are ill-typed")
+  let d := s!"the model does not satisfy the input{why.2}"
+  if why.1 then .modelFalse d else .modelNotEvaluated d
+
+/-- A term of the formulas that the engine does not reason about: it treats
+it as an uninterpreted term, so a `sat` answer rests on the model check alone,
+and a model it cannot evaluate is a gap of the solver, not a failure of its
+certificate. The kinds: tuples (no theory solves them: the datatypes solver
+has their updaters expanded only), `set.choose` (not ported), and equalities
+of regular expressions (the strings solver has memberships only). -/
+partial def unhandledTerm? (fs : List Node) : Option Node := Id.run do
+  let mut seen : Std.HashSet Key := {}
+  let mut work := fs.toArray
+  while !work.isEmpty do
+    let t := work.back!
+    work := work.pop
+    if seen.contains ⟨t⟩ then continue
+    seen := seen.insert ⟨t⟩
+    match t with
+    | .app op cs =>
+      let k := op.getKind
+      if k == .TUPLE || k == .TUPLE_SELECT || k == .TUPLE_UPDATE || k == .SET_CHOOSE then return some t
+      if k == .EQUAL && (cs[0]?.bind Node.typeHint) == some .regExp then return some t
+      if match t.typeHint with | some (.tuple ..) | some .unitTuple => true | _ => false then return some t
+      work := work ++ cs
+    | t => if match t.typeHint with | some (.tuple ..) | some .unitTuple => true | _ => false then return some t
+  return none
+
+/-- Why a model that does not satisfy the input was found: a part of cvc5 that
+a theory does not port, on which the `sat` rested (`restsOnModel`), a term the
+engine does not reason about, or else a failure of the certificate. -/
+def rejectionWhy (N : DtNames) (r : Solver.Result) (M : Solver.Model) (as out : List Node) : Solver.Unknown :=
+  match r.restsOnModel, unhandledTerm? (as ++ out) with
+  | some w, _ => w
+  | none, some t => .notPorted s!"the engine treats {(t.toSmtLibLet N).take 120} as uninterpreted (not ported)"
+  | none, none => modelRejection N M as
+
+/-- A `sat` whose model was rejected, for the reason `w`: `unknown`. -/
+def rejectModel (r : Solver.Result) (w : Solver.Unknown) : Solver.Result :=
+  { r with answer := .unknown, why := some w }
+
+@[simp] theorem rejectModel_answer (r : Solver.Result) (w : Solver.Unknown) : (rejectModel r w).answer = .unknown := rfl
 
 /-- Solve the assertions of `sc`: the assertions given to the engine, and the
 engine's result. A conjunction of literals goes to the engine alone
@@ -219,21 +263,30 @@ def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Boo
     let r := Solver.run cfg lits
     -- the engine alone stops at a lemma (`unknown`, with nothing uncertified):
     -- the SAT solver is then needed
-    pure (if r.answer == .unknown && r.uncertified.isNone && cfg.satSupported then Solver.runSat cfg out else r)
+    pure (if r.answer == .unknown && !(r.why.any Solver.Unknown.isCertFailure) && cfg.satSupported then
+      Solver.runSat cfg out else r)
   -- a `sat` stands only if its model satisfies the input assertions
   let r := if r.answer != .sat then r else
     let M := buildModel r.ee (relevantTerms r.asserted) (freeConsts as) (engineDefs as opts preprocess order) as
       r.arithModel r.asserted
     if M.satisfies as then { r with model := some M }
-    else { r with answer := .unknown, uncertified := some (modelRejection sc.dtNames M as) }
+    else rejectModel r (rejectionWhy sc.dtNames r M as out)
   return (out, r)
+
+/-- Why the answer is `unknown`, with its code (`[code] detail`): it was not
+certified, or the solver did not decide it. -/
+def unknownReason (r : Solver.Result) : Option String :=
+  if r.answer != .unknown then none else
+  match r.why with
+  | some w => some s!"unknown {w.message}"
+  | none => some "unknown [internal] no reason recorded"
 
 /-- Solve the script and give only its answer (no events are recorded), and
 why an answer was not certified, if it was not. -/
 def solveAnswer (sc : Script) (u : Preprocess.UserOptions := {}) (viaSat : Bool := false) :
     Except String (Solver.Answer × Option String) := do
   let (_, r) ← solveScript sc u (viaSat := viaSat) (events := false)
-  return (r.answer, r.uncertified.map fun e => s!"answer not certified ({e}): answering unknown")
+  return (r.answer, unknownReason r)
 
 /-- Preprocess `sc`, solve the result if it is a conjunction of literals, and
 print the events and the answer; also why an `unsat` of the engine was not
@@ -253,8 +306,8 @@ def theoryEvents (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Bo
     match r.cert with
     | some (A, p) => some (renderRefutation sc.names sc.decls A p)
     | none => none
-  let note := match r.uncertified with
-    | some e => some s!"answer not certified ({e}): answering unknown"
+  let note := match r.why with
+    | some w => if r.answer == .unknown && w.code != "needs-sat" then some s!"unknown {w.message}" else none
     | none => if r.byCertificate then some "unsat by certificate (the verified explanation did not apply)" else none
   return ("\n".intercalate (lines ++ [r.answer.name]) ++ "\n", note, proof)
 
