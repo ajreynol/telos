@@ -261,9 +261,12 @@ def nonEmptyLengths : M Unit := do
       if t == emptyStr && s.typeHint == some .string then
         let _ ← rule .string_length_non_empty [] [i]
       else if s == emptyStr && t.typeHint == some .string then
-        let (_, j) ← eqFact (.symm (.assume i))
-        let _ := j
-        pure ()
+        -- `(not (= t ""))` first: the two equalities have the same rewrite
+        let e := Node.eqNode s t
+        let e' := Node.eqNode t s
+        if Telos.rewrite e == Telos.rewrite e' then
+          let (_, j) ← litFact (.trans (.rw e') (.trans (.symm (.rw e)) (.assume i)))
+          let _ ← rule .string_length_non_empty [] [j]
     | _ => pure ()
 
 /-! ## Splitting constants -/

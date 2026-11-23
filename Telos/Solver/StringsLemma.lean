@@ -134,9 +134,13 @@ def prove (id : String) (lem : Node) (o : NodeOrder := {}) : Option EqProof := d
     checked lem (← andIntro lem #[p1, p2])
   | "STRINGS_REGISTER_TERM_ATOMIC", .app (.kind .OR) #[.app (.kind .AND) #[_, .app (.kind .EQUAL) #[n, _]], _] =>
     checked lem (.valid lem [DT.argStep .string_length_pos n])
-  -- a split on a literal, `(or l (not l))`: the rewriter
+  -- a split on a literal, `(or l (not l))`: `split` (or the rewriter)
   | "STRINGS_LEN_SPLIT", _ | "STRINGS_LEN_SPLIT_EMP", _ | "STRINGS_DEQ_LENGTH_SP", _ =>
-    if Telos.rewrite lem == Node.mkTrue then checked lem (.rw lem) else none
+    match lem with
+    | .app (.kind .OR) #[l, .app (.kind .NOT) #[l']] =>
+      if l == l' then checked lem (.valid lem [DT.argStep .split l])
+      else if Telos.rewrite lem == Node.mkTrue then checked lem (.rw lem) else none
+    | _ => if Telos.rewrite lem == Node.mkTrue then checked lem (.rw lem) else none
   -- a core inference, `(=> h conc)`
   | _, .app (.kind .IMPLIES) #[h, conc] =>
     let P := match h with
