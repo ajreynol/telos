@@ -316,7 +316,7 @@ def zero : Node := .const (.integer 0)
 
 /-- The known fact `conc` from the known fact `C` (index `j`): by
 `bridge`, or for `false`, by the rewriter on `C`. -/
-def conclude (C : Node) (j : Nat) (conc : Node) : M Nat := do
+def conclude (C : Node) (j : Nat) (conc : Node) (R : Array Nat := #[]) : M Nat := do
   let pc := atomProof C j
   if conc == Node.mkFalse then
     -- `C` rewrites to `false`
@@ -339,10 +339,152 @@ def conclude (C : Node) (j : Nat) (conc : Node) : M Nat := do
     let contra : EqProof := if pol then .trans (.symm pc) v else .trans (.symm v) pc
     let (_, i) ← litFact (.symm contra)
     return i
-  let some q := bridge C conc | throw "a conclusion that does not bridge"
+  let some q := bridge C conc | do
+    -- by the substitution of the premises `R` in both, then rewriting (cvc5's
+    -- `applyPredTransform`): `(conc, D)` and `(C, D)`
+    if !R.isEmpty then
+      let (dc, qc) ← substRw R conc
+      let (dC, qC) ← substRw R C
+      if dc == dC then
+        let q : Option EqProof := compose qc (qC.map .symm)
+        let (F, i) ← litFact (match q with | some q => .trans q pc | none => pc)
+        if F != conc then throw "a conclusion of another form"
+        return i
+    -- by extended equality rewriting (cvc5's `RW_REWRITE_EQ_EXT`), which Logos
+    -- checks: `(= C C')`, with `C'` the conclusion up to rewriting
+    let .app (.kind .EQUAL) #[_, _] := C | throw "a conclusion that does not bridge"
+    let some r := Preprocess.strEqualityExt C | throw "a conclusion that does not bridge"
+    let C' := r.1
+    if C' != conc && Telos.rewrite C' != Telos.rewrite conc then throw "a conclusion that does not bridge"
+    let some cs := Proof.cmdsOf r | throw "a conclusion that does not bridge"
+    let pEq : EqProof := .valid (Node.eqNode C C') cs
+    -- `(conc, C')`, then `(C', C)`, then `C`
+    let toC' : EqProof := if C' == conc then .symm pEq
+      else .trans (.rw conc) (.trans (.symm (.rw C')) (.symm pEq))
+    let (F, i) ← litFact (.trans toC' pc)
+    if F != conc then throw "a conclusion of another form"
+    return i
   let q := match q with
     | some q => EqProof.trans (.symm q) pc
     | none => pc
+  let (F, i) ← litFact q
+  if F != conc then throw "a conclusion of another form"
+  return i
+
+/-- `t` with its purification skolems replaced by the terms they purify, in
+turn (cvc5's `SkolemManager::getOriginalForm`), and a proof of `(t, t')`,
+each skolem's equality by `skolem_intro`; `none` if `t` has none. -/
+partial def purifyOriginalM (t : Node) : StateM (Std.HashMap Key (Option (EqProof × Node))) (Option (EqProof × Node)) := do
+  if let some r := (← get).get? ⟨t⟩ then return r
+  let r ← match t with
+    | .skolem .PURIFY #[u] =>
+      let pk : EqProof := .valid (Node.eqNode t u) [.step .skolem_intro (.cons t.toEo .nil) .nil]
+      match ← purifyOriginalM u with
+      | some (q, u') => pure (some (.trans pk q, u'))
+      | none => pure (some (pk, u))
+    | .app op cs =>
+      if !op.eoShape.substCongruent then pure none else do
+      let rs ← cs.mapM purifyOriginalM
+      if rs.all Option.isNone then pure none
+      else pure (some (.congAt t (rs.map (·.map (·.1))), .app op ((cs.zip rs).map fun (c, r) => (r.map (·.2)).getD c)))
+    | _ => pure none
+  modify (·.insert ⟨t⟩ r)
+  return r
+
+def purifyOriginal (t : Node) : Option (EqProof × Node) := ((purifyOriginalM t).run {}).1
+
+/-- Whether `x` occurs in `t` (each shared subterm visited once). -/
+def occurs (x t : Node) : Bool := Id.run do
+  let mut seen : Std.HashSet Key := {}
+  let mut work := #[t]
+  while !work.isEmpty do
+    let c := work.back!
+    work := work.pop
+    if c == x then return true
+    if seen.contains ⟨c⟩ then continue
+    seen := seen.insert ⟨c⟩
+    work := work ++ c.getChildren
+  return false
+
+/-- `substRw`, with each equality of `R` used once, in the direction whose side
+occurs in the term (the premises' orientation is the equality engine's, not
+the one the proof needs). -/
+def substRwEither (R : Array Nat) (t : Node) : M (Node × Option EqProof) := do
+  let A := (← get).A
+  let mut cur := t
+  let mut acc : Option EqProof := none
+  let mut used : Array Nat := #[]
+  for _ in [0:R.size + 1] do
+    let mut changed := false
+    for i in R do
+      if used.contains i then continue
+      let some (.app (.kind .EQUAL) #[x, y]) := A[i]? | continue
+      let (x, y, p) : Node × Node × EqProof :=
+        if occurs x cur && !x.isConst then (x, y, .assume i)
+        else if occurs y cur && !y.isConst then (y, x, .symm (.assume i))
+        else (x, y, .assume i)
+      if let some q := substOne x y p cur then
+        let some (_, c') := EqProof.check A q | continue
+        cur := c'
+        acc := compose acc (some q)
+        used := used.push i
+        changed := true
+    if !changed then break
+  let (r, q) := rwProof cur
+  return (r, compose acc q)
+
+/-- Whether `t`, as a tree, has at most `n` nodes (counting stops at `n`). -/
+def treeSizeAtMost (n : Nat) (t : Node) : Bool := Id.run do
+  let mut work := #[t]
+  let mut k := 0
+  while !work.isEmpty do
+    let c := work.back!
+    work := work.pop
+    k := k + 1
+    if k > n then return false
+    work := work ++ c.getChildren
+  return true
+
+/-- The largest expanded conclusion (as a tree) that `byOriginalForms` tries:
+original forms can be exponentially larger than their skolems, when the terms
+of purification skolems contain others. -/
+def originalFormLimit : Nat := 400
+
+/-- The conclusion `conc`, from the premises `R` once their purification
+skolems and its own are replaced by their terms (as cvc5's proofs by
+substitution and rewriting see them), substituted and rewritten. -/
+def byOriginalForms (R : Array Nat) (conc : Node) : M Nat := do
+  let catom := match conc with
+    | .app (.kind .NOT) #[a] => a
+    | a => a
+  if (purifyOriginal catom).isNone then throw "a conclusion that does not rewrite"
+  let A := (← get).A
+  -- the premises' equalities, in original form, as known facts
+  let mut R' : Array Nat := #[]
+  for i in R do
+    let some (.app (.kind .EQUAL) #[a, b]) := A[i]? | continue
+    match purifyOriginal a, purifyOriginal b with
+    | none, none => R' := R'.push i
+    | pa, pb =>
+      let qa := pa.map (·.1)
+      let qb := pb.map (·.1)
+      let q : EqProof := match qa, qb with
+        | some qa, some qb => .trans (.symm qa) (.trans (.assume i) qb)
+        | some qa, none => .trans (.symm qa) (.assume i)
+        | none, some qb => .trans (.assume i) qb
+        | none, none => .assume i
+      let (_, _, j) ← eqFact q
+      R' := R'.push j
+  let (atom, pol) := match conc with
+    | .app (.kind .NOT) #[a] => (a, false)
+    | a => (a, true)
+  -- only a conclusion about purification skolems needs their original forms
+  let some (pq, atom') := purifyOriginal atom | throw "a conclusion that does not rewrite"
+  let pc := some pq
+  if !treeSizeAtMost originalFormLimit atom' then throw "a conclusion that does not rewrite"
+  let (r, q) ← substRw R' atom'
+  if r != Node.mkBool pol then throw "a conclusion that does not rewrite"
+  let some q := compose pc q | throw "a conclusion that does not rewrite"
   let (F, i) ← litFact q
   if F != conc then throw "a conclusion of another form"
   return i
@@ -361,9 +503,11 @@ def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M
       let (atom, pol) := match conc with
         | .app (.kind .NOT) #[a] => (a, false)
         | a => (a, true)
-      let (r, q) ← substRw R atom
-      if r != Node.mkBool pol then throw "a conclusion that does not rewrite"
-      let some q := q | throw "a conclusion that does not rewrite"
+      let (r, q) ← do
+        let (r, q) ← substRw R atom
+        if r == Node.mkBool pol then pure (r, q) else substRwEither R atom
+      if r != Node.mkBool pol then return ← byOriginalForms R conc
+      let some q := q | return ← byOriginalForms R conc
       let (F, i) ← litFact q
       if F != conc then throw "a conclusion of another form"
       return i
@@ -382,10 +526,30 @@ def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M
   let q := compose (qa.map .symm) (compose (some main) qb)
   let (_, _, e₀) ← eqFact (q.getD main)
   if t == s then throw "a main equality that is trivial"
-  if k == .sr then return ← conclude (Node.eqNode t s) e₀ conc
+  if k == .sr then return ← conclude (Node.eqNode t s) e₀ conc R
   -- the common prefix stripped
   let (E, e) ← rule .concat_eq [.node (Node.mkBool rev)] [e₀]
-  if k == .eq then return ← conclude E e conc
+  if k == .eq then
+    return ← tryCatch (conclude E e conc R) fun err => do
+      -- the heads of the same length unified (`concat_unify`), replaced, and
+      -- the common end stripped again, as cvc5's proof does (once: each
+      -- attempt costs a length derivation and a substitution)
+      let mut cur := (E, e)
+      for _ in [0:1] do
+        let .app (.kind .EQUAL) #[t₁, s₁] := cur.1 | throw err
+        let some ht := head? t₁ rev | throw err
+        let some hs := head? s₁ rev | throw err
+        if ht == hs then throw err
+        -- (a constant against a term, whose length the premises fix)
+        if (word? ht).isNone && (word? hs).isNone then throw err
+        let li ← lengthFact R (Node.eqNode (len ht) (len hs))
+        let (_, u) ← rule .concat_unify [.node (Node.mkBool rev)] [cur.2, li]
+        let some qt := substOne ht hs (.assume u) t₁ | throw err
+        let (_, _, e') ← eqFact (.trans (.symm qt) (.assume cur.2))
+        cur ← rule .concat_eq [.node (Node.mkBool rev)] [e']
+        if let .ok i ← tryCatch (Except.ok <$> conclude cur.1 cur.2 conc R) (fun e => pure (.error e)) then
+          return i
+      throw err
   let .app (.kind .EQUAL) #[t₁, s₁] := E | throw "concat_eq without an equality"
   let some ht := head? t₁ rev | throw "no head"
   let some hs := head? s₁ rev | throw "no head"
@@ -404,7 +568,7 @@ def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M
     let some hy := head? y rev | throw "no head"
     let li ← lengthFact R (Node.eqNode (len hx) (len hy))
     let (C, c) ← rule .concat_unify [.node (Node.mkBool rev)] [e₃, li]
-    conclude C c conc
+    conclude C c conc R
   | .csplit | .cprop =>
     -- the non-constant at the head of `t`, the constant at the head of `s`
     let (e, ht, hs) ← if (word? ht).isSome && (word? hs).isNone then do
@@ -416,19 +580,19 @@ def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M
     let li ← lengthFact R (Node.notNode (Node.eqNode (len ht) zero))
     let r := if k == .csplit then CRule.concat_csplit else .concat_cprop
     let (C, c) ← rule r [.node (Node.mkBool rev)] [e, li]
-    conclude C c conc
+    conclude C c conc R
   | .split =>
     let li ← lengthFact R (Node.notNode (Node.eqNode (len ht) (len hs)))
     let (C, c) ← rule .concat_split [.node (Node.mkBool rev)] [e, li]
-    conclude C c conc
+    conclude C c conc R
   | .lprop =>
     let li ← lengthFact R (Node.mkNode .GT #[len ht, len hs])
     let (C, c) ← rule .concat_lprop [.node (Node.mkBool rev)] [e, li]
-    conclude C c conc
+    conclude C c conc R
   | .unify =>
     let li ← lengthFact R (Node.eqNode (len ht) (len hs))
     let (C, c) ← rule .concat_unify [.node (Node.mkBool rev)] [e, li]
-    conclude C c conc
+    conclude C c conc R
   | .eq | .sr => throw "unreachable"
 
 /-- The premises as a formula: their conjunction, or the one premise. -/
