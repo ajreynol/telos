@@ -120,14 +120,10 @@ default build, which CI runs, proves `Telos.rewrite_correct_of_logos`, which
 takes the Logos theorems it uses as the hypothesis `[LogosFacts]`
 (`verification/TelosProofs/Core/LogosFacts.lean`); `TelosFull` proves the instance
 from Logos's proofs. Both builds fail if the theorem they prove uses any axiom
-other than:
+other than `propext`, `Classical.choice` and `Quot.sound`
+(`verification/TelosProofs/Axioms.lean`).
 
-- `propext`, `Classical.choice` and `Quot.sound`; and
-- the auxiliary axioms created by `native_decide` (43 at present). Each asserts
-  that a decision procedure, run as compiled code, returned `true`, so they trust
-  the **Lean compiler** in addition to the kernel. They come from Logos's proofs,
-  which use `native_decide` throughout (577 uses, including its checker core),
-  and enter through Logos's checker soundness proof (every CPC rule) and the
-  congruence lemmas reused from `Cpc/Proofs/RuleSupport/Cong/`, so only into
-  `Telos.rewrite_correct` (`TelosFull`): `rewrite_correct_of_logos` uses none.
-  Trusting them was decided on 2026-11-12.
+In particular, no theorem relies on `native_decide`, whose auxiliary axioms
+would trust the Lean compiler in addition to the kernel. Logos's proofs used it
+when this was first written (trusting it was decided on 2026-11-12); at the
+pinned commit they do not.

@@ -194,11 +194,11 @@ large proofs are printed with shared terms defined once
   terms (`Telos/Core/Node/ToEo.lean`), and the definitions of `Node.Equiv` and
   `Script.satisfiability`. A mistake there makes the theorems true of the wrong
   thing, so they are reviewed as specifications.
-- **Axioms**: Lean's `propext`, `Classical.choice` and `Quot.sound`, and the
-  axioms that `native_decide` introduces in Logos's proofs (which trust the
-  Lean compiler). No `sorry`, no declared axiom; `#assert_axioms` fails the
-  build otherwise (`verification/TelosProofs/Axioms.lean`).
-- **Lean**: the kernel, the compiler and the runtime.
+- **Axioms**: Lean's `propext`, `Classical.choice` and `Quot.sound` only. No
+  `sorry`, no declared axiom, and no `native_decide` (Logos's proofs do not use
+  it); `#assert_axioms` fails the build otherwise
+  (`verification/TelosProofs/Axioms.lean`).
+- **Lean**: the kernel; the compiler and the runtime too, for running telos.
 
 ## What they do not cover
 
