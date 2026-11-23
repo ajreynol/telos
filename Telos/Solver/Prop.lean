@@ -436,6 +436,20 @@ def diagnoseCert (p : PropState) (inputs : Array Node) (cert : SatProof.Cert) : 
       .missingProof labels.toList
     else .certBroken why
 
+/-- A quantified literal with a variable of a type cvc5's counterexample-guided
+instantiation handles (integers, reals, datatypes). -/
+def cegqiApplies (lit : Node) : Bool :=
+  let q := match lit with
+    | .app (.kind .NOT) #[a] => a
+    | a => a
+  match q with
+  | .app (.kind k) cs =>
+    (k == .FORALL || k == .EXISTS) && (cs[0]?.map Node.getChildren |>.getD #[]).any fun v =>
+      match v.typeHint with
+      | some .integer | some .real | some (.datatype ..) => true
+      | _ => false
+  | _ => false
+
 /-- **Solve formulas** with the SAT solver and the theory engine. A `sat`
 answer comes with the engine's state, from which the caller builds a model
 (and checks it); the SAT solver's Boolean variables are added to the
@@ -478,6 +492,12 @@ def runSat (c : Config) (formulas : List Node) : Result :=
       else if e.modelUnsoundAt.isSome then
         match e.modelUnsoundWhy with
         | some (T, id) => match IncompleteId.ofName? id with
+          | some .QUANTIFIERS =>
+            -- cvc5 instantiates quantifiers over arithmetic and datatypes by
+            -- counterexample-guided instantiation, not ported (Stage 10, step 3)
+            if e.quantFacts.any cegqiApplies then
+              some (.notPorted "quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes")
+            else some (.intentional T .QUANTIFIERS)
           | some i => some (.intentional T i)
           | none => some (.notPorted s!"{T} set the model unsound ({id}), which cvc5 does not")
         | none => some (.internal "the model is unsound, and no theory said so")

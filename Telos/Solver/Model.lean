@@ -383,6 +383,22 @@ def chainNil : Kind → SmtType → Option MVal
   | .STRING_CONCAT, .Seq .Char => some (.str [])
   | _, _ => none
 
+/-- `str.substr`, as Logos's `native_seq_extract`. -/
+def strExtract (w : List Nat) (i n : Int) : List Nat :=
+  let len : Int := Int.ofNat w.length
+  if i < 0 || n <= 0 || i >= len then []
+  else (w.drop (Int.toNat i)).take (Int.toNat (min n (len - i)))
+
+/-- Logos's `impl_native_char_to_lower` and `impl_native_char_to_upper`. -/
+def charToLower (c : Nat) : Nat := if 65 ≤ c && c ≤ 90 then c + 32 else c
+def charToUpper (c : Nat) : Nat := if 97 ≤ c && c ≤ 122 then c - 32 else c
+
+/-- `str.to_code` of a string: the code of its one character (clamped, as its
+Logos value has it), else `-1`. -/
+def strCode : List Nat → Int
+  | [c] => Int.ofNat (MVal.clampChar c)
+  | _ => -1
+
 /-- The concatenation of two strings. -/
 def concatV : MVal → MVal → Option MVal
   | .str a, .str b => some (.str (a ++ b))
@@ -465,6 +481,12 @@ def combine (k : Kind) (cs : Array Node) (vs : List MVal) : Option MVal :=
   | .GEQ, [a, b] => leqV b a
   | .TO_REAL, [.int i] => some (.rat i)
   | .STRING_LENGTH, [.str w] => some (.int w.length)
+  | .STRING_TO_CODE, [.str w] => some (.int (strCode w))
+  | .STRING_IS_DIGIT, [.str w] => some (.bool (decide (48 ≤ strCode w) && decide (strCode w ≤ 57)))
+  | .STRING_REV, [.str w] => some (.str w.reverse)
+  | .STRING_SUBSTR, [.str w, .int i, .int n] => some (.str (strExtract w i n))
+  | .STRING_TO_LOWER, [.str w] => some (.str ((w.map MVal.clampChar).map charToLower))
+  | .STRING_TO_UPPER, [.str w] => some (.str ((w.map MVal.clampChar).map charToUpper))
   | .SET_SINGLETON, [x] => some (.sins x (.sempty x.ty))
   | .SET_UNION, [a, b] => setOp a b fun _ => some (b.insAll a.elems)
   | .SET_INTER, [a, b] => setOp a b fun T =>
@@ -522,9 +544,11 @@ def dedupVals : List MVal → List MVal
   | v :: vs => let r := dedupVals vs; if r.any (v.veq ·) then r else v :: r
 
 /-- The witnesses tried for a bound variable of Logos type `T`: the values of
-that type in the model (of its constants, in its tables, and the Booleans). -/
+that type in the model (of its constants, in its tables, and the Booleans),
+and small defaults of the arithmetic types and strings. -/
 def candidates (M : Model) (T : SmtType) : List MVal :=
-  let vs := [MVal.bool true, .bool false] ++ M.consts.toList.map (·.2.2) ++
+  let vs := [MVal.bool true, .bool false, .int 0, .int 1, .int (-1), .rat 0, .rat 1, .str []] ++
+    M.consts.toList.map (·.2.2) ++
     M.funs.toList.flatMap fun t => t.default :: t.entries.flatMap fun (a, b) => [a, b]
   dedupVals (vs.filter (·.ty == T))
 
