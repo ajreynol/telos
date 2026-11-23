@@ -172,6 +172,10 @@ structure DtNames where
   /-- For a parametric datatype, by name: its number of parameters, and the
   field types of its constructors as declared, over the parameters. -/
   template : String → Option (Nat × List (List TypeTemplate)) := fun _ => none
+  /-- An instance of a parametric datatype (`.par_k_D`) as the script writes
+  it, `(D T₁ … Tₙ)`, when a declared symbol has it: for an instance that its
+  fields do not determine (a parameter that no field uses). -/
+  parType : String → Option String := fun _ => none
 
 /-- The datatype `D` that a Logos instance name `.par_k_D` instantiates (Logos's
 parser names the instances of parametric datatypes so). -/
@@ -230,7 +234,7 @@ partial def TypeNode.toSmtLibWith (N : DtNames) : TypeNode → String
     match parInstanceOf s with
     | some d =>
       match N.instArgs 8 T with
-      | some [] | none => d
+      | some [] | none => (N.parType s).getD d
       | some as => "(" ++ String.intercalate " " (d :: as.map (·.toSmtLibWith N)) ++ ")"
     | none => s
   | .typeRef s => DtNames.baseName s

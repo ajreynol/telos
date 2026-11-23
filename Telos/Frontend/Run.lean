@@ -44,6 +44,9 @@ structure RunOptions where
   dumpProofs : Bool := false
   /-- `--proof`: the CPC proof of each `simplify`. -/
   simplifyProofs : Bool := false
+  /-- `--proof-conclusions`: full proofs state the clauses' conclusions (for
+  debugging: the checker then reports the first that differs). -/
+  proofConclusions : Bool := false
 
 /-- What running a script printed: on standard output, on standard error, and
 whether there was an error. -/
@@ -89,7 +92,7 @@ def runScript (sc : Script) (o : RunOptions) : RunOutput := Id.run do
           | some M => res := res.print (printModel sc M)
           | none => res := res.error "no model"
         if o.dumpProofs && r.answer == .unsat then
-          match fullProof sc o.pp out r with
+          match fullProof sc o.pp out r o.proofConclusions with
           | .ok p => res := res.print p
           | .error e => res := res.error s!"no proof: {e}"
     | .getModel =>
@@ -117,7 +120,7 @@ def runScript (sc : Script) (o : RunOptions) : RunOutput := Id.run do
         | some (.ok (out, _)), some r =>
           if r.answer != .unsat then
             res := res.error "cannot get proof unless immediately preceded by UNSAT response"
-          else match fullProof sc o.pp out r with
+          else match fullProof sc o.pp out r o.proofConclusions with
             | .ok p => res := res.print p
             | .error e => res := res.error s!"no proof: {e}"
         | _, _ => res := res.error "cannot get proof unless immediately preceded by UNSAT response"

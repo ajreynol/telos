@@ -95,7 +95,18 @@ partial def sharedTerm (N : Eunoia.Names) (refs : Std.HashMap Key Nat)
   if let some t := (← get).terms.get? ⟨n⟩ then return t
   let (cs, rebuild) : Array Node × (List Term → Term) := match n with
     | .skolem id cs => (cs, id.toEo)
-    | .app op cs => (cs, op.eoShape.toEo)
+    -- (a typed nil from the type of the first child, not of its term here,
+    -- which may be the name of a defined term: some terms' types depend on
+    -- the structure of their arguments)
+    | .app op cs => (cs, fun ts => match op.eoShape with
+      | .rightAssocNil o .typed =>
+        if 2 ≤ ts.length then eoRightAssocNil o (typedNilOfType o (cs[0]!.smtTypeF)) ts else .Stuck
+      | .typedList o =>
+        if 2 ≤ ts.length then
+          eoApp1 o (eoRightAssocNil UserOp._at__at_TypedList_cons
+            (typedNilOfType UserOp._at__at_TypedList_cons (cs[0]!.smtTypeF)) ts)
+        else .Stuck
+      | sh => sh.toEo ts)
     | _ => (#[], fun _ => n.toEo)
   let body ← if cs.isEmpty then pure n.toEo else do
     let ts ← cs.toList.mapM (sharedTerm N refs bound)
@@ -159,13 +170,16 @@ def renderShared (N : Eunoia.Names) (decls : List String) (steps : Array Step) (
 cvc5's `get-proof` prints a refutation: the given declarations, the definitions
 of the shared terms, the first `inputs` steps (whose one argument is a formula)
 as `assume`s, the others as steps, the last stating its conclusion, `false`. -/
-def renderRefutation (N : Eunoia.Names) (decls : List String) (steps : Array Step) (inputs : Nat) :
-    String := Id.run do
-  let (steps, _) := (steps.mapM fun st => do return { st with args := ← st.args.mapM internArg } :
+def renderRefutation (N : Eunoia.Names) (decls : List String) (steps : Array Step) (inputs : Nat)
+    (concls : Std.HashMap Nat Node := {}) : String := Id.run do
+  let ((steps, concls), _) := (do
+      let ss ← steps.mapM fun st => do return { st with args := ← st.args.mapM internArg }
+      let cs ← concls.toList.mapM fun (i, n) => do return (i, ← intern n)
+      return (ss, (cs.foldl (fun m (i, n) => m.insert i n) {} : Std.HashMap Nat Node)) :
       StateM (Std.HashMap Key Node) _).run {}
-  let roots := steps.flatMap fun st => st.args.toArray.filterMap fun
+  let roots := steps.flatMap (fun st => st.args.toArray.filterMap fun
     | .node n => some n
-    | .term _ => none
+    | .term _ => none) ++ concls.toArray.map (·.2)
   let ((), sh) := (roots.forM countRefs).run {}
   let ((), bound) := (roots.forM fun r => do let _ ← hasBound r).run {}
   let mut ps : PrintState := {}
@@ -188,7 +202,13 @@ def renderRefutation (N : Eunoia.Names) (decls : List String) (steps : Array Ste
     let prems := if st.premises.isEmpty then ""
       else s!" :premises ({" ".intercalate (st.premises.map name)})"
     let argStr := if args.isEmpty then "" else s!" :args ({" ".intercalate args.toList})"
-    let concl := if i + 1 == steps.size then " false" else ""
+    let concl ← if i + 1 == steps.size then pure " false" else
+      match concls.get? i with
+      | some c => do
+        let (x, ps') := pr (.node c) ps
+        ps := ps'
+        pure s!" {x}"
+      | none => pure ""
     lines := lines.push <| match st.kind with
       | .assume => s!"(assume-push {name i} {args[0]?.getD "false"})"
       | .pop => s!"(step-pop {name i}{concl} :rule {ruleName st.rule}{prems}{argStr})"

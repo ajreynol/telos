@@ -18,7 +18,9 @@ order, printing what cvc5 prints (`Telos/Frontend/Run.lean`): the answer of
 `get-proof`, from the input assertions to `false` (with `--produce-proofs`, or
 `(set-option :produce-proofs true)`); the rewrite of `(simplify t)`. With
 `--dump-models` (`--dump-proofs`), the model (the proof) is printed after each
-`sat` (`unsat`), as cvc5 does. `-o post-asserts` and `-o theory-events` are
+`sat` (`unsat`), as cvc5 does; with `--proof-conclusions`, the full proof
+states the conclusion of each clause, as telos has it (for debugging: the
+checker then reports the first that differs). `-o post-asserts` and `-o theory-events` are
 `--post-asserts` and `--theory-events`.
 
 For `(simplify t)`, telos prints the rewrite of `t`, as cvc5 does. With `--proof`,
@@ -98,12 +100,14 @@ structure Options where
   dumpProofs : Bool := false
   produceModels : Bool := false
   produceProofs : Bool := false
+  proofConclusions : Bool := false
 
 def parseArgs : List String → Options → Except String Options
   | [], o => .ok o
   | "--proof" :: rest, o => parseArgs rest { o with proof := true }
   | "--dump-models" :: rest, o => parseArgs rest { o with dumpModels := true }
   | "--dump-proofs" :: rest, o => parseArgs rest { o with dumpProofs := true }
+  | "--proof-conclusions" :: rest, o => parseArgs rest { o with proofConclusions := true }
   | "--produce-models" :: rest, o => parseArgs rest { o with produceModels := true }
   | "--produce-proofs" :: rest, o => parseArgs rest { o with produceProofs := true }
   | "-o" :: "post-asserts" :: rest, o => parseArgs rest { o with postAsserts := true }
@@ -182,7 +186,8 @@ def main (args : List String) : IO UInt32 := do
       produceProofs := opts.produceProofs
       dumpModels := opts.dumpModels
       dumpProofs := opts.dumpProofs
-      simplifyProofs := opts.proof }
+      simplifyProofs := opts.proof
+      proofConclusions := opts.proofConclusions }
     let r := runScript sc ro
     for l in r.out do IO.println l
     for l in r.err do IO.eprintln l

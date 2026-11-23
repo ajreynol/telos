@@ -84,6 +84,8 @@ def isSimpleSymbolChar (c : Char) : Bool :=
 /-- A symbol, quoted with `|…|` unless it is a simple symbol. -/
 def symbol (s : String) : String :=
   if !s.isEmpty && s.all isSimpleSymbolChar && !(s.front.isDigit) then s
+  -- (a name read as written, quoted already)
+  else if 2 ≤ s.length && s.front == '|' && s.back == '|' then s
   else "|" ++ s ++ "|"
 
 /-- An SMT-LIB string literal for a list of code points. -/
@@ -135,7 +137,7 @@ partial def printIn (N : Names) (bound : List Term) (t : Term) : String :=
     | some base =>
       match TypeNode.ofEo t >>= N.dt.instArgs 8 with
       | some (a :: as) => "(" ++ " ".intercalate (symbol base :: (a :: as).map (print N ∘ TypeNode.toEo)) ++ ")"
-      | _ => symbol base
+      | _ => (N.dt.parType d).getD (symbol base)
     | none => symbol d
   | .DatatypeTypeRef s => symbol (DtNames.baseName (nativeStringToString s))
   -- A nullary constructor of a parametric datatype is written with its type,

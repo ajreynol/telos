@@ -12,7 +12,7 @@
 (assert true)
 (assert true)
 (assert true)
-(assert (and (= "" x) (not (= "" y))))
+(assert (and (= x "") (not (= y ""))))
 (assert (= (str.len @purify_1) 1))
 (assert (ite (and (>= n 0) (not (>= n 196608))) (= n (str.to_code @purify_1)) (= "" @purify_1)))
 (check-sat)

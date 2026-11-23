@@ -11,7 +11,7 @@
 (assert (or c (= #b1001 by)))
 (assert c)
 (assert true)
-(assert (let ((_let_1 (str.substr s 0 1))) (let ((_let_2 (= "" s))) (or c _let_2 (not (or _let_2 (= "a" _let_1) (= "b" _let_1)))))))
+(assert (let ((_let_1 (str.substr s 0 1))) (let ((_let_2 (= s ""))) (or c _let_2 (not (or _let_2 (= _let_1 "a") (= _let_1 "b")))))))
 (assert true)
 (assert true)
 (assert (= (set.singleton (set.choose S)) (set.union (set.singleton 2) (set.singleton 0))))

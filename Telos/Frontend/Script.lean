@@ -619,6 +619,28 @@ def readScript (input : String) (cvc5Output : Bool := false) : Except String Scr
     match toNode constName t with
     | .ok n => some (src, n)
     | .error _ => none
+  -- the instances of parametric datatypes, as the declarations write them
+  let declTypes : Std.HashMap String Sexp := ss.foldl (init := {}) fun m s => match s with
+    | .expr [.atom "declare-const", .atom x, ty] => m.insert x ty
+    | .expr [.atom "declare-fun", .atom x, .expr args, ret] =>
+      m.insert x (if args.isEmpty then ret else .expr (.atom "->" :: args ++ [ret]))
+    | _ => m
+  let rec instTypes (T : TypeNode) (ty : Sexp) (acc : List (String × String)) : List (String × String) :=
+    match T, ty with
+    | .function a r, .expr (.atom "->" :: a' :: rest) =>
+      let r' := match rest with
+        | [r'] => r'
+        | rs => .expr (.atom "->" :: rs)
+      instTypes r r' (instTypes a a' acc)
+    | .datatype s _, ty => if (parInstanceOf s).isSome then (s, ty.serialize) :: acc else acc
+    | _, _ => acc
+  termination_by sizeOf T
+  let parTypes : List (String × String) := declared.foldl (init := []) fun acc (x, n) =>
+    match n.getType, declTypes.get? x with
+    | some T, some ty => instTypes T ty acc
+    | _, _ => acc
+  let dtNames := { dtNames with parType := fun s => (parTypes.find? (·.1 == s)).map (·.2) }
+  let names : Eunoia.Names := { names with dt := dtNames }
   let byItem : Std.HashMap Nat Query := read.foldl (init := {}) fun m (((k, src), t), i) =>
     if k == .simplify || k == .value then m.insert i (queryOf i src t) else m
   let commands := cmds.toList.map fun

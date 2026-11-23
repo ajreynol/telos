@@ -191,8 +191,8 @@ def defClausesOf (n : Node) : EmitM (List DClause) := do
     if !isBoolEq e then return [] else
     return [← ax .cnf_equiv_pos1 [.node n] [nn, Node.notNode a, b],
             ← ax .cnf_equiv_pos2 [.node n] [nn, a, Node.notNode b],
-            ← ax .cnf_equiv_neg1 [.node n] [n, Node.notNode a, Node.notNode b],
-            ← ax .cnf_equiv_neg2 [.node n] [n, a, b]]
+            ← ax .cnf_equiv_neg1 [.node n] [n, a, b],
+            ← ax .cnf_equiv_neg2 [.node n] [n, Node.notNode a, Node.notNode b]]
   | .app (.kind .IMPLIES) #[a, b] =>
     return [← ax .cnf_implies_pos [.node n] [nn, Node.notNode a, b],
             ← ax .cnf_implies_neg1 [.node n] [n, a],
@@ -353,8 +353,10 @@ def pivotOf : Node → Node × Bool
 /-- **A clause by trivial resolution**: unit propagation from the negations of
 the literals of `c` over the clauses `db` (as `rup` does), then
 `chain_m_resolution` from the conflict back through the reasons of the
-literals it needs; `none` if propagation finds no conflict. -/
-def resolveRup (db : Array DClause) (c : Array Node) : EmitM (Option Nat) := do
+literals it needs; `none` if propagation finds no conflict. The clause
+derived is the part of `c` that the resolution keeps (a subset: CPC's
+`chain_m_resolution` weakens to a clause of two literals or more only). -/
+def resolveRup (db : Array DClause) (c : Array Node) : EmitM (Option DClause) := do
   -- the true literals, with the clause that propagated each (`none`: assumed)
   let mut val : Std.HashMap Key (Option Nat) := {}
   for l in c do val := val.insert ⟨negate l⟩ none
@@ -387,14 +389,15 @@ def resolveRup (db : Array DClause) (c : Array Node) : EmitM (Option Nat) := do
     lits := lits.push L
     for l in db[r]!.lits do
       if l != x then need := need.insert ⟨l⟩
-  let target := clauseNode c
+  -- the literals left: those of `c` that are needed
+  let kept := c.filter fun l => need.contains ⟨l⟩
+  let target := clauseNode kept
   if pols.isEmpty then
     -- the conflict clause is in `c`
-    if db[k]!.lits == c then return some db[k]!.pos
-    return some (← push ⟨.reordering, [.node target], [db[k]!.pos], .step⟩)
+    return some db[k]!
   let listOf (xs : List Term) : Term := xs.foldr (fun x t => Term.Apply (Term.Apply .__eo_List_cons x) t) .__eo_List_nil
-  return some (← push ⟨.chain_m_resolution,
-    [.node target, .term (listOf pols.toList), .term (listOf (lits.toList.map Node.toEo))], prems.toList, .step⟩)
+  return some ⟨kept, ← push ⟨.chain_m_resolution,
+    [.node target, .term (listOf pols.toList), .term (listOf (lits.toList.map Node.toEo))], prems.toList, .step⟩⟩
 
 /-- The facts of the literals of the conjunction-of-literals assertions `out`
 at `qs`, by `and_elim`. -/
@@ -411,7 +414,7 @@ def literalFacts (out : List Node) (qs : List Nat) : EmitM (Std.HashMap Key Nat)
 /-- **The steps of the full proof**, and the number of input assumptions at
 their head. -/
 def fullSteps (sc : Script) (u : Preprocess.UserOptions) (out : List Node) (r : Solver.Result) :
-    Except String (Array Step × Nat) := do
+    Except String (Array Step × Nat × Std.HashMap Nat Node) := do
   let (opts, as) ← ppInput sc u
   if as.isEmpty then throw "no assertions"
   let p := Preprocess.preprocessCert as opts (inputOrder sc as)
@@ -421,7 +424,7 @@ def fullSteps (sc : Script) (u : Preprocess.UserOptions) (out : List Node) (r : 
     | .app (.kind .AND) cs => if 2 ≤ cs.size then cs.toList.dropLast else [O]
     | n => [n]
   if outs != out then throw "the preprocessed assertions are not the solver's"
-  let act : EmitM Unit := do
+  let act : EmitM (Array DClause) := do
     -- 1. the input
     let mut aq := #[]
     for a in as do aq := aq.push (← push ⟨.refl, [.node a], [], .step⟩)
@@ -446,7 +449,7 @@ def fullSteps (sc : Script) (u : Preprocess.UserOptions) (out : List Node) (r : 
         | none => throw s!"a literal of the refutation that is not asserted: {a.toSmtLib}"
       let c ← emitEq A pos ep
       let _ ← falseOf c
-      return
+      return #[]
     -- 4. a refutation of the SAT solver
     let some (inputs, cert) := r.satCert | throw "an unsat answer without a certificate"
     let mut inputFacts : Std.HashMap Nat Nat := {}
@@ -479,21 +482,26 @@ def fullSteps (sc : Script) (u : Preprocess.UserOptions) (out : List Node) (r : 
         db := db ++ (← inputClausesOf F false q).toArray
       | .arith A lc => db := db.push (← conflictClauseBy A fun pos => refuteLin A pos lc)
     for c in cert.learned do
-      let some q ← resolveRup db c | throw "a learned clause that does not follow by unit propagation"
-      db := db.push ⟨c, q⟩
-    let some q ← resolveRup db #[] | throw "the empty clause does not follow by unit propagation"
+      let some d ← resolveRup db c | throw "a learned clause that does not follow by unit propagation"
+      db := db.push d
+      -- (the empty clause already)
+      if d.lits.isEmpty then break
+    let some ⟨_, q⟩ ← resolveRup db #[] | throw "the empty clause does not follow by unit propagation"
     -- (the last step concludes `false`)
     let st ← get
     if st.steps.size == 0 || q + 1 != st.steps.size then
       let _ ← push ⟨.reordering, [.node Node.mkFalse], [q], .step⟩
-  let ((), st) ← act.run {}
-  return (st.steps, as.length)
+    return db
+  let (db, st) ← act.run {}
+  -- the clauses' conclusions, as telos has them (stated with `conclusions`)
+  let concls := db.foldl (fun m d => m.insert d.pos (clauseNode d.lits)) {}
+  return (st.steps, as.length, concls)
 
 /-- **The CPC proof of an `unsat` answer** `r` of the script `sc`, from its
 input assertions to `false`, printed as cvc5's `get-proof` prints one. -/
-def fullProof (sc : Script) (u : Preprocess.UserOptions) (out : List Node) (r : Solver.Result) :
-    Except String String := do
-  let (steps, n) ← fullSteps sc u out r
-  return Proof.renderRefutation sc.names sc.decls steps n
+def fullProof (sc : Script) (u : Preprocess.UserOptions) (out : List Node) (r : Solver.Result)
+    (conclusions : Bool := false) : Except String String := do
+  let (steps, n, concls) ← fullSteps sc u out r
+  return Proof.renderRefutation sc.names sc.decls steps n (if conclusions then concls else {})
 
 end Telos.Frontend
