@@ -50,7 +50,7 @@ def expectedToFail : List String :=
   ["arith-eq-elim-real", "arith-eq-elim-int",
    "bool-not-true", "bool-not-false", "ite-neg-branch", "eq-cond-deq",
    -- premises that need constants (tested on concrete instances in
-   -- test/examples/arith.smt2)
+   -- test/rewriter/arith.smt2)
    "arith-int-div-total", "arith-int-mod-total", "arith-int-eq-conflict",
    "arith-int-div-total-neg", "arith-int-mod-total-neg", "arith-mod-over-mod-1",
    "arith-mod-over-mod", "arith-mod-over-mod-mult",
@@ -71,7 +71,7 @@ def expectedToFail : List String :=
    -- arrays, with indices and elements of other types (tested below)
    "array-read-over-write", "array-read-over-write2", "array-store-overwrite",
    "array-store-self", "array-read-over-write-split", "array-store-swap",
-   -- an element and sets of it (`test/examples/sets.smt2`)
+   -- an element and sets of it (`test/rewriter/sets.smt2`)
    "sets-insert-elim", "sets-inter-member", "sets-minus-member", "sets-union-member"]
 
 /-- Rules that fail on fresh variables with empty lists only: the left-hand side
@@ -83,7 +83,7 @@ def expectedToFailEmptyLists : List String :=
 
 /-- Whether a pattern has integer parameters (indices, widths, bit-vector
 literals), which fresh variables cannot instantiate. Such rules are tested on
-concrete terms (`test/examples/bv.smt2`) and by fuzzing. -/
+concrete terms (`test/rewriter/bv.smt2`) and by fuzzing. -/
 partial def patHasIntParams : Pat → Bool
   | .indexed .. | .bvLit .. => true
   | .app _ ps => ps.any patHasIntParams

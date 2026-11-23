@@ -63,7 +63,7 @@ and backtracking, and their outputs are compared. The random benchmarks then
 have disjunctions (also with `--clauses`).
 
 With `--recorded`, cvc5 is not run: each FILE.smt2 is compared with the trace
-recorded next to it, FILE.cvc5 (as in `test/solve/`).
+recorded next to it, FILE.cvc5 (as in `test/theory-events/`).
 
 Usage:
   scripts/fuzz-solve.py [--cvc5 PATH] [--seed N] [--count N] [--size N] [--show N] [--ee] [--cvc5-pp]

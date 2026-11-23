@@ -1,0 +1,11 @@
+; SAT and congruence: a theory conflict as a clause
+(set-logic QF_UF)
+(declare-sort U 0)
+(declare-fun f (U) U)
+(declare-const a U)
+(declare-const b U)
+(declare-const c U)
+(assert (or (= a b) (= a c)))
+(assert (not (= (f a) (f b))))
+(assert (not (= (f a) (f c))))
+(check-sat)

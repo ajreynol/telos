@@ -45,7 +45,7 @@ jobs:
         run: python3 scripts/gen-rules.py --check
       - name: Example scripts give the expected output
         run: |
-          for f in test/examples/*.smt2; do
+          for f in test/rewriter/*.smt2; do
             .lake/build/bin/telos "$f" | diff - "${f%.smt2}.expected"
           done
       - name: Preprocessing gives the expected output, with proofs that Logos accepts
@@ -58,11 +58,17 @@ jobs:
 
       - name: The theory engine gives the expected events
         run: |
-          for f in test/solve/*.smt2; do
+          for f in test/theory-events/*.smt2; do
             (.lake/build/bin/telos --theory-events "$f" 2>&1 || true) | diff - "${f%.smt2}.expected"
           done
           # the same events as cvc5's recorded traces
-          scripts/fuzz-solve.py --recorded --strict test/solve/*.smt2
+          scripts/fuzz-solve.py --recorded --strict test/theory-events/*.smt2
+
+      - name: Solving scripts gives the expected answers, models and errors
+        run: |
+          for f in test/solve/*.smt2; do
+            .lake/build/bin/telos $(sed -n 's/^; telos: //p' "$f") "$f" | diff - "${f%.smt2}.expected"
+          done
 
       - name: Replaying cvc5's recorded traces gives the same events
         run: |

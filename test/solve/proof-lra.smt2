@@ -1,0 +1,11 @@
+; linear real arithmetic: a Farkas combination
+(set-logic QF_LRA)
+(declare-const x Real)
+(declare-const y Real)
+(declare-const z Real)
+(assert (or (> (+ x y) 4.0) (> z 10.0)))
+(assert (< x 1.0))
+(assert (< y 2.5))
+(assert (<= (+ z (* 2 x)) 3.0))
+(assert (>= x 0.0))
+(check-sat)

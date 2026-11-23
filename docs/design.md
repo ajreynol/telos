@@ -537,7 +537,7 @@ The uses at run time now, to replace:
 4. ~~Booleans.~~ `TheoryBoolRewriter` is ported (`Telos/Rewriter/Theory/Bool.lean`, tests
    in `TelosTests/Bool.lean`).
    - ~~UF.~~ `TheoryUfRewriter` is ported for the kinds telos has
-     (`Telos/Rewriter/Theory/UF.lean`, `test/examples/uf.smt2`): equalities over
+     (`Telos/Rewriter/Theory/UF.lean`, `test/rewriter/uf.smt2`): equalities over
      uninterpreted sorts and functions (`eq-refl`, orientation by `eq-symm`),
      and `distinct` (the new kind `DISTINCT`: `distinct-card-conflict`,
      `distinct-false`, `distinct-true`, and `distinct-elim` to pairwise
@@ -562,7 +562,7 @@ The uses at run time now, to replace:
    - The reference is a recent build of cvc5 (the rates in this document are
      against `bab27e4f17`, 2026-10-06, and, where they say so, against the
      branch of cvc5 PR #13167, `f155e68cee`, which fills the proof holes of
-     `test/cvc5-holes/`), passed as `--cvc5 PATH`
+     `test/rewriter/cvc5-holes/`), passed as `--cvc5 PATH`
      or `CVC5=PATH`; `fuzz.py` prints the version it used. A release is not
      enough: cvc5's rewriter changes, and telos ports the current one.
 6. **Arithmetic, then bit-vectors.** Arithmetic is started.
@@ -680,7 +680,7 @@ The uses at run time now, to replace:
    - cvc5 bug found while porting: `RewriteRule<NegMult>::applies` never holds
      (`cvc5-negmult-bug.md`).
 7. **Arrays.** `TheoryArraysRewriter` is ported (`Telos/Rewriter/Theory/Arrays.lean`,
-   `test/examples/arrays.smt2`) for `select`, `store` and array equalities,
+   `test/rewriter/arrays.smt2`) for `select`, `store` and array equalities,
    with the six RARE rules for arrays (`array-read-over-write`,
    `array-read-over-write2`, `array-store-overwrite`, `array-store-self`,
    `array-store-swap`, and `array-read-over-write-split`, generated but not
@@ -820,7 +820,7 @@ The uses at run time now, to replace:
      orientation of equalities, no semantic disagreements; Ethos accepts all
      proofs. The other modes are unchanged.
    - cvc5's proof holes found by fuzzing (`scripts/find-holes.py`) have
-     reproducers in `test/cvc5-holes/`.
+     reproducers in `test/rewriter/cvc5-holes/`.
    - Then, with Logos `512983a8`, whose new rules cover most of those holes:
      `RE_ANDOR_CONST_REMOVE` in full, for intersections and unions, one removal
      at a time (`re-inter-const-elim`, `re-union-const-elim`), and
@@ -842,7 +842,7 @@ The uses at run time now, to replace:
      orientation of equalities, 97.3% also up to the order of commutative
      arguments, no semantic disagreements (against `bab27e4f17`, where 48 of
      the other 82 are `IDOF_NORM_PREFIX`); Ethos accepts all proofs. The other modes are unchanged. Of the 15 reproducers in
-     `test/cvc5-holes/`, telos now matches cvc5 on all but `idof-norm-prefix`
+     `test/rewriter/cvc5-holes/`, telos now matches cvc5 on all but `idof-norm-prefix`
      (up to the orientation of equalities).
    - Then: `CTN_LEN_INEQ` certified as cvc5 proves it, by `str-eq-len-false`
      and `str-contains-leq-len-eq`, except for the premise
@@ -1058,7 +1058,7 @@ The uses at run time now, to replace:
     relations, `set.universe`, `set.complement` and comprehensions, and
     `set.map`, `set.filter`, `set.fold`, `set.all` and `set.some` have no CPC
     counterpart. `TheorySetsRewriter` is ported (`Telos/Rewriter/Theory/Sets.lean`,
-    `test/examples/sets.smt2`).
+    `test/rewriter/sets.smt2`).
     - Kinds `SET_SINGLETON`, `SET_UNION`, `SET_INTER`, `SET_MINUS`, `SET_MEMBER`,
       `SET_SUBSET`, `SET_CHOOSE`, `SET_IS_EMPTY`, `SET_IS_SINGLETON` and
       `SET_INSERT` (binary, as cvc5's type rule has it; `:right-assoc` in
@@ -1097,7 +1097,7 @@ The uses at run time now, to replace:
 12. **Datatypes.** Inductive datatypes, parametric datatypes and tuples, as in
     cvc5's safe mode (no codatatypes, `match` or nullables).
     `DatatypesRewriter` is ported (`Telos/Rewriter/Theory/Datatypes.lean`,
-    `test/examples/datatypes.smt2`, `test/examples/datatypes-par.smt2`).
+    `test/rewriter/datatypes.smt2`, `test/rewriter/datatypes-par.smt2`).
     - Representation, mirroring Logos: `TypeNode.datatype name decl`, with the
       block `decl` (`DtDecl`, `Dt`, `DtCons`: datatypes, constructors, field
       types, `typeRef` for the block's own datatypes), as Logos's
@@ -1159,7 +1159,7 @@ The uses at run time now, to replace:
 
 13. **Quantifiers.** `QuantifiersRewriter` is ported in part
     (`Telos/Rewriter/Theory/Quantifiers.lean`, `Telos/Rewriter/Theory/Nnf.lean`,
-    `test/examples/quantifiers.smt2`). cvc5 tries its steps in order, the first
+    `test/rewriter/quantifiers.smt2`). cvc5 tries its steps in order, the first
     that changes the quantifier winning (`computeOperation`); telos follows that
     order. Ported, each certified by the CPC rules cvc5's elaboration uses:
     - `exists` elimination (`exists-elim`), prenex merging in pre- and

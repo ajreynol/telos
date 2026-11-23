@@ -62,6 +62,31 @@ structure Symbol where
   names : List String
   decl : String
 
+/-- What an item of the script read by Logos's parser is (`readScript`). -/
+inductive ItemKind where
+  | assert
+  | simplify
+  /-- A term of a `get-value`. -/
+  | value
+  /-- A declared constant or function, read back for its type. -/
+  | decl
+  deriving BEq, Inhabited
+
+/-- A command of a script that produces output, in order (`telos FILE` runs
+them as cvc5 does: `Telos/Frontend/Run.lean`). -/
+inductive Command where
+  | checkSat
+  | getModel
+  | getProof
+  /-- `(get-value (t₁ … tₙ))`: the terms, read back. -/
+  | getValue (terms : List Query)
+  | simplify (q : Query)
+  | echo (s : String)
+  | getInfo (key : String)
+  /-- A command telos does not support, with its source: an error when run. -/
+  | unsupported (src : String)
+  deriving Inhabited
+
 /-- A script, read. -/
 structure Script where
   /-- The declarations, as written; they head each printed proof. -/
@@ -76,6 +101,15 @@ structure Script where
   decision : Option String := none
   /-- The declared sorts, datatypes and constants, in order. -/
   symbols : List Symbol := []
+  /-- The declared constants and functions, read back: their names and nodes
+  (`Node.var`, with their types), in order. -/
+  declared : List (String × Node) := []
+  /-- The commands that produce output, in order. -/
+  commands : List Command := []
+  /-- `(set-option :produce-models true)`. -/
+  produceModels : Bool := false
+  /-- `(set-option :produce-proofs true)`. -/
+  produceProofs : Bool := false
 
 def ignored : List String := ["set-option", "set-info", "exit"]
 
@@ -428,8 +462,13 @@ def readScript (input : String) (cvc5Output : Bool := false) : Except String Scr
   let mut consts : Array String := #[]
   let mut sorts : Array String := #[]
   let mut dts : Array (String × DtDeclared) := #[]
-  -- the sources of the `simplify` (`true`) and `assert` (`false`) commands, in order
-  let mut items : Array (Bool × String) := #[]
+  -- the sources of the terms Logos's parser reads (assertions, queries, the
+  -- terms of `get-value`, the declared constants), in order
+  let mut items : Array (ItemKind × String) := #[]
+  -- the commands that produce output, with the items they read
+  let mut cmds : Array (Command ⊕ (Bool × List Nat)) := #[]
+  let mut produceModels := false
+  let mut produceProofs := false
   let mut logic : Option String := none
   let mut decision : Option String := none
   let mut symbols : Array Symbol := #[]
@@ -449,18 +488,38 @@ def readScript (input : String) (cvc5Output : Bool := false) : Except String Scr
     | _ => pure ()
     match s with
     | .expr [.atom "set-option", .atom ":decision", .atom m] => decision := some m
+    | .expr [.atom "set-option", .atom ":produce-models", .atom v] => produceModels := v == "true"
+    | .expr [.atom "set-option", .atom ":produce-proofs", .atom v] => produceProofs := v == "true"
     | _ => pure ()
     match s with
     | .expr (.atom c :: _) =>
       if ignored.contains c then continue
       match s with
       | .expr [.atom "set-logic", .atom l] => logic := some l
-      | .expr [.atom "check-sat"] => checkSat := true
+      | .expr [.atom "check-sat"] =>
+        checkSat := true
+        cmds := cmds.push (.inl .checkSat)
+      | .expr [.atom "get-model"] => cmds := cmds.push (.inl .getModel)
+      | .expr [.atom "get-proof"] => cmds := cmds.push (.inl .getProof)
+      | .expr [.atom "echo", .atom str] => cmds := cmds.push (.inl (.echo str))
+      | .expr [.atom "get-info", .atom key] => cmds := cmds.push (.inl (.getInfo key))
+      | .expr [.atom "get-value", .expr ts] =>
+        let mut is := []
+        for t in ts do
+          let src := t.serialize
+          let t := (cvc5Numerals numEnv cvc5Output false (bvNumerals t)).serialize
+          eunoia := eunoia.push s!"(assume @s{items.size} (= {t} {t}))"
+          is := is ++ [items.size]
+          items := items.push (.value, src)
+        cmds := cmds.push (.inr (false, is))
       | .expr [.atom "declare-const", .atom x, ty] =>
         if ty == .atom "Type" then sorts := sorts.push x else consts := consts.push x
         decls := decls.push s.serialize
         eunoia := eunoia.push s.serialize
         symbols := symbols.push ⟨[x], (Sexp.expr [.atom "declare-fun", .atom x, .expr [], ty]).serialize⟩
+        if ty != .atom "Type" then
+          eunoia := eunoia.push s!"(assume @s{items.size} (= {Eunoia.symbol x} {Eunoia.symbol x}))"
+          items := items.push (.decl, x)
       | .expr [.atom "declare-fun", .atom x, .expr args, ret] =>
         consts := consts.push x
         -- Eunoia has no `declare-fun`; a function is a constant of arrow type.
@@ -468,6 +527,8 @@ def readScript (input : String) (cvc5Output : Bool := false) : Except String Scr
         decls := decls.push (Sexp.expr [.atom "declare-const", .atom x, ty]).serialize
         eunoia := eunoia.push s.serialize
         symbols := symbols.push ⟨[x], s.serialize⟩
+        eunoia := eunoia.push s!"(assume @s{items.size} (= {Eunoia.symbol x} {Eunoia.symbol x}))"
+        items := items.push (.decl, x)
       | .expr [.atom "declare-sort", .atom x, _] =>
         sorts := sorts.push x
         decls := decls.push s.serialize
@@ -502,15 +563,24 @@ def readScript (input : String) (cvc5Output : Bool := false) : Except String Scr
         let (t, as) ← stripAnnots [] t
         annots := annots ++ as.map ({ · with item := items.size })
         let t := t.serialize
+        cmds := cmds.push (.inr (true, [items.size]))
         eunoia := eunoia.push s!"(assume @s{items.size} (= {t} {t}))"
-        items := items.push (true, t)
+        items := items.push (.simplify, t)
       | .expr [.atom "assert", t] =>
         if checkSat then throw "incremental scripts are not supported: an assertion after check-sat"
         let (t, as) ← stripAnnots [] t
         annots := annots ++ as.map ({ · with item := items.size })
         let t := t.serialize
         eunoia := eunoia.push s!"(assume @s{items.size} {t})"
-        items := items.push (false, t)
+        items := items.push (.assert, t)
+      | .expr (.atom c :: _) =>
+        -- commands that only produce output are reported when run
+        if ["get-assertions", "get-assignment", "get-unsat-core", "get-unsat-assumptions",
+            "get-option", "check-sat-assuming", "get-difficulty", "get-learned-literals",
+            "get-timeout-core", "get-abduct", "get-interpolant", "get-qe", "block-model",
+            "get-instantiations"].contains c then
+          cmds := cmds.push (.inl (.unsupported s.serialize))
+        else throw s!"unsupported command: {s.serialize}"
       | _ => throw s!"unsupported command: {s.serialize}"
     | _ => throw s!"unsupported command: {s.serialize}"
   -- the annotations, read after the assertions
@@ -535,14 +605,27 @@ def readScript (input : String) (cvc5Output : Bool := false) : Except String Scr
       if let some (q, q') := a.build nodes then
         σs := σs.insert a.item (((σs.get? a.item).getD {}).insert ⟨q⟩ q')
   let read := read.zipIdx
-  let queries := read.filterMap fun (((simp, src), t), i) =>
-    if simp then some ⟨src, (toNode constName t).map (annotate ((σs.get? i).getD {}))⟩ else none
-  let assertions := read.filterMap fun (((simp, src), t), i) =>
-    if simp then none
+  let queryOf (i : Nat) (src : String) (t : Term) : Query :=
+    ⟨src, (toNode constName t).map (annotate ((σs.get? i).getD {}))⟩
+  let queries := read.filterMap fun (((k, src), t), i) =>
+    if k == .simplify then some (queryOf i src t) else none
+  let assertions := read.filterMap fun (((k, src), t), i) =>
+    if k != .assert then none
     else some ⟨src, match Node.ofEo [] (nameConsts constName t) with
       | some n => .ok (annotate ((σs.get? i).getD {}) n)
       | none => .error "the term uses an operator telos does not support yet"⟩
+  let declared := read.filterMap fun (((k, src), t), _) =>
+    if k != .decl then none else
+    match toNode constName t with
+    | .ok n => some (src, n)
+    | .error _ => none
+  let byItem : Std.HashMap Nat Query := read.foldl (init := {}) fun m (((k, src), t), i) =>
+    if k == .simplify || k == .value then m.insert i (queryOf i src t) else m
+  let commands := cmds.toList.map fun
+    | .inl c => c
+    | .inr (true, is) => .simplify (byItem.get? (is.headD 0) |>.getD ⟨"", .error "internal error: a lost query"⟩)
+    | .inr (false, is) => .getValue (is.map fun i => (byItem.get? i).getD ⟨"", .error "internal error: a lost term"⟩)
   return { decls := decls.toList, names, queries, dtNames, assertions, logic, decision,
-           symbols := symbols.toList }
+           symbols := symbols.toList, declared, commands, produceModels, produceProofs }
 
 end Telos.Frontend

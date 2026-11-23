@@ -113,7 +113,7 @@ Rules of thumb:
 
 ## Testing and measuring
 
-- `test/examples/<theory>.smt2` with `.expected`: examples, run in CI. Use
+- `test/rewriter/<theory>.smt2` with `.expected`: examples, run in CI. Use
   `(simplify t)` queries.
 - Compare with a recent build of cvc5's main branch, not a release: cvc5's
   rewriter changes, and telos ports the current one. `fuzz.py` prints the

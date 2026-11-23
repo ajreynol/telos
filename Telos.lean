@@ -68,3 +68,6 @@ import Telos.Solver.Prop
 import Telos.Frontend.PostAsserts
 import Telos.Frontend.Solve
 import Telos.Frontend.Replay
+import Telos.Frontend.ModelPrint
+import Telos.Frontend.FullProof
+import Telos.Frontend.Run

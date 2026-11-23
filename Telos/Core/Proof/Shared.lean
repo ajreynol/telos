@@ -155,4 +155,44 @@ def renderShared (N : Eunoia.Names) (decls : List String) (steps : Array Step) (
   return "\n".intercalate (decls ++ ps.defs.toList ++ [s!"(assume @goal (not {g}))"] ++
     lines.toList ++ [s!"(step @false false :rule contra :premises ({last} @goal))"]) ++ "\n"
 
+/-- Print the proof `steps` of `false` from assumptions as Eunoia commands, as
+cvc5's `get-proof` prints a refutation: the given declarations, the definitions
+of the shared terms, the first `inputs` steps (whose one argument is a formula)
+as `assume`s, the others as steps, the last stating its conclusion, `false`. -/
+def renderRefutation (N : Eunoia.Names) (decls : List String) (steps : Array Step) (inputs : Nat) :
+    String := Id.run do
+  let (steps, _) := (steps.mapM fun st => do return { st with args := ← st.args.mapM internArg } :
+      StateM (Std.HashMap Key Node) _).run {}
+  let roots := steps.flatMap fun st => st.args.toArray.filterMap fun
+    | .node n => some n
+    | .term _ => none
+  let ((), sh) := (roots.forM countRefs).run {}
+  let ((), bound) := (roots.forM fun r => do let _ ← hasBound r).run {}
+  let mut ps : PrintState := {}
+  let mut lines : Array String := #[]
+  let pr (a : PArg) (ps : PrintState) : String × PrintState :=
+    match a with
+    | .term x => (Eunoia.print N x, ps)
+    | .node n => let (x, ps) := (sharedTerm N sh.refs bound n).run ps; (Eunoia.print N x, ps)
+  let name (i : Nat) := s!"@p{i}"
+  for h : i in [0:steps.size] do
+    let st := steps[i]
+    let mut args : Array String := #[]
+    for a in st.args do
+      let (x, ps') := pr a ps
+      ps := ps'
+      args := args.push x
+    if i < inputs then
+      lines := lines.push s!"(assume {name i} {args[0]?.getD "true"})"
+      continue
+    let prems := if st.premises.isEmpty then ""
+      else s!" :premises ({" ".intercalate (st.premises.map name)})"
+    let argStr := if args.isEmpty then "" else s!" :args ({" ".intercalate args.toList})"
+    let concl := if i + 1 == steps.size then " false" else ""
+    lines := lines.push <| match st.kind with
+      | .assume => s!"(assume-push {name i} {args[0]?.getD "false"})"
+      | .pop => s!"(step-pop {name i}{concl} :rule {ruleName st.rule}{prems}{argStr})"
+      | .step => s!"(step {name i}{concl} :rule {ruleName st.rule}{prems}{argStr})"
+  return "(\n" ++ "\n".intercalate (decls ++ ps.defs.toList ++ lines.toList) ++ "\n)"
+
 end Telos.Proof

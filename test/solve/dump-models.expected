@@ -1,0 +1,6 @@
+sat
+(
+(define-fun g ((_arg_1 Int)) Int (ite (= _arg_1 2) 1 0))
+(define-fun a () Int 2)
+(define-fun c () Int 0)
+)

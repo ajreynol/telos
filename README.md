@@ -36,13 +36,31 @@ the verification and Eunoia efforts this project builds on.
 
 ```sh
 lake build telos
-.lake/build/bin/telos test/examples/bool.smt2                      # rewritten terms
-.lake/build/bin/telos --proof test/examples/bool.smt2              # ... each with a CPC proof
+.lake/build/bin/telos test/solve/models.smt2                       # runs the script, as cvc5 does: sat, (get-model), (get-value …)
+.lake/build/bin/telos --dump-models test/solve/dump-models.smt2    # ... with the model after each sat
+.lake/build/bin/telos --dump-proofs test/solve/proof-lra.smt2      # ... with the full CPC proof after each unsat
+.lake/build/bin/telos test/rewriter/bool.smt2                      # rewritten terms
+.lake/build/bin/telos --proof test/rewriter/bool.smt2              # ... each with a CPC proof
 .lake/build/bin/telos --post-asserts test/preprocess/basic.smt2    # preprocessed assertions
 .lake/build/bin/telos --post-asserts --proof test/preprocess/basic.smt2   # ... with a CPC proof
-.lake/build/bin/telos --solve test/solve/sat-bool.smt2             # sat / unsat / unknown
-.lake/build/bin/telos --theory-events test/solve/uf-literals.smt2  # theory-engine events, as cvc5 prints them
+.lake/build/bin/telos --solve test/theory-events/sat-bool.smt2             # sat / unsat / unknown
+.lake/build/bin/telos --theory-events test/theory-events/uf-literals.smt2  # theory-engine events, as cvc5 prints them
 ```
+
+**As an SMT solver**, `telos FILE` runs the script's commands in order and
+prints what cvc5 prints: the answer of each `check-sat`, models (`get-model`,
+`get-value`, with `--produce-models` or `(set-option :produce-models true)`),
+proofs (`get-proof`, with `--produce-proofs`), `echo`, `get-info
+:reason-unknown`; errors as `(error "…")`. `--dump-models` and `--dump-proofs`
+print the model after each `sat` and the proof after each `unsat`, as cvc5's
+options do. Why an answer is `unknown` is printed on standard error. A **full
+proof** of `unsat` is a CPC refutation from the input assertions: it connects
+the proof of preprocessing, the CNF translation (CPC's `cnf_*` and elimination
+rules), the theory conflicts and lemmas (the equality engine's certificates,
+and linear arithmetic's Farkas combinations, splits and cuts), and resolution
+(`chain_m_resolution`, from the SAT certificate's unit propagation)
+([`Telos/Frontend/FullProof.lean`](Telos/Frontend/FullProof.lean)).
+`python3 scripts/check-full-proofs.py FILE…` checks them with Ethos.
 
 `--proof` (or `--proof-dir DIR`, one file per query) prints CPC proofs for
 external auditing; the theorems do not rely on them. To check one with Ethos,
@@ -107,6 +125,8 @@ Two Lake projects, so the solver builds without Mathlib:
   engine, the theories, the CNF stream and the SAT solver), `Telos/Frontend/`,
   and `Main.lean`, the `telos` executable. `TelosTests/` holds tests checked at
   build time.
+- `test/`: inputs and expected outputs, by part: `rewriter/`, `preprocess/`,
+  `theory-events/`, `replay/`, `solve/` ([`test/README.md`](test/README.md)).
 - `verification/` (package `TelosVerification`): the specification and the
   correctness proofs, in the same layers. Requires `Telos`, Logos's
   `LogosVerification` and Mathlib.
@@ -130,6 +150,7 @@ python3 scripts/fuzz-pp.py --cvc5 PATH [--proofs]               # compare the pr
 python3 scripts/fuzz-solve.py --cvc5 PATH                       # compare the theory events with cvc5
 python3 scripts/fuzz-lemmas.py --cvc5 PATH [--solver PATH]       # compare the rewriter with cvc5 on its solver's lemmas (-t im)
 python3 scripts/check-proofs.py --fuzz 500                      # proofs, with Ethos
+python3 scripts/check-full-proofs.py test/solve/*.smt2 test/theory-events/*.smt2   # full proofs of unsat, with Ethos
 python3 scripts/loc-summary.py                                  # TCB/spec, solver code, verification proofs
 python3 scripts/logos-runtime.py                                # runtime references to Logos
 bash scripts/profile.sh                                         # where rewriting time goes

@@ -156,6 +156,11 @@ partial def printIn (N : Names) (bound : List Term) (t : Term) : String :=
   | .UOp1 UserOp1.seq_empty T => s!"(as seq.empty {print N T})"
   -- Declared constants are numbered by their names (`constId`).
   | .UConst i _ => symbol (Telos.Node.constName i)
+  -- a list argument of a rule, `(@list x₁ … xₙ)`
+  | .Apply (.Apply .__eo_List_cons x) rest =>
+    let (xs, tail) := rightAssocElems .__eo_List_cons rest
+    if tail == .__eo_List_nil then "(" ++ " ".intercalate ("@list" :: (x :: xs).map (print N)) ++ ")"
+    else s!"(@list {print N x} {print N rest})"
   | .Apply .. =>
     let (h, xs) := eoSpine t
     match opTable.get? (headKey h) with
@@ -215,6 +220,8 @@ where
     | t => print N t
   headName (info : OpInfo) (h : Term) : String :=
     if info.indexArity == 0 then info.name
+    -- a skolem function's indices are its arguments: `(@quantifiers_skolemize q 2)`
+    else if info.name.startsWith "@" then s!"({info.name} {" ".intercalate ((headIndices h).map (print N))})"
     else s!"(_ {info.name} {" ".intercalate ((headIndices h).map printIndex)})"
   app (f : String) (xs : List Term) : String :=
     s!"({f} {" ".intercalate (xs.map (print N))})"

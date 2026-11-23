@@ -1,17 +1,27 @@
 import Telos
 
 /-!
-# `telos`: a verified SMT rewriter and preprocessor
+# `telos`: a verified SMT solver, rewriter and preprocessor
 
 ```
-telos [--proof] [--proof-dir DIR] [--profile] FILE
+telos [--dump-models] [--dump-proofs] [--produce-models] [--produce-proofs] [--proof] [PREPROCESSING OPTIONS] FILE
+telos --proof-dir DIR [--profile] FILE
 telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE
 telos --theory-events [--theory-events-ee] [--trigger] [--no-preprocess] [--no-cvc5-order] [--via-sat] [--proof] [--proof-dir DIR] [PREPROCESSING OPTIONS] FILE
 telos --replay TRACE [--theory-events-ee] FILE
 ```
 
-Reads an SMT-LIB script of declarations and `(simplify t)` commands (`-` for
-standard input) and prints the rewrite of each `t`, as cvc5 does. With `--proof`,
+Reads an SMT-LIB script (`-` for standard input) and runs its commands in
+order, printing what cvc5 prints (`Telos/Frontend/Run.lean`): the answer of
+`check-sat`; the model of `get-model` and the values of `get-value` (with
+`--produce-models`, or `(set-option :produce-models true)`); the CPC proof of
+`get-proof`, from the input assertions to `false` (with `--produce-proofs`, or
+`(set-option :produce-proofs true)`); the rewrite of `(simplify t)`. With
+`--dump-models` (`--dump-proofs`), the model (the proof) is printed after each
+`sat` (`unsat`), as cvc5 does. `-o post-asserts` and `-o theory-events` are
+`--post-asserts` and `--theory-events`.
+
+For `(simplify t)`, telos prints the rewrite of `t`, as cvc5 does. With `--proof`,
 each result is followed by a CPC proof of `(= t result)` in Eunoia syntax; with
 `--proof-dir DIR`, the proof of the `i`-th query is written to `DIR/proof-i.eo`
 instead. A proof is a refutation of `(not (= t result))`, in parentheses as
@@ -84,10 +94,22 @@ structure Options where
   /-- Solve with the SAT solver even a conjunction of literals. -/
   viaSat : Bool := false
   pp : Preprocess.UserOptions := {}
+  dumpModels : Bool := false
+  dumpProofs : Bool := false
+  produceModels : Bool := false
+  produceProofs : Bool := false
 
 def parseArgs : List String → Options → Except String Options
   | [], o => .ok o
   | "--proof" :: rest, o => parseArgs rest { o with proof := true }
+  | "--dump-models" :: rest, o => parseArgs rest { o with dumpModels := true }
+  | "--dump-proofs" :: rest, o => parseArgs rest { o with dumpProofs := true }
+  | "--produce-models" :: rest, o => parseArgs rest { o with produceModels := true }
+  | "--produce-proofs" :: rest, o => parseArgs rest { o with produceProofs := true }
+  | "-o" :: "post-asserts" :: rest, o => parseArgs rest { o with postAsserts := true }
+  | "-o" :: "theory-events" :: rest, o => parseArgs rest { o with theoryEvents := true }
+  | "-o" :: "theory-events-ee" :: rest, o => parseArgs rest { o with theoryEventsEE := true }
+  | "-o" :: "trigger" :: rest, o => parseArgs rest { o with triggers := true }
   | "--profile" :: rest, o => parseArgs rest { o with profile := true }
   | "--check-proof" :: rest, o => parseArgs rest { o with checkProof := true }
   | "--post-asserts" :: rest, o => parseArgs rest { o with postAsserts := true }
@@ -110,7 +132,7 @@ def parseArgs : List String → Options → Except String Options
     else parseArgs rest { o with file := some f }
 
 def usage : String :=
-  "usage: telos [--proof] [--proof-dir DIR] [--profile] FILE\n       telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE\n       telos --theory-events [--theory-events-ee] [--trigger] [--no-preprocess] [--no-cvc5-order] [--proof] [--proof-dir DIR] [PREPROCESSING OPTIONS] FILE\n       telos --replay TRACE [--theory-events-ee] FILE\n       telos --dimacs FILE"
+  "usage: telos [--dump-models] [--dump-proofs] [--produce-models] [--produce-proofs] [--proof] [PREPROCESSING OPTIONS] [--profile] FILE\n       telos --proof-dir DIR FILE\n       telos --post-asserts [PREPROCESSING OPTIONS] [--proof [--check-proof]] [--proof-dir DIR] [--profile] FILE\n       telos --theory-events [--theory-events-ee] [--trigger] [--no-preprocess] [--no-cvc5-order] [--proof] [--proof-dir DIR] [PREPROCESSING OPTIONS] FILE\n       telos --replay TRACE [--theory-events-ee] FILE\n       telos --dimacs FILE"
 
 def main (args : List String) : IO UInt32 := do
   let opts ← match parseArgs args {} with
@@ -151,9 +173,23 @@ def main (args : List String) : IO UInt32 := do
       if opts.profile then Profile.report
       return 0
     | .error e => IO.eprintln s!"telos: {e}"; return 1
-  -- solving, the answer only: with `--solve`, or for a benchmark (assertions,
-  -- no `simplify` queries)
-  if opts.solve || (!opts.postAsserts && sc.queries.isEmpty && !sc.assertions.isEmpty) then
+  -- running the script, as cvc5 does
+  if !opts.solve && !opts.postAsserts && opts.proofDir.isNone then
+    let ro : RunOptions := {
+      pp := opts.pp
+      viaSat := opts.viaSat
+      produceModels := opts.produceModels
+      produceProofs := opts.produceProofs
+      dumpModels := opts.dumpModels
+      dumpProofs := opts.dumpProofs
+      simplifyProofs := opts.proof }
+    let r := runScript sc ro
+    for l in r.out do IO.println l
+    for l in r.err do IO.eprintln l
+    if opts.profile then Profile.report
+    return if r.failed then 1 else 0
+  -- solving, the answer only (whatever the commands): with `--solve`
+  if opts.solve then
     match solveAnswer sc opts.pp opts.viaSat with
     | .ok (a, unc) =>
       if let some e := unc then IO.eprintln s!"telos: {e}"

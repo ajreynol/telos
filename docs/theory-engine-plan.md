@@ -284,7 +284,7 @@ all literals.
 - **`scripts/fuzz-solve.py`:** runs cvc5 with the patch and telos on the same
   input, and compares the events by rounds. It reports agreement at two
   levels: exact, and same literals.
-- **`test/solve/`:** inputs with expected traces, run by CI.
+- **`test/theory-events/`:** inputs with expected traces, run by CI.
 
 ### Soundness
 
@@ -347,7 +347,7 @@ condition for fidelity, not for soundness:
 
    Status: `Telos/Solver/Event.lean`, `Telos/Solver/Engine.lean`,
    `Telos/Frontend/Solve.lean`, `telos --theory-events`,
-   `scripts/fuzz-solve.py` (with `--recorded`) and `test/solve/`.
+   `scripts/fuzz-solve.py` (with `--recorded`) and `test/theory-events/`.
    - On the fuzzer's random QF_UF conjunctions (300, seed 3), the input events
      (`prereg`, `assert`, `check`) agree with cvc5's on 299. The remaining one
      differs only after a conflict that cvc5 finds by propagation.
@@ -460,7 +460,7 @@ condition for fidelity, not for soundness:
      - Every `unsat` of the fuzzing is certified: about 1,000 over seeds 31–35,
        41, 42, 51 and 52.
      - Ethos accepts every refutation: 193 over seeds 51 and 52, plus the 5 of
-       `test/solve`.
+       `test/theory-events`.
      - A 4,000-literal transitivity conflict takes 0.39s, against cvc5's 0.45s.
        Its 13,000-line proof is accepted by Ethos in 0.1s.
    - **Not covered:**
@@ -912,7 +912,7 @@ Stage 6).
 Results: on 3,000 random conjunctions, every conflict found by the theory
 engine (59) is certified, agrees with cvc5, and its CPC proof is accepted by
 Ethos. Most `unsat`s of random conjunctions are decided by preprocessing.
-`test/solve/dt-*.smt2` has a clash, a cycle and a tester conflict.
+`test/theory-events/dt-*.smt2` has a clash, a cycle and a tester conflict.
 
 ## Stage 6: the SAT solver (in progress: milestones 1 to 4 done)
 
@@ -1386,7 +1386,7 @@ every `unsat` by its certificate (over 500 `unsat`s in all). The
 differences are the order of the two disjuncts of unate lemmas, by node id
 (`proveOr`), which telos approximates by first occurrence in the input; cvc5's
 ids come from its preprocessing, which `--cvc5-pp` does not show.
-`test/solve/sat-lra-*.smt2` have row implications, unate lemmas and simplex
+`test/theory-events/sat-lra-*.smt2` have row implications, unate lemmas and simplex
 conflicts; `sat-lra-unsat*` are certified `unsat`s.
 
 In QF_LRA, disequalities do not reach the solver (`arithRewriteEq` makes
@@ -1441,7 +1441,7 @@ node, whose id cvc5 gives in the order its preprocessing makes them (an
 equality's `(>= s k)` before its `(>= s (+ k 1))`, say), which telos's order
 of first occurrence does not follow. One benchmark of branch and bound that
 does not converge in cvc5 either (655,000 events in 29 seconds) times out.
-`test/solve/sat-lia-*.smt2` cover branches, cuts and the Diophantine
+`test/theory-events/sat-lia-*.smt2` cover branches, cuts and the Diophantine
 solver's conflicts.
 
 **`ite` terms** (`--ite`): term formula removal's skolems and their
@@ -1574,7 +1574,7 @@ connectives (100) 46, with no answer that differs. On 300 more random
 benchmarks, telos answers all 213 `sat` and all 87 `unsat`, as cvc5. The event
 differences are mostly SAT decisions after a lemma, and the order of
 preprocessed equalities (the node order of preprocessing). Recorded tests:
-`test/solve/sat-sets-*`.
+`test/theory-events/sat-sets-*`.
 
 ### To do
 

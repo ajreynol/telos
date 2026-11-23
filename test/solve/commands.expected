@@ -1,0 +1,7 @@
+sat
+"no model generation"
+(error "cannot get model unless model generation is enabled (try --produce-models)")
+(error "cannot get value unless model generation is enabled (try --produce-models)")
+(error "cannot get proof unless proofs are enabled (try --produce-proofs)")
+(error "Can't get-info :reason-unknown when the last result wasn't unknown!")
+(:name "telos")

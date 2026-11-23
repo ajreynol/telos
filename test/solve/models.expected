@@ -1,0 +1,18 @@
+sat
+(
+; cardinality of U is 2
+; rep: (as @U_0 U)
+; rep: (as @U_1 U)
+(define-fun u () U (as @U_1 U))
+(define-fun v () U (as @U_0 U))
+(define-fun x () Int 0)
+(define-fun r () Real (/ (- 3) 4))
+(define-fun s () String "aa")
+(define-fun b () Bool true)
+(define-fun f ((_arg_1 Int) (_arg_2 Bool)) Int (ite (= _arg_1 0) (ite _arg_2 3 0) (ite (= _arg_1 2) (ite (not _arg_2) (- 4) 0) 0)))
+(define-fun l () L (cons 4 nil))
+(define-fun p () (Lst Int) (as lnil (Lst Int)))
+(define-fun S () (Set Int) (set.singleton 1))
+(define-fun unused () Int 0)
+)
+((x 0) ((f x b) 3) ((+ r 1) (/ 1 4)) (p (as lnil (Lst Int))))

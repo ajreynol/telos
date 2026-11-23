@@ -1,0 +1,11 @@
+; commands that need model or proof generation, and get-info
+(set-logic QF_LIA)
+(declare-const x Int)
+(assert (> x 2))
+(check-sat)
+(echo "no model generation")
+(get-model)
+(get-value (x))
+(get-proof)
+(get-info :reason-unknown)
+(get-info :name)

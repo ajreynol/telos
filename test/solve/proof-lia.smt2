@@ -1,0 +1,10 @@
+; linear integer arithmetic: an integer bound, strengthened
+(set-logic QF_LIA)
+(declare-const x Int)
+(declare-const y Int)
+(assert (> (* 2 x) 1))
+(assert (< (* 2 x) 3))
+(assert (or (= y x) (> y 10)))
+(assert (not (= y 1)))
+(assert (< y 5))
+(check-sat)

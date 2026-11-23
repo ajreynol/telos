@@ -1,0 +1,11 @@
+; a propositional refutation, through the CNF translation and resolution
+(set-logic QF_UF)
+(set-option :produce-proofs true)
+(declare-const a Bool)
+(declare-const b Bool)
+(declare-const c Bool)
+(assert (or a b))
+(assert (or (not a) c))
+(assert (or (not b) c))
+(assert (=> c (and (not a) (not b))))
+(check-sat)

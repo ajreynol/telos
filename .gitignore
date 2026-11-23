@@ -6,6 +6,7 @@
 *.olean
 *.ilean
 *.trace
+!test/replay/*.trace
 .vscode/
 .idea/
 *~
