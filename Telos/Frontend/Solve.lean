@@ -219,7 +219,7 @@ def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Boo
     let r := Solver.run cfg lits
     -- the engine alone stops at a lemma (`unknown`, with nothing uncertified):
     -- the SAT solver is then needed
-    pure (if r.answer == .unknown && r.uncertified.isNone && cfg.ufSolver then Solver.runSat cfg out else r)
+    pure (if r.answer == .unknown && r.uncertified.isNone && cfg.satSupported then Solver.runSat cfg out else r)
   -- a `sat` stands only if its model satisfies the input assertions
   let r := if r.answer != .sat then r else
     let M := buildModel r.ee (relevantTerms r.asserted) (freeConsts as) (engineDefs as opts preprocess order) as

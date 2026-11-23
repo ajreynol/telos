@@ -2004,11 +2004,11 @@ def solve (lits : List Node) : EngineM Answer := do
   emit (.prereg 0 Node.mkTrue)
   emit (.prereg 0 Node.mkFalse)
   modify fun s => { s with registered := (s.registered.insert ⟨Node.mkTrue⟩).insert ⟨Node.mkFalse⟩ }
-  if (← read).ufSolver then
+  -- (the central equality engine runs with quantifiers too: `eeSolver`)
+  if (← read).eeSolver then
     let ctx ← eeCtx
-    let dtOn := (← read).dtSolver
-    let setsOn := (← read).setsSolver
-    modify fun s => { s with ee := { EE.init ctx with dt := { enabled := dtOn }, sets := { enabled := setsOn } } }
+    let c ← read
+    modify fun s => { s with ee := { EE.init ctx with dt := { enabled := c.dtSolver }, sets := { enabled := c.setsSolver }, strings := { enabled := c.stringsSolver } } }
   if lits.contains Node.mkFalse then
     modify fun s => { s with cert := .ok (#[Node.mkFalse], .symm (.assume 0)) }
     return .unsat
@@ -2156,7 +2156,7 @@ SAT solver. -/
 def replay (c : Config) (inputs : List Input) : Array Event × Nat :=
   let c := { c with replaying := true }
   let act : EngineM Unit := do
-    if c.ufSolver then
+    if c.eeSolver then
       let ctx ← eeCtx
       modify fun s => { s with ee := { EE.init ctx with dt := { enabled := c.dtSolver }, sets := { enabled := c.setsSolver }, strings := { enabled := c.stringsSolver } } }
     for i in inputs do replayInput i
