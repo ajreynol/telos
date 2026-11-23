@@ -172,12 +172,16 @@ def modelRejection (N : DtNames) (M : Solver.Model) (as : List Node) : String :=
         | some _ => "a non-Boolean value"
         | none => "not evaluated"
       -- the values of its constants
-      let showV (v : Solver.MVal) : String := match v with
+      let rec showV (v : Solver.MVal) : String := match v with
         | .bool b => toString b
         | .int k => toString k
         | .rat q => toString q
         | .uval s i => s!"@u{s}_{i}"
         | .fn fid .. => s!"@table{fid}"
+        | .dtc s _ i =>
+          let s := String.ofList (s.map Char.ofNat)
+          (N.cons (DtNames.baseName s) i).getD s!"{s}.c{i}"
+        | .app f a => s!"({showV f} {showV a})"
         | _ => "…"
       let vars := (a.vars.take 12).filterMap fun (x : Node) => match x with
         | .var name T => (M.const name T).map fun v => s!"{name}={showV v}"

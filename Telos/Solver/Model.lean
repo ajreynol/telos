@@ -642,18 +642,36 @@ where
 def consesOf (s : native_String) (dd : SmtDatatypeDecl) : List (List SmtType) :=
   dtConses (__smtx_dt_resolve (__smtx_dd_lookup s dd) dd)
 
-/-- A value of a type: `false`, the first element of a sort, the first
-constructor of a datatype whose fields have values (within `fuel`). -/
+mutual
+  /-- A value of a type of depth `d + 1` at most, by the first constructor
+  with such values of its fields (each of least depth). -/
+  def groundAt : Nat → SmtType → Option MVal
+    | _, .Bool => some (.bool false)
+    | _, .USort s => some (.uval s 0)
+    | _, .Int => some (.int 0)
+    | _, .Real => some (.rat 0)
+    | 0, .Datatype s dd =>
+      (consesOf s dd).zipIdx.findSome? fun (fs, i) =>
+        if fs.isEmpty then some (MVal.mkDt s dd i []) else none
+    | d + 1, .Datatype s dd =>
+      (consesOf s dd).zipIdx.findSome? fun (fs, i) =>
+        (fs.mapM (groundMin d)).map (MVal.mkDt s dd i)
+    | _, _ => none
+  termination_by d _ => (d, 0)
+
+  /-- A value of a type of least depth, at most `d + 1`. -/
+  def groundMin : Nat → SmtType → Option MVal
+    | 0, T => groundAt 0 T
+    | d + 1, T => (groundMin d T).orElse fun _ => groundAt (d + 1) T
+  termination_by d _ => (d, 1)
+end
+
+/-- A value of a type: `false`, the first element of a sort, a datatype value
+of least depth (within `fuel`; the first constructor among those of that
+depth), so that it does not depend on the fuel. -/
 def groundValue : Nat → SmtType → Option MVal
   | 0, _ => none
-  | _ + 1, .Bool => some (.bool false)
-  | _ + 1, .USort s => some (.uval s 0)
-  | _ + 1, .Int => some (.int 0)
-  | _ + 1, .Real => some (.rat 0)
-  | f + 1, .Datatype s dd =>
-    (consesOf s dd).zipIdx.findSome? fun (fs, i) =>
-      (fs.mapM (groundValue f)).map (MVal.mkDt s dd i)
-  | _ + 1, _ => none
+  | f + 1, T => groundMin f T
 
 /-- The type has infinitely many values (within `fuel`): a sort, or a datatype
 with a constructor that has a field of the datatype or of an infinite type. -/
