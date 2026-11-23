@@ -114,17 +114,26 @@ def nameSkolems (N : DtNames) (ns : List Node) : List Node × List String :=
   let named := namedSkolems N ns
   (ns.map (substSkolems (named.map fun (k, v, _) => (k, v))), named.map (·.2.2))
 
+/-- The assertions of the script, as nodes (`define-fun`s expanded): what the
+solver's correctness theorems are about. Each must be a formula: of type
+`Bool`, by telos's type and by Logos's (`smtTypeF`, which is Logos's type of
+its translation, `Node.smtTypeF_eq`). -/
+def inputAssertions (sc : Script) : Except String (List Node) := do
+  let as ← sc.assertions.mapM fun a => match a.node with
+    | .ok n =>
+      if n.typeHint == some .boolean then pure n
+      else throw s!"the assertion is not a well-typed formula: {a.source}"
+    | .error e => throw s!"{e}: {a.source}"
+  if as.all (·.smtTypeF == .Bool) then return as
+  else throw "an assertion is not a formula in Logos's typing"
+
 /-- The assertions of `sc`, and the preprocessing options for its logic and
 the user's options `u`. -/
 def ppInput (sc : Script) (u : Preprocess.UserOptions) :
     Except String (Preprocess.PPOptions × List Node) := do
   let logic ← Preprocess.Logic.parse (sc.logic.getD "ALL")
   let opts := Preprocess.PPOptions.ofLogic logic u
-  let as ← sc.assertions.mapM fun a => match a.node with
-    | .ok n =>
-      if n.typeHint == some .boolean then pure n
-      else throw s!"the assertion is not a well-typed formula: {a.source}"
-    | .error e => throw s!"{e}: {a.source}"
+  let as ← inputAssertions sc
   return (opts, as)
 
 /-- cvc5's node ids for the script `sc` with the assertions `as`,

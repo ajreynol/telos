@@ -37,6 +37,11 @@ it, its identifier's operator applied to its cache values (`SkolemId.eoShape`):
   import `Cpc/Logos.lean` (`scripts/check-hygiene.sh` checks this for every
   specification file).
 - `verification/TelosProofs/Core/Spec.lean`: the definition of `Node.Equiv`.
+- `verification/TelosProofs/Solver/Correct.lean`: the definition of
+  `Frontend.Script.satisfiability`, what the solver's theorems state of a
+  script: Logos's `eo_satisfiability` of the conjunction of its assertions
+  (`Preprocess.inputNode`), translated by `Node.toEo`. The assertions are read
+  by `Frontend.inputAssertions` (front end, not verified: see below).
 - `Telos/Core/Node/Node.lean` keeps in each node its SMT type (`Node.fastTy`, a
   computed field, by the rules of `Telos/Core/Node/KindTy.lean`), as it keeps
   its hash. It is a cache, not part of a node's meaning: `Node.fastTy_sound`

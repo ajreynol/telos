@@ -1,4 +1,5 @@
 import TelosProofs.Solver.Frontend
+import TelosProofs.Solver.Correct
 import TelosProofs.Axioms
 import TelosFull.ChildArgs
 import Cpc.Proofs.ProvenFromEmpty
@@ -156,25 +157,37 @@ theorem preprocess_correct (as : List Node) (h : (Preprocess.inputNode as).WellT
     (Preprocess.inputNode as).Equiv (Preprocess.preprocessCert as opts).1 :=
   preprocess_correct_of_logos as h opts
 
-/-- **Correctness of `unsat`** (`telos --theory-events`). If the theory engine
-answers `unsat` on a script whose assertions are Boolean, no well-formed model
-satisfies them. -/
-theorem solve_unsat_correct (sc : Frontend.Script) (u : Preprocess.UserOptions) (ee pp wp co vs : Bool)
-    {out : List Node} {r : Solver.Result} (h : Frontend.solveScript sc u ee pp wp co vs = .ok (out, r))
+/-- **Correctness of `unsat`** (`telos --solve`): if telos answers `unsat`, the
+script's input is unsatisfiable in Logos's semantics. -/
+theorem solve_unsat_correct {sc : Frontend.Script} {u : Preprocess.UserOptions} {vs : Bool}
+    (h : Frontend.solve sc u vs = .ok .unsat) : sc.satisfiability false :=
+  Frontend.solve_unsat h
+
+/-- **Correctness of `sat`** (`telos --solve`): if telos answers `sat`, the
+script's input is satisfiable in Logos's semantics. -/
+theorem solve_sat_correct {sc : Frontend.Script} {u : Preprocess.UserOptions} {vs : Bool}
+    (h : Frontend.solve sc u vs = .ok .sat) : sc.satisfiability true :=
+  Frontend.solve_sat h
+
+/-- `solve_unsat_correct` for `solveScript` with any options (also
+`telos --theory-events`): if the theory engine answers `unsat` on a script whose
+assertions are Boolean, no well-formed model satisfies them. -/
+theorem solveScript_unsat_correct (sc : Frontend.Script) (u : Preprocess.UserOptions) (ee pp wp co vs te ev : Bool)
+    {out : List Node} {r : Solver.Result} (h : Frontend.solveScript sc u ee pp wp co vs te ev = .ok (out, r))
     (hu : r.answer = .unsat) {opts : Preprocess.PPOptions} {as : List Node}
     (hin : Frontend.ppInput sc u = .ok (opts, as)) (hb : ∀ a ∈ as, HasBoolType a.toEo) :
     ∀ M, model_wf M → ¬ TrueIn M (Preprocess.inputNode as).toEo :=
-  Frontend.solveScript_unsat sc u ee pp wp co vs h hu hin hb
+  Frontend.solveScript_unsat sc u ee pp wp co vs te ev h hu hin hb
 
-/-- **Correctness of `sat`** (`telos --theory-events`). If the theory engine
-answers `sat`, its model satisfies the assertions: they are true in a
+/-- `solve_sat_correct` for `solveScript` with any options: if the theory
+engine answers `sat`, its model satisfies the assertions: they are true in a
 well-formed model. -/
-theorem solve_sat_correct (sc : Frontend.Script) (u : Preprocess.UserOptions) (ee pp wp co vs : Bool)
-    {out : List Node} {r : Solver.Result} (h : Frontend.solveScript sc u ee pp wp co vs = .ok (out, r))
+theorem solveScript_sat_correct (sc : Frontend.Script) (u : Preprocess.UserOptions) (ee pp wp co vs te ev : Bool)
+    {out : List Node} {r : Solver.Result} (h : Frontend.solveScript sc u ee pp wp co vs te ev = .ok (out, r))
     (hs : r.answer = .sat) {opts : Preprocess.PPOptions} {as : List Node}
     (hin : Frontend.ppInput sc u = .ok (opts, as)) :
     ∃ M, model_wf M ∧ TrueIn M (Preprocess.inputNode as).toEo :=
-  Frontend.solveScript_sat sc u ee pp wp co vs h hs hin
+  Frontend.solveScript_sat sc u ee pp wp co vs te ev h hs hin
 
 end Telos
 
@@ -182,3 +195,5 @@ end Telos
 #assert_axioms Telos.preprocess_correct
 #assert_axioms Telos.solve_unsat_correct
 #assert_axioms Telos.solve_sat_correct
+#assert_axioms Telos.solveScript_unsat_correct
+#assert_axioms Telos.solveScript_sat_correct

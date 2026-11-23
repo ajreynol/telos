@@ -51,8 +51,8 @@ open Preprocess
 
 /-- **Correctness of `unsat`.** If telos answers `unsat` on a script whose
 assertions are Boolean, no well-formed model satisfies the input assertions. -/
-theorem solveScript_unsat (sc : Script) (u : UserOptions) (ee pp wp co vs : Bool)
-    {out : List Node} {r : Solver.Result} (h : solveScript sc u ee pp wp co vs = .ok (out, r))
+theorem solveScript_unsat (sc : Script) (u : UserOptions) (ee pp wp co vs te ev : Bool)
+    {out : List Node} {r : Solver.Result} (h : solveScript sc u ee pp wp co vs te ev = .ok (out, r))
     (hu : r.answer = .unsat) {opts : PPOptions} {as : List Node}
     (hin : ppInput sc u = .ok (opts, as)) (hb : ∀ a ∈ as, HasBoolType a.toEo) :
     ∀ M, model_wf M → ¬ TrueIn M (inputNode as).toEo := by

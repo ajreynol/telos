@@ -2233,8 +2233,8 @@ variable [LogosFacts]
 
 /-- **`solveScript`'s `sat` answers are correct**: the assertions are
 satisfiable, in the Logos model of the model found. -/
-theorem solveScript_sat (sc : Script) (u : UserOptions) (ee pp wp co vs : Bool)
-    {out : List Node} {r : Solver.Result} (h : solveScript sc u ee pp wp co vs = .ok (out, r))
+theorem solveScript_sat (sc : Script) (u : UserOptions) (ee pp wp co vs te ev : Bool)
+    {out : List Node} {r : Solver.Result} (h : solveScript sc u ee pp wp co vs te ev = .ok (out, r))
     (hs : r.answer = .sat) {opts : PPOptions} {as : List Node}
     (hin : ppInput sc u = .ok (opts, as)) :
     ∃ M, model_wf M ∧ TrueIn M (inputNode as).toEo := by

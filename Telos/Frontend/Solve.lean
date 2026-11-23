@@ -288,6 +288,13 @@ def solveAnswer (sc : Script) (u : Preprocess.UserOptions := {}) (viaSat : Bool 
   let (_, r) ← solveScript sc u (viaSat := viaSat) (events := false)
   return (r.answer, unknownReason r)
 
+/-- **The solver**: the answer of `telos --solve` on the script `sc`, with the
+user's options `u` (and `viaSat`: the SAT solver even for a conjunction of
+literals). The answer of `solveAnswer`, which also says why it is `unknown`. -/
+def solve (sc : Script) (u : Preprocess.UserOptions := {}) (viaSat : Bool := false) :
+    Except String Solver.Answer :=
+  (solveAnswer sc u viaSat).map (·.1)
+
 /-- Preprocess `sc`, solve the result if it is a conjunction of literals, and
 print the events and the answer; also why an `unsat` of the engine was not
 certified, if it was not (the answer is then `unknown`), and with `withProof`
