@@ -1,5 +1,6 @@
 import Telos.Core.Node.ToEo
 import Telos.Core.Node.KindTy
+import Telos.Core.Node.TermTyDefs
 
 /-!
 # SMT types without translating to Logos
@@ -37,8 +38,8 @@ def smtTypeR (t : Node) : SmtType :=
   | .app (.kind k) cs =>
     match kindTy k (cs.attach.toList.map fun ⟨c, _⟩ => c.fastTy.getD c.smtTypeR) with
     | some T => T
-    | none => t.smtType
-  | _ => t.smtType
+    | none => termTyF t.toEo
+  | _ => termTyF t.toEo
 
 /-- `smtType`, computed on the node: its kept type (`fastTy`), else `smtTypeR`. -/
 def smtTypeF (t : Node) : SmtType := t.fastTy.getD t.smtTypeR
@@ -49,8 +50,6 @@ Logos's typing rule of each operator, as the translation writes the
 application: `termTy_*` for the operators, `app_*` for the shapes of the kinds
 (`Kind.eoShape`), and `kindTy_sound` for `kindTy`. -/
 
-/-- The SMT type of a Logos term's translation. -/
-def termTy (t : Term) : SmtType := __smtx_typeof (__eo_to_smt t)
 theorem termTy_toEo (a : Node) : termTy a.toEo = a.smtType := rfl
 theorem termTy_imp (a b : Term) : termTy (Term.Apply (Term.Apply (Term.UOp UserOp.imp) a) b) = boolTy2 (termTy a) (termTy b) := by
   unfold termTy; rw [show __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.imp) a) b) = SmtTerm.imp (__eo_to_smt a) (__eo_to_smt b) from rfl, __smtx_typeof.eq_def] <;> rfl
@@ -135,6 +134,128 @@ theorem termTy_ra (op : UserOp) (f : SmtType → SmtType → SmtType)
   | [] => rfl
   | x :: xs => by simp only [eoRightAssocNil, hop, termTy_ra op f hop nil xs, List.map, List.foldr]
 
+
+theorem typeof_none : __smtx_typeof SmtTerm.None = .None := by
+  rw [__smtx_typeof.eq_def]
+
+theorem typeof_split (a b c : SmtTerm) : __smtx_typeof (SmtTerm.str_indexof_re_split a b c) =
+    splitTy (__smtx_typeof a) (__smtx_typeof b) (__smtx_typeof c) := by
+  rw [__smtx_typeof.eq_def]; rfl
+
+theorem typeof_substr (a b c : SmtTerm) : __smtx_typeof (SmtTerm.str_substr a b c) =
+    __smtx_typeof_str_substr (__smtx_typeof a) (__smtx_typeof b) (__smtx_typeof c) := by
+  rw [__smtx_typeof.eq_def]
+
+theorem typeof_neg (a b : SmtTerm) : __smtx_typeof (SmtTerm.neg a b) =
+    __smtx_typeof_arith_overload_op_2 (__smtx_typeof a) (__smtx_typeof b) := by
+  rw [__smtx_typeof.eq_def]
+
+theorem typeof_len (a : SmtTerm) : __smtx_typeof (SmtTerm.str_len a) =
+    __smtx_typeof_seq_op_1_ret (__smtx_typeof a) .Int := by
+  rw [__smtx_typeof.eq_def]
+
+theorem typeof_numeral (i : native_Int) : __smtx_typeof (SmtTerm.Numeral i) = .Int := by
+  rw [__smtx_typeof.eq_def]
+
+theorem compTy_eq : ∀ (n : Nat) (S R : SmtTerm),
+    __smtx_typeof (__eo_to_smt_re_unfold_pos_component S R n) = compTy (__smtx_typeof S) R n := by
+  intro n
+  induction n with
+  | zero =>
+    intro S R
+    cases R <;> simp only [__eo_to_smt_re_unfold_pos_component, compTy, typeof_none, typeof_substr,
+      typeof_split, typeof_numeral]
+  | succ n ih =>
+    intro S R
+    cases R <;> simp only [__eo_to_smt_re_unfold_pos_component, compTy, typeof_none, ih, typeof_substr,
+      typeof_split, typeof_neg, typeof_len]
+
+theorem termTy_comp (x₁ x₂ x₃ : Term) :
+    termTy (Term.UOp3 UserOp3._at_re_unfold_pos_component x₁ x₂ x₃) =
+      native_ite (__eo_to_smt_nat_is_valid x₃) (compTy (termTy x₁) (__eo_to_smt x₂) (__eo_to_smt_nat x₃)) .None := by
+  unfold termTy
+  rw [show __eo_to_smt (Term.UOp3 UserOp3._at_re_unfold_pos_component x₁ x₂ x₃) =
+    native_ite (__eo_to_smt_nat_is_valid x₃)
+      (__eo_to_smt_re_unfold_pos_component (__eo_to_smt x₁) (__eo_to_smt x₂) (__eo_to_smt_nat x₃)) SmtTerm.None
+    from rfl]
+  cases __eo_to_smt_nat_is_valid x₃ <;> simp [native_ite, compTy_eq, typeof_none]
+
+theorem termTy_str_in_re (a b : Term) :
+    termTy (Term.Apply (Term.Apply (Term.UOp UserOp.str_in_re) a) b) =
+      native_ite (native_Teq (termTy a) (.Seq .Char)) (native_ite (native_Teq (termTy b) .RegLan) .Bool .None) .None := by
+  unfold termTy
+  rw [show __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.str_in_re) a) b) =
+    SmtTerm.str_in_re (__eo_to_smt a) (__eo_to_smt b) from rfl, __smtx_typeof.eq_def]
+
+theorem termTy_str_to_code (a : Term) :
+    termTy (Term.Apply (Term.UOp UserOp.str_to_code) a) =
+      native_ite (native_Teq (termTy a) (.Seq .Char)) .Int .None := by
+  unfold termTy
+  rw [show __eo_to_smt (Term.Apply (Term.UOp UserOp.str_to_code) a) =
+    SmtTerm.str_to_code (__eo_to_smt a) from rfl, __smtx_typeof.eq_def]
+
+theorem termTy_str_contains (a b : Term) : termTy (Term.Apply (Term.Apply (Term.UOp UserOp.str_contains) a) b) =
+    __smtx_typeof_seq_op_2_ret (termTy a) (termTy b) .Bool := by
+  unfold termTy; rw [show __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.str_contains) a) b) = (SmtTerm.str_contains (__eo_to_smt a) (__eo_to_smt b)) from rfl, __smtx_typeof.eq_def]
+
+theorem termTy_str_prefixof (a b : Term) : termTy (Term.Apply (Term.Apply (Term.UOp UserOp.str_prefixof) a) b) =
+    __smtx_typeof_seq_op_2_ret (termTy a) (termTy b) .Bool := by
+  unfold termTy; rw [show __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.str_prefixof) a) b) = (SmtTerm.str_prefixof (__eo_to_smt a) (__eo_to_smt b)) from rfl, __smtx_typeof.eq_def]
+
+theorem termTy_str_suffixof (a b : Term) : termTy (Term.Apply (Term.Apply (Term.UOp UserOp.str_suffixof) a) b) =
+    __smtx_typeof_seq_op_2_ret (termTy a) (termTy b) .Bool := by
+  unfold termTy; rw [show __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.str_suffixof) a) b) = (SmtTerm.str_suffixof (__eo_to_smt a) (__eo_to_smt b)) from rfl, __smtx_typeof.eq_def]
+
+theorem termTy_str_at (a b : Term) : termTy (Term.Apply (Term.Apply (Term.UOp UserOp.str_at) a) b) =
+    __smtx_typeof_str_at (termTy a) (termTy b) := by
+  unfold termTy; rw [show __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.str_at) a) b) = (SmtTerm.str_at (__eo_to_smt a) (__eo_to_smt b)) from rfl, __smtx_typeof.eq_def]
+
+theorem termTy_str_indexof (a b c : Term) : termTy (Term.Apply (Term.Apply (Term.Apply (Term.UOp UserOp.str_indexof) a) b) c) =
+    __smtx_typeof_str_indexof (termTy a) (termTy b) (termTy c) := by
+  unfold termTy; rw [show __eo_to_smt (Term.Apply (Term.Apply (Term.Apply (Term.UOp UserOp.str_indexof) a) b) c) = (SmtTerm.str_indexof (__eo_to_smt a) (__eo_to_smt b) (__eo_to_smt c)) from rfl, __smtx_typeof.eq_def]
+
+theorem termTy_str_replace (a b c : Term) : termTy (Term.Apply (Term.Apply (Term.Apply (Term.UOp UserOp.str_replace) a) b) c) =
+    __smtx_typeof_seq_op_3 (termTy a) (termTy b) (termTy c) := by
+  unfold termTy; rw [show __eo_to_smt (Term.Apply (Term.Apply (Term.Apply (Term.UOp UserOp.str_replace) a) b) c) = (SmtTerm.str_replace (__eo_to_smt a) (__eo_to_smt b) (__eo_to_smt c)) from rfl, __smtx_typeof.eq_def]
+
+theorem termTy_str_replace_all (a b c : Term) : termTy (Term.Apply (Term.Apply (Term.Apply (Term.UOp UserOp.str_replace_all) a) b) c) =
+    __smtx_typeof_seq_op_3 (termTy a) (termTy b) (termTy c) := by
+  unfold termTy; rw [show __eo_to_smt (Term.Apply (Term.Apply (Term.Apply (Term.UOp UserOp.str_replace_all) a) b) c) = (SmtTerm.str_replace_all (__eo_to_smt a) (__eo_to_smt b) (__eo_to_smt c)) from rfl, __smtx_typeof.eq_def]
+
+theorem termTy_str_to_re (a : Term) : termTy (Term.Apply (Term.UOp UserOp.str_to_re) a) =
+    native_ite (native_Teq (termTy a) (.Seq .Char)) .RegLan .None := by
+  unfold termTy; rw [show __eo_to_smt (Term.Apply (Term.UOp UserOp.str_to_re) a) = (SmtTerm.str_to_re (__eo_to_smt a)) from rfl, __smtx_typeof.eq_def]
+
+theorem termTy_str_to_int (a : Term) : termTy (Term.Apply (Term.UOp UserOp.str_to_int) a) =
+    native_ite (native_Teq (termTy a) (.Seq .Char)) .Int .None := by
+  unfold termTy; rw [show __eo_to_smt (Term.Apply (Term.UOp UserOp.str_to_int) a) = (SmtTerm.str_to_int (__eo_to_smt a)) from rfl, __smtx_typeof.eq_def]
+
+theorem termTy_str_from_int (a : Term) : termTy (Term.Apply (Term.UOp UserOp.str_from_int) a) =
+    native_ite (native_Teq (termTy a) .Int) (.Seq .Char) .None := by
+  unfold termTy; rw [show __eo_to_smt (Term.Apply (Term.UOp UserOp.str_from_int) a) = (SmtTerm.str_from_int (__eo_to_smt a)) from rfl, __smtx_typeof.eq_def]
+
+theorem termTy_str_from_code (a : Term) : termTy (Term.Apply (Term.UOp UserOp.str_from_code) a) =
+    native_ite (native_Teq (termTy a) .Int) (.Seq .Char) .None := by
+  unfold termTy; rw [show __eo_to_smt (Term.Apply (Term.UOp UserOp.str_from_code) a) = (SmtTerm.str_from_code (__eo_to_smt a)) from rfl, __smtx_typeof.eq_def]
+
+theorem termTy_str_is_digit (a : Term) : termTy (Term.Apply (Term.UOp UserOp.str_is_digit) a) =
+    native_ite (native_Teq (termTy a) (.Seq .Char)) .Bool .None := by
+  unfold termTy; rw [show __eo_to_smt (Term.Apply (Term.UOp UserOp.str_is_digit) a) = (SmtTerm.str_is_digit (__eo_to_smt a)) from rfl, __smtx_typeof.eq_def]
+
+theorem termTy_str_rev (a : Term) : termTy (Term.Apply (Term.UOp UserOp.str_rev) a) =
+    __smtx_typeof_seq_op_1 (termTy a) := by
+  unfold termTy; rw [show __eo_to_smt (Term.Apply (Term.UOp UserOp.str_rev) a) = (SmtTerm.str_rev (__eo_to_smt a)) from rfl, __smtx_typeof.eq_def]
+
+theorem termTyF_eq (t : Term) : termTyF t = termTy t := by
+  fun_induction termTyF t <;>
+    simp_all only [termTy_comp, termTy_str_in_re, termTy_str_to_code, termTy_eq, termTy_and,
+      termTy_or, termTy_not, termTy_str_concat, termTy_str_len, termTy_purify,
+      termTy_plus, termTy_geq, termTy_ite, termTy_mult, termTy_neg, termTy_eoo_neg_2, termTy_lt, termTy_leq, termTy_gt,
+      termTy_to_real, termTy_imp, termTy_xor, termTy_str_substr, termTy_str_contains, termTy_str_prefixof, termTy_str_suffixof, termTy_str_at, termTy_str_indexof, termTy_str_replace, termTy_str_replace_all, termTy_str_to_re, termTy_str_to_int, termTy_str_from_int, termTy_str_from_code, termTy_str_is_digit, termTy_str_rev]
+
+theorem typedNil_eq (op : UserOp) (x : Term) : typedNil op x = typedNilOfType op (termTy x) := rfl
+
+
 theorem map_one {l : List Node} {x : SmtType} (h : l.map smtType = [x]) : ∃ a, l = [a] ∧ a.smtType = x := by
   match l, h with | [a], h => exact ⟨a, rfl, by simpa using h⟩
 theorem map_two {l : List Node} {x y : SmtType} (h : l.map smtType = [x, y]) :
@@ -194,11 +315,13 @@ theorem app_OR (a b : Term) (r : List Term) : termTy (Kind.OR.eoShape.toEo (a ::
   rw [termTy_ra .or boolTy2 termTy_or, termTy_false]
 theorem app_ADD (a b : Term) (r : List Term) : termTy (Kind.ADD.eoShape.toEo (a :: b :: r)) =
     ((a :: b :: r).map termTy).foldr __smtx_typeof_arith_overload_op_2 (arithNilTy (termTy a)) := by
-  show termTy (eoRightAssocNil .plus (typedNilOfType .plus (termTy a)) (a :: b :: r)) = _
+  show termTy (eoRightAssocNil .plus (typedNil .plus a) (a :: b :: r)) = _
+  rw [typedNil_eq]
   rw [termTy_ra .plus _ termTy_plus, termTy_nil_plus]
 theorem app_MULT (a b : Term) (r : List Term) : termTy (Kind.MULT.eoShape.toEo (a :: b :: r)) =
     ((a :: b :: r).map termTy).foldr __smtx_typeof_arith_overload_op_2 (arithNilTy (termTy a)) := by
-  show termTy (eoRightAssocNil .mult (typedNilOfType .mult (termTy a)) (a :: b :: r)) = _
+  show termTy (eoRightAssocNil .mult (typedNil .mult a) (a :: b :: r)) = _
+  rw [typedNil_eq]
   rw [termTy_ra .mult _ termTy_mult, termTy_nil_mult]
 
 theorem app_STRING_LENGTH (a : Term) : termTy (Kind.STRING_LENGTH.eoShape.toEo [a]) = __smtx_typeof_seq_op_1_ret (termTy a) .Int := by
@@ -210,7 +333,8 @@ theorem app_STRING_SUBSTR (a b c : Term) : termTy (Kind.STRING_SUBSTR.eoShape.to
 theorem app_STRING_CONCAT (a b : Term) (r : List Term) (h : termTy a = .Seq .Char) :
     termTy (Kind.STRING_CONCAT.eoShape.toEo (a :: b :: r)) =
       ((a :: b :: r).map termTy).foldr __smtx_typeof_seq_op_2 (.Seq .Char) := by
-  show termTy (eoRightAssocNil .str_concat (typedNilOfType .str_concat (termTy a)) (a :: b :: r)) = _
+  show termTy (eoRightAssocNil .str_concat (typedNil .str_concat a) (a :: b :: r)) = _
+  rw [typedNil_eq]
   rw [termTy_ra .str_concat _ termTy_str_concat, h, termTy_nil_str_concat]
 
 theorem map_toEo_ty (l : List Node) : (l.map toEo).map termTy = l.map smtType := by
@@ -381,14 +505,14 @@ theorem smtTypeR_eq (t : Node) : t.smtTypeR = t.smtType := by
   | .const (.integer n) => rw [smtType_int, smtTypeR]
   | .const (.rational q) => rw [smtType_rat, smtTypeR]
   | .const (.bitVector _ _) | .const (.string _) | .const (.emptySet _) | .const (.dtCons _ _)
-  | .const (.dtSel _ _ _) => rw [smtTypeR] <;> (intros; simp_all)
+  | .const (.dtSel _ _ _) => rw [smtTypeR] <;> first | exact termTyF_eq _ | (intros; simp_all)
   | .var x T =>
     cases T
     case boolean => rw [smtType_var_boolean, smtTypeR]
     case integer => rw [smtType_var_integer, smtTypeR]
     case real => rw [smtType_var_real, smtTypeR]
-    all_goals (rw [smtTypeR] <;> (intros; simp_all))
-  | .boundVar _ _ | .skolem _ _ | .app (.indexed _ _) _ | .app (.node _ _) _ => rw [smtTypeR] <;> (intros; simp_all)
+    all_goals (rw [smtTypeR] <;> first | exact termTyF_eq _ | (intros; simp_all))
+  | .boundVar _ _ | .skolem _ _ | .app (.indexed _ _) _ | .app (.node _ _) _ => rw [smtTypeR] <;> first | exact termTyF_eq _ | (intros; simp_all)
   | .app (.kind k) cs =>
     have ih : cs.attach.toList.map (fun ⟨c, _⟩ => c.fastTy.getD c.smtTypeR) = cs.toList.map smtType := by
       have hc : ∀ c ∈ cs, c.fastTy.getD c.smtTypeR = c.smtType := fun c _ => by
@@ -413,7 +537,7 @@ theorem smtTypeR_eq (t : Node) : t.smtTypeR = t.smtType := by
       show _ = termTy (Node.app (.kind k) cs).toEo
       rw [toEo_app]
       exact (kindTy_sound hT).symm
-    · rfl
+    · exact termTyF_eq _
 
 theorem smtTypeF_eq (t : Node) : t.smtTypeF = t.smtType := by
   unfold smtTypeF
@@ -436,6 +560,116 @@ def getTypeF (t : Node) : Option TypeNode := TypeNode.ofSmt t.smtTypeF
 
 theorem getTypeF_eq (t : Node) : t.getTypeF = t.getType := by
   rw [getTypeF, smtTypeF_eq]; rfl
+
+/-! ## The translation, with the nils typed by `termTyF`
+
+`Node.toEo` (the specification) types the first element of a list by
+translating it (`typedNil`), which for a component skolem of an unfolding is
+exponential (see `termTyF`). The copies below type it by `termTyF`, and are
+proven equal to the originals: the compiler uses them in their place
+(`@[csimp]`), in the code that imports this module. -/
+
+def typedNilF (op : UserOp) (x : Term) : Term := typedNilOfType op (termTyF x)
+
+def nilEvalF (op : UserOp) : Telos.Nil → Term → Term
+  | .const t, _ => t
+  | .typed, x => typedNilF op x
+
+def shapeToEoF : AppShape → List Term → Term
+  | .spine head arity, xs => if arity.accepts xs.length then xs.foldl Term.Apply head else Term.Stuck
+  | .rightAssocNil op nil, xs =>
+    if 2 ≤ xs.length then eoRightAssocNil op (nilEvalF op nil (xs.headD Term.Stuck)) xs
+    else Term.Stuck
+  | .typedList op, xs =>
+    if 2 ≤ xs.length then
+      eoApp1 op (eoRightAssocNil UserOp._at__at_TypedList_cons
+        (typedNilF UserOp._at__at_TypedList_cons (xs.headD Term.Stuck)) xs)
+    else Term.Stuck
+  | .binderList, xs => eoList xs
+  | .binder op, [vs, body] | .binder op, [vs, body, _] => eoApp2 op vs body
+  | .binder _, _ => Term.Stuck
+  | .none, _ => Term.Stuck
+
+def toEoF : Node → Term
+  | .const c => c.toEo
+  | .var name T => Term.UConst (constId name) T.toEo
+  | .boundVar name T => Term.Var (Term.String (native_string_lit name)) T.toEo
+  | .skolem id cs => id.toEo (cs.attach.toList.map fun ⟨c, _⟩ => c.toEoF)
+  | .app (.kind k) cs => shapeToEoF k.eoShape (cs.attach.toList.map fun ⟨c, _⟩ => c.toEoF)
+  | .app (.indexed k is) cs =>
+      shapeToEoF (indexedEoShape k is.toList) (cs.attach.toList.map fun ⟨c, _⟩ => c.toEoF)
+  | .app (.node k f) cs =>
+      shapeToEoF (nodeEoShape k f.toEoF) (cs.attach.toList.map fun ⟨c, _⟩ => c.toEoF)
+
+@[csimp] theorem typedNil_csimp : @typedNil = @typedNilF := by
+  funext op x; simp [typedNilF, typedNil, termTyF_eq, termTy]
+
+@[csimp] theorem nilEval_csimp : @Telos.Nil.eval = @nilEvalF := by
+  funext op n x; cases n <;> simp [nilEvalF, Telos.Nil.eval, typedNil_csimp]
+
+@[csimp] theorem shapeToEo_csimp : @AppShape.toEo = @shapeToEoF := by
+  funext s xs
+  cases s <;> (try rfl) <;> (simp only [AppShape.toEo, shapeToEoF, nilEval_csimp, typedNil_csimp]) <;> rfl
+
+theorem toEoF_eq : ∀ n : Node, n.toEoF = n.toEo
+  | .const c => by rw [toEoF, toEo]
+  | .var name T => by rw [toEoF, toEo]
+  | .boundVar name T => by rw [toEoF, toEo]
+  | .skolem id cs => by
+    rw [toEoF, toEo]
+    congr 1
+    apply List.map_congr_left
+    intro ⟨c, hc⟩ _
+    exact toEoF_eq c
+  | .app (.kind k) cs => by
+    rw [toEoF, toEo, ← shapeToEo_csimp]
+    congr 1
+    apply List.map_congr_left
+    intro ⟨c, hc⟩ _
+    exact toEoF_eq c
+  | .app (.indexed k is) cs => by
+    rw [toEoF, toEo, ← shapeToEo_csimp]
+    congr 1
+    apply List.map_congr_left
+    intro ⟨c, hc⟩ _
+    exact toEoF_eq c
+  | .app (.node k f) cs => by
+    rw [toEoF, toEo, ← shapeToEo_csimp, toEoF_eq f]
+    congr 1
+    apply List.map_congr_left
+    intro ⟨c, hc⟩ _
+    exact toEoF_eq c
+termination_by n => sizeOf n
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | (have := Array.sizeOf_lt_of_mem hc; omega)
+    | omega
+
+@[csimp] theorem toEo_csimp : @toEo = @toEoF := by
+  funext n; exact (toEoF_eq n).symm
+
+/-- The other definitions of `ToEo.lean` that translate, by the fast copies
+(their callers there are compiled before `toEo_csimp`). -/
+def toSmtF (t : Node) : SmtTerm := __eo_to_smt t.toEoF
+
+@[csimp] theorem toSmt_csimp : @toSmt = @toSmtF := by
+  funext t; simp [toSmt, toSmtF, toEoF_eq]
+
+def smtTypeFF (t : Node) : SmtType := t.smtTypeF
+
+@[csimp] theorem smtType_csimp : @smtType = @smtTypeFF := by
+  funext t; simp [smtTypeFF, smtTypeF_eq]
+
+def getTypeFF (t : Node) : Option TypeNode := TypeNode.ofSmt t.smtTypeF
+
+@[csimp] theorem getType_csimp : @getType = @getTypeFF := by
+  funext t; simp [getTypeFF, getType, smtTypeF_eq]
+
+def eqFormulaF (t s : Node) : Term := eoApp2 UserOp.eq t.toEoF s.toEoF
+
+@[csimp] theorem eqFormula_csimp : @eqFormula = @eqFormulaF := by
+  funext t s; simp [eqFormula, eqFormulaF, toEoF_eq]
 
 end Node
 

@@ -1,6 +1,7 @@
 import Telos.Core.Node.OfEo
 import Telos.Core.Node.DecEq
 import Cpc.TranslationChecks
+import Telos.Core.FastTranslation
 import Telos.Core.RuleNames
 import Telos.Core.Profile
 import Telos.Core.Static

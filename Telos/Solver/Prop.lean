@@ -336,6 +336,7 @@ def propSolve (formulas : List Node) : PropM Sat.Solver.Result := do
   -- `TheoryProxy::presolve`: the decision engine's, then the theories'
   modifyThe PropState fun p => { p with dec := p.dec.presolve }
   if c.arithSolver then onEngineTop (withArith Arith.presolve)
+  onEngine (modify fun s => { s with satBusy := true })
   Sat.Solver.solve
 
 /-- The inputs of the certificate of a refutation of `formulas`. -/

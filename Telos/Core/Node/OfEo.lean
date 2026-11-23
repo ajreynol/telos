@@ -1,4 +1,5 @@
 import Telos.Core.Node.ToEo
+import Telos.Core.Node.SmtTypeFast
 
 /-!
 # From Logos terms back to nodes
@@ -216,6 +217,8 @@ partial def ofEo (env : List Node) (t : Term) : Option Node := do
     app .DISTINCT elems
   | .UOp UserOp.forall, [vs, body] => binder .FORALL vs body
   | .UOp UserOp.exists, [vs, body] => binder .EXISTS vs body
+  | .UOp3 UserOp3._at_re_unfold_pos_component s r i, [] =>
+      return .skolem .RE_UNFOLD_POS_COMPONENT #[← ofEo env s, ← ofEo env r, ← ofEo env i]
   | .UOp2 UserOp2.re_loop (.Numeral i) (.Numeral j), [x] =>
       return .app (.indexed .REGEXP_LOOP #[i, j]) #[← ofEo env x]
   | .UOp2 UserOp2.extract (.Numeral i) (.Numeral j), [x] =>

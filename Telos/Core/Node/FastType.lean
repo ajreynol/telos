@@ -48,6 +48,7 @@ def rangeAfter : Nat → Option TypeNode → Option TypeNode
 def skolemType? : SkolemId → Option TypeNode
   | .INT_DIV_BY_ZERO | .MOD_BY_ZERO => some (.function .integer .integer)
   | .DIV_BY_ZERO => some (.function .real .real)
+  | .RE_UNFOLD_POS_COMPONENT => some .string
   | .PURIFY | .SETS_DEQ_DIFF | .QUANTIFIERS_SKOLEMIZE => none
 
 /-- The type of `(@quantifiers_skolemize q i)`: that of the `i`-th variable of

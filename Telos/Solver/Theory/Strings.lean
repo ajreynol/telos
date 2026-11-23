@@ -277,6 +277,14 @@ def congruenceKind (k : Kind) : Bool :=
     k == .STRING_REPLACE_ALL || k == .STRING_REPLACE_RE || k == .STRING_REPLACE_RE_ALL ||
     k == .STRING_TO_LOWER || k == .STRING_TO_UPPER || k == .STRING_REV
 
+/-- The kinds of the extended functions (`ExtfSolver`'s function kinds). -/
+def extfKind (k : Kind) : Bool :=
+  k == .STRING_SUBSTR || k == .STRING_UPDATE || k == .STRING_INDEXOF || k == .STRING_INDEXOF_RE ||
+    k == .STRING_ITOS || k == .STRING_STOI || k == .STRING_REPLACE || k == .STRING_REPLACE_ALL ||
+    k == .STRING_REPLACE_RE || k == .STRING_REPLACE_RE_ALL || k == .STRING_CONTAINS ||
+    k == .STRING_IN_REGEXP || k == .STRING_LEQ || k == .STRING_TO_CODE || k == .STRING_TO_LOWER ||
+    k == .STRING_TO_UPPER || k == .STRING_REV
+
 /-- The kinds whose applications to constants the engine evaluates. -/
 def interpretedKind (k : Kind) : Bool := congruenceKind k
 
@@ -308,6 +316,11 @@ def assertFact (fact : Node) : EEM Unit := do
   match atom with
   | .app (.kind .EQUAL) _ => let _ ← assertEquality atom pol fact
   | _ => let _ ← assertPredicate atom pol fact
+  -- `EagerSolver::notifyFact`: the constant endpoints of a positive membership
+  -- in a concatenation (`stringsEagerLenEntRegexp` is off)
+  if let .app (.kind .STRING_IN_REGEXP) #[x, r] := atom then
+    if pol && r.getKind == .REGEXP_CONCAT && !(← st).pendingConflict.isSome then
+      let _ ← addEndpointsToEqcInfo atom r (← rep x)
   processPendingConflict
 
 /-! ## Registration (`TermRegistry`) -/
@@ -379,13 +392,39 @@ def registerTermLemma (n : Node) : m (Option Node) := do
   let ceq ← ops.run (rw (Node.eqNode skl lsum))
   return some (Node.mkNode .AND #[eq, ceq])
 
-/-- `registerTerm`: the length lemma of a string term, once (user context). -/
+/-- `utils::eagerReduce`, for the terms other than strings
+(`STRING_EAGER_REDUCTION`): the range of a code, the bounds of an index and of
+an integer of a string. (`str.contains` is not reduced eagerly; `seq.nth`
+comes with sequences.) -/
+def eagerReduce (t : Node) : Option Node :=
+  let negOne := intConst (-1)
+  match t with
+  | .app (.kind .STRING_TO_CODE) #[s] =>
+    let codeLen := Node.eqNode (mkLen s) (intConst 1)
+    let range := Node.mkNode .AND #[Node.mkNode .GEQ #[t, intConst 0], Node.mkNode .LT #[t, intConst 196608]]
+    some (Node.mkNode .ITE #[codeLen, range, Node.eqNode t negOne])
+  | .app (.kind .STRING_INDEXOF) #[x, _, n] | .app (.kind .STRING_INDEXOF_RE) #[x, _, n] =>
+    some (Node.mkNode .AND #[Node.mkNode .OR #[Node.eqNode t negOne, Node.mkNode .GEQ #[t, n]],
+      Node.mkNode .LEQ #[t, mkLen x]])
+  | .app (.kind .STRING_STOI) _ => some (Node.mkNode .GEQ #[t, negOne])
+  | _ => none
+
+/-- `registerTerm`: the length lemma of a string term, or the eager reduction
+of another (but the code of a constant), once (user context). -/
 def registerTerm (n : Node) : m Unit := do
   if (← ops.run st).registered.contains ⟨n⟩ then return
   ops.run (modifyStrings fun s => { s with registered := s.registered.insert ⟨n⟩ })
   if isStringLike n then
     if let some lem ← registerTermLemma ops n then
       let _ ← ops.run (trustedLemma lem "STRINGS_REGISTER_TERM")
+  else
+    let doEager := match n with
+      | .app (.kind .STRING_TO_CODE) #[a] => !(originalForm a).isConst
+      | .app (.kind .STRING_CONTAINS) _ => false
+      | _ => true
+    if doEager then
+      if let some lem := eagerReduce n then
+        let _ ← ops.run (trustedLemma lem "STRINGS_REGISTER_TERM")
 
 mutual
   /-- `registerType`: the empty word of a string type is preregistered and
@@ -402,15 +441,20 @@ mutual
   partial def preRegisterTerm (n : Node) : m Unit := do
     if (← ops.run st).preregistered.contains ⟨n⟩ then return
     ops.run (modifyStrings fun s => s.addPrereg n)
+    match n with
+    | .app (.kind .STRING_IN_REGEXP) _ => ops.phase n true
+    | .app (.kind .STRING_TO_CODE) _ => ops.run (modifyStrings fun s => { s with hasStrCode := true })
+    | _ => pure ()
     registerTerm ops n
     if let some T := n.typeHint then registerType T
     -- a predicate is a trigger unless it has a SAT value
     -- (`addEqualityEngineTriggerPredicate`)
+    -- (another predicate is not added: it is when it is asserted)
     match n with
     | .app (.kind k) _ =>
       if k == .EQUAL || k == .STRING_CONTAINS || k == .STRING_LEQ then
         if ← ops.hasSatValue n then ops.run (addTerm n) else ops.run (UF.addTriggerPredicate n)
-      else ops.run (addTerm n)
+      else if n.typeHint != some .boolean then ops.run (addTerm n)
     | _ => ops.run (addTerm n)
     -- the function terms, for the care graph
     match n with
@@ -418,6 +462,8 @@ mutual
       if congruenceKind k && k != .STRING_CONCAT && k != .STRING_IN_REGEXP then
         ops.run (modifyStrings fun s => { s with functionTerms := s.functionTerms.push n })
     | _ => pure ()
+    -- `ExtTheory::registerTerm`
+    if extfKind n.getKind then ops.run (modifyStrings fun s => s.registerExt n)
 end
 
 end

@@ -29,13 +29,19 @@ inductive SkolemId where
   (`Skolemize::getSkolemConstant`). Its CPC term is the binary operator
   `@quantifiers_skolemize` of `q` and the numeral `i`. -/
   | QUANTIFIERS_SKOLEMIZE
+  /-- `(@re_unfold_pos_component s r i)`, with cache values a string `s`, a
+  regular expression `r` (a concatenation) and an integer `i`: the `i`-th
+  component of `s` in the unfolding of `(str.in_re s r)`
+  (`RegExpOpr::reduceRegExpPos`). Its CPC term is the ternary operator
+  `@re_unfold_pos_component`. -/
+  | RE_UNFOLD_POS_COMPONENT
   deriving DecidableEq, Repr, Inhabited, Hashable, Ord
 
 namespace SkolemId
 
 /-- All skolem identifiers (for reading CPC terms back). -/
 def all : List SkolemId := [.PURIFY, .INT_DIV_BY_ZERO, .MOD_BY_ZERO, .DIV_BY_ZERO, .SETS_DEQ_DIFF,
-  .QUANTIFIERS_SKOLEMIZE]
+  .QUANTIFIERS_SKOLEMIZE, .RE_UNFOLD_POS_COMPONENT]
 
 /-- The number of cache values of a skolem with this identifier. -/
 def numCacheVals : SkolemId → Nat
@@ -43,6 +49,7 @@ def numCacheVals : SkolemId → Nat
   | .INT_DIV_BY_ZERO | .MOD_BY_ZERO | .DIV_BY_ZERO => 0
   | .SETS_DEQ_DIFF => 2
   | .QUANTIFIERS_SKOLEMIZE => 2
+  | .RE_UNFOLD_POS_COMPONENT => 3
 
 /-- The CPC name of the skolem's operator, as cvc5 prints it. -/
 def name : SkolemId → String
@@ -52,6 +59,7 @@ def name : SkolemId → String
   | .DIV_BY_ZERO => "@div_by_zero"
   | .SETS_DEQ_DIFF => "@sets_deq_diff"
   | .QUANTIFIERS_SKOLEMIZE => "@quantifiers_skolemize"
+  | .RE_UNFOLD_POS_COMPONENT => "@re_unfold_pos_component"
 
 end SkolemId
 

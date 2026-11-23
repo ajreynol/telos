@@ -310,6 +310,9 @@ inductive SharedUndo where
   deriving Inhabited
 
 structure State where
+  /-- The SAT solver is searching (MiniSat's `minisat_busy`): the clauses of a
+  lemma are queued, and its unit clauses are not assigned yet. -/
+  satBusy : Bool := false
   events : Array Event := #[]
   /-- The linear arithmetic solver (`Telos/Solver/Theory/Arith/`). -/
   arith : Arith.State := {}
@@ -748,6 +751,29 @@ def quantRun (x : Quant.EM α) (flush : EngineM Unit := pure ()) : EngineM α :=
   if out.markUsed then modify fun s => { s with outputUsed := true }
   return a
 
+/-- The proof of an `ARITH_EQUIV_ATOM` lemma `(= lit atom)`, two equalities
+with the same normal form (`rewriter::normalizeEquality`, certified by
+`arith_poly_norm_rel`; cvc5's `mkArithPolyNormRel`): each side's rewrite to
+it, by transitivity. -/
+def equivAtomProof (o : NodeOrder) (lem : Node) : Option EqProof := do
+  let .app (.kind .EQUAL) #[lit, atom] := lem | none
+  let side (x : Node) : Option (Node × Option EqProof) :=
+    match Telos.Arith.normalizeEquality x o with
+    | some r => do
+      let cs ← Proof.cmdsOf r
+      some (r.1, some (.valid (Node.eqNode x r.1) cs))
+    | none => some (x, none)
+  let (n₁, p₁) ← side lit
+  let (n₂, p₂) ← side atom
+  if n₁ != n₂ then none
+  let q ← match p₁, p₂ with
+    | some a, some b => some (EqProof.trans a (.symm b))
+    | some a, none => some a
+    | none, some b => some (.symm b)
+    | none, none => none
+  let p := EqProof.eqTrue q
+  if EqProof.check #[] p == some (lem, Node.mkTrue) then some p else none
+
 /-- What the engine does with an output of the linear solver, but for the
 literals it ensures (`flushArithDeferred`). -/
 def arithOutput (o : Arith.Output) : EngineM Unit := do
@@ -755,7 +781,10 @@ def arithOutput (o : Arith.Output) : EngineM Unit := do
   | .lemma id lem cert =>
     emit (.lemma (← level) .THEORY_ARITH id lem)
     if (← read).satMode then
-      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lem, false, cert.map .arith, none),
+      let ao := (← read).arith.order
+      let fr := (← get).ee.freshIds
+      let proof := if id == "ARITH_EQUIV_ATOM" then equivAtomProof { ao with fresh := fr } lem else none
+      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lem, false, cert.map .arith, proof),
                                outputUsed := true, lemmasAdded := true }
     else
       modify fun s => { s with lemmaSent := true, lemmaQueue := s.lemmaQueue.push lem, lemmasAdded := true }
@@ -767,7 +796,18 @@ def arithOutput (o : Arith.Output) : EngineM Unit := do
                                outputUsed := true, lemmasAdded := true }
     let why := s!"a conflict of THEORY_ARITH, which is not certified yet"
     modify fun s => { s with inConflict := true, theoryConflict := true, cert := .error why }
-  | .propagate lit => propagate .THEORY_ARITH lit
+  | .propagate lit => do
+    propagate .THEORY_ARITH lit
+    -- an equality goes to the shared terms database too, now
+    -- (`assertToTheory(literal, literal, THEORY_BUILTIN, theory)`)
+    let c ← read
+    let (atom, pol) := atomOf lit
+    if c.sharing && c.eeSolver && atom.getKind == .EQUAL && !(← get).inConflict then
+      let k : Key := ⟨lit⟩
+      if !(← get).markedBuiltin.contains k then
+        modify fun s => { s with markedBuiltin := s.markedBuiltin.insert k,
+                                 sharedLog := s.sharedLog.push (.markedBuiltin k) }
+        withEE (do let _ ← EE.assertEquality atom pol lit)
   | .scopePop => emit (.pop (← level))
   | .phase .. | .ensureLiteral _ => pure ()  -- (`flushArithDeferred`)
 
@@ -1226,12 +1266,15 @@ def withCnf (x : StateT Cnf.State EngineM α) : EngineM α := do
   modify fun s => { s with cnf := c }
   return a
 
-/-- `Valuation::hasSatValue`: the atom is assigned, or a unit clause of it waits
-for the SAT solver (which assigns it when it is added, as a lemma's conjunct is,
-before the lemma's atoms are preregistered). -/
+/-- `Valuation::hasSatValue`: the atom is assigned, or, before the search, a
+unit clause of it waits for the SAT solver (which assigns it when it is added,
+as a lemma's conjunct is, before the lemma's atoms are preregistered); during
+the search, MiniSat queues the clauses of a lemma (`addClause_` when
+`minisat_busy`), so its units have no value yet. -/
 def hasSatValue (atom : Node) : EngineM Bool := do
   let s ← get
   if s.assignment.contains ⟨atom⟩ then return true
+  if s.satBusy then return false
   let some l := s.cnf.nodeToLit.get? ⟨atom⟩ | return false
   return s.cnf.ops.any fun
     | .clause ls _ _ => ls.size == 1 && ls[0]!.var == l.var
@@ -1879,7 +1922,8 @@ def combineTheories : EngineM Unit := do
     modify fun s => { s with builtinLemmas := s.builtinLemmas.insert ⟨r⟩, outputUsed := true, lemmasAdded := true }
     emit (.lemma (← level) .THEORY_BUILTIN "COMBINATION_SPLIT" lem)
     if c.satMode then
-      satLemma lem false none
+      -- (excluded middle: `split`)
+      satLemma lem false none (some (.valid lem [DT.argStep .split eq]))
       -- `ensureLiteral`, and `PropEngine::preferPhase` (no event)
       let e := Telos.rewrite eq c.order
       let e := if c.cvc5Order then orientEqs ids e c.declOrder else e

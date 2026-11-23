@@ -468,12 +468,14 @@ def _root_.Telos.SkolemId.eoShape : SkolemId → AppShape
   | .SETS_DEQ_DIFF => .spine (Term.UOp UserOp._at_sets_deq_diff) (.exactly 2)
   -- (a binary operator, `SkolemId.toEo`)
   | .QUANTIFIERS_SKOLEMIZE => .none
+  | .RE_UNFOLD_POS_COMPONENT => .none
 
 /-- The CPC term of a skolem, from the CPC terms of its cache values: by its
 shape (`SkolemId.eoShape`), but `(@quantifiers_skolemize q i)`, Logos's binary
 operator `UOp2` of `q` and the numeral `i`. -/
 def _root_.Telos.SkolemId.toEo : SkolemId → List Term → Term
   | .QUANTIFIERS_SKOLEMIZE, [q, i] => Term.UOp2 UserOp2._at_quantifiers_skolemize q i
+  | .RE_UNFOLD_POS_COMPONENT, [s, r, i] => Term.UOp3 UserOp3._at_re_unfold_pos_component s r i
   | id, xs => id.eoShape.toEo xs
 
 namespace Node

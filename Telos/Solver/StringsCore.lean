@@ -1,6 +1,7 @@
 import Telos.Solver.DtLemma
 import Telos.Core.Node.OfEo
 import Telos.Preprocess.Theory.StringsStaticRewrite
+import Telos.Solver.Theory.StringsRegexOps
 
 /-!
 # Proofs of the core inferences of the theory of strings
@@ -438,9 +439,33 @@ def prove (id : String) (P : Array Node) (conc : Node) : Option (Node × List CC
   if P.isEmpty then none
   let h := premiseFormula P
   let F := Node.mkNode .IMPLIES #[h, conc]
-  let mains := (List.range P.size).filter fun i => match P[i]! with
+  -- a prefix conflict: each membership in a concatenation gives the equality
+  -- of its unfolding (`re_unfold_pos`, then its first conjunct), as cvc5's
+  -- proof does; they are known facts after the premises
+  let isPrefix := id == "STRINGS_PREFIX_CONFLICT" || id == "STRINGS_PREFIX_CONFLICT_MIN"
+  let unfolds : Array (Nat × Bool) := if !isPrefix then #[] else
+    (List.range P.size).toArray.filterMap fun i => match P[i]! with
+      | m@(.app (.kind .STRING_IN_REGEXP) #[_, .app (.kind .REGEXP_CONCAT) _]) =>
+        match Strings.reduceRegExpPos m with
+        | some (.app (.kind .AND) _) => some (i, true)
+        | some (.app (.kind .EQUAL) _) => some (i, false)
+        | _ => none
+      | _ => none
+  let derived : Array Nat := Id.run do
+    let mut out := #[]
+    let mut next := P.size
+    for (_, isAnd) in unfolds do
+      if isAnd then
+        out := out.push (next + 1)
+        next := next + 2
+      else
+        out := out.push next
+        next := next + 1
+    return out
+  let total := P.size + unfolds.foldl (fun a (_, isAnd) => a + (if isAnd then 2 else 1)) 0
+  let mains := ((List.range P.size).filter fun i => match P[i]! with
     | .app (.kind .EQUAL) #[x, _] => x.typeHint == some .string
-    | _ => false
+    | _ => false) ++ derived.toList
   let tries := mains.flatMap fun m => [false, true].flatMap fun rev => [false, true].map fun flip => (k, m, rev, flip)
   -- (substitution and rewriting: for a conflict, each main equality; else once)
   let srTries := if conc == Node.mkFalse then mains.map fun m => (Kind.sr, m, false, false) else [(Kind.sr, 0, false, false)]
@@ -453,7 +478,10 @@ def prove (id : String) (P : Array Node) (conc : Node) : Option (Node × List CC
         for i in [0:P.size] do
           let q ← push ⟨.and_elim, [.term (Term.Numeral i)], [p], .step⟩
           let _ ← known P[i]! q
-      let c ← coreSteps k P.size m flip rev conc
+      for (i, isAnd) in unfolds do
+        let (_, j) ← rule .re_unfold_pos [] [i]
+        if isAnd then let _ ← rule .and_elim [.term (Term.Numeral 0)] [j]
+      let c ← coreSteps k total m flip rev conc
       let _ ← push ⟨.scope, [], [← posOf c], .pop⟩
     match (act.run {}).run {} with
     | .ok (((), _), st) =>

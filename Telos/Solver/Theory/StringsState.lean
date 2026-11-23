@@ -133,6 +133,10 @@ inductive Undo where
   | pendingConflict
   | congruent (k : Key)
   | nfPair (k : Key) (old : Option (Array Node))
+  /-- An extended term registered (`ExtTheory::registerTerm`). -/
+  | extTerm (k : Key)
+  /-- An extended term marked inactive (`markInactive`), with its old mark. -/
+  | extActive (k : Key) (old : Bool)
   deriving Inhabited
 
 structure State where
@@ -186,6 +190,17 @@ structure State where
   /-- The last conflict of the theory: its inference, the conflict sent, and
   its premises before their explanation (for the certificate). -/
   conflict : Option (String × Node × Array Node) := none
+  /-- `ExtTheory::d_ext_func_terms` (context dependent): the extended terms
+  registered, in order, and whether each is active. -/
+  extTerms : Array Node := #[]
+  extActive : Std.HashMap Key Bool := {}
+  /-- `ExtTheory::d_ci_inactive` (user context): the terms inactive
+  independently of the SAT context. -/
+  ciInactive : Std.HashSet Key := {}
+  /-- `ExtfSolver::d_reduced` (user context): the memberships unfolded. -/
+  reduced : Std.HashSet Key := {}
+  /-- `TermRegistry::d_hasStrCode`: a `str.to_code` was preregistered. -/
+  hasStrCode : Bool := false
   trail : Array Undo := #[]
   /-- The trail, function-term and disequality sizes saved at each push. -/
   saved : Array (Nat × Nat × Nat) := #[]
@@ -226,6 +241,34 @@ def setNfPairs (s : State) (n : Node) (v : Array Node) : State :=
   let s := { s with nfPairs := {}, trail := #[] }
   { s with nfPairs := m.insert ⟨n⟩ v, trail := tr.push (.nfPair ⟨n⟩ old) }
 
+/-- `ExtTheory::registerTerm`: an extended term, active, on the trail. -/
+def registerExt (s : State) (n : Node) : State :=
+  if s.extActive.contains ⟨n⟩ then s else
+  let m := s.extActive
+  let ts := s.extTerms
+  let tr := s.trail
+  let s := { s with extActive := {}, extTerms := #[], trail := #[] }
+  { s with extActive := m.insert ⟨n⟩ true, extTerms := ts.push n, trail := tr.push (.extTerm ⟨n⟩) }
+
+/-- `ExtTheory::markInactive`: in the SAT context (`satDep`), or also in the
+user context. -/
+def markInactive (s : State) (n : Node) (satDep : Bool := true) : State :=
+  let s := s.registerExt n
+  let old := (s.extActive.get? ⟨n⟩).getD true
+  let m := s.extActive
+  let tr := s.trail
+  let s := { s with extActive := {}, trail := #[] }
+  let s := { s with extActive := m.insert ⟨n⟩ false, trail := tr.push (.extActive ⟨n⟩ old) }
+  if satDep then s else { s with ciInactive := s.ciInactive.insert ⟨n⟩ }
+
+/-- `ExtTheory::isActive`. -/
+def isActiveExt (s : State) (n : Node) : Bool :=
+  (s.extActive.get? ⟨n⟩).getD false && !s.ciInactive.contains ⟨n⟩
+
+/-- `ExtTheory::getActive`, of kind `k` if given. -/
+def activeExt (s : State) (k : Option Kind := none) : Array Node :=
+  s.extTerms.filter fun n => (k.isNone || some n.getKind == k) && s.isActiveExt n
+
 /-- `setPendingConflict`: the first one only, on the trail. -/
 def setPendingConflict (s : State) (id : String) (premises : Array Node) : State :=
   if s.pendingConflict.isSome then s else
@@ -242,8 +285,11 @@ def popTo (s : State) (k : Nat) : State := Id.run do
   let mut pend := s.pendingConflict
   let mut cong := s.congruent
   let mut nfp := s.nfPairs
+  let mut ext := s.extActive
+  let mut exts := s.extTerms
   let trail := s.trail
-  let s := { s with preregistered := {}, eqcInfo := {}, trail := #[], congruent := {}, nfPairs := {} }
+  let s := { s with preregistered := {}, eqcInfo := {}, trail := #[], congruent := {}, nfPairs := {},
+                    extActive := {}, extTerms := #[] }
   for i in [0:trail.size - tsize] do
     match trail[trail.size - 1 - i]! with
     | .prereg k => pre := pre.erase k
@@ -255,8 +301,12 @@ def popTo (s : State) (k : Nat) : State := Id.run do
     | .nfPair k old => nfp := match old with
       | some v => nfp.insert k v
       | none => nfp.erase k
+    | .extTerm k =>
+      ext := ext.erase k
+      exts := exts.pop
+    | .extActive k old => ext := ext.insert k old
   return { s with preregistered := pre, eqcInfo := eqc, pendingConflict := pend, trail := trail.take tsize,
-                  congruent := cong, nfPairs := nfp,
+                  congruent := cong, nfPairs := nfp, extActive := ext, extTerms := exts,
                   functionTerms := s.functionTerms.take fsize,
                   disequalities := s.disequalities.take dsize, saved := s.saved.take k }
 

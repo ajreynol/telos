@@ -933,8 +933,21 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
     | _ => none
   let mut usedStr : Array (List Nat) := strConst.fold (fun acc _ w => acc.push w) #[]
   let mut strOf : Std.HashMap Nat (List Nat) := strConst
+  -- a class of length one with a code term: the character of the code's value
+  -- (`hasStringCode`)
   for h : i in [0:n] do
     if ee.isInternal[i]! || find i != i || ee.nodes[i].typeHint != some .string || !isAtomic i then continue
+    if lenOf i != some 1 then continue
+    let some a := (ee.strings.getEqcInfo? ee.nodes[i]).bind (·.codeTerm) | continue
+    match (id? (Node.mkNode .STRING_TO_CODE #[a])).bind arithOf.get? with
+    | some (.int c) =>
+      if c ≥ 0 then
+        strOf := strOf.insert i [c.toNat]
+        usedStr := usedStr.push [c.toNat]
+    | _ => pure ()
+  for h : i in [0:n] do
+    if ee.isInternal[i]! || find i != i || ee.nodes[i].typeHint != some .string || !isAtomic i then continue
+    if strOf.contains i then continue
     -- the first string, by length then in order, of letters from `a`
     let start := (lenOf i).getD 0
     let mut found : Option (List Nat) := none

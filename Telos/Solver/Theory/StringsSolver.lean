@@ -1,4 +1,5 @@
 import Telos.Solver.Theory.Strings
+import Telos.Solver.Theory.StringsRegexOps
 
 /-!
 # The full-effort check of the theory of strings
@@ -1420,6 +1421,401 @@ def checkLengthsEqc : EEM Unit := do
       modifyStrings fun s => s.setEqcInfo eqc { ei with normalizedLength := some eq }
       let _ ← sendInference ant eq "STRINGS_LEN_NORM" false true
 
+/-! ## Extended functions (`ExtfSolver`), stage 2 in part
+
+The evaluation of the active extended terms under the current substitution
+(`checkExtfEval`): the constants of the classes of their arguments (effort 0)
+or their normal forms (effort 1). A term that then rewrites to a constant is
+inferred equal to it (`STRINGS_EXTF`, `STRINGS_EXTF_N`), stated of its
+symbolic definition (its constants replaced by their proxy variables) when it
+has one, and marked inactive; a predicate equal to a constant that rewrites to
+another literal infers it (`STRINGS_EXTF_D`); two terms with the same rewrite
+are equal (`STRINGS_EXTF_REW_SAME`). The inferences of `str.contains`
+(`STRINGS_CTN_*`) and of equalities by the extended rewriter
+(`STRINGS_EXTF_EQ_REW`, the identity on integers) belong to the reductions of
+stage 2. -/
+
+/-- `CoreSolver::getNormalString`: the concatenation of the normal form of `x`,
+its explanation added to `exp`. -/
+partial def getNormalString (x : Node) (exp : Array Node) : EEM (Node × Array Node) := do
+  if x.isConst then return (x, exp)
+  let xr ← rep x
+  match (← chk).normalForms.get? ⟨xr⟩ with
+  | some nf =>
+    let ret ← mkNConcat nf.nf
+    return (ret, addToExplanation x nf.base (exp ++ nf.exp))
+  | none =>
+    if let .app (.kind .STRING_CONCAT) cs := x then
+      let mut exp := exp
+      let mut vs : Array Node := #[]
+      for c in cs do
+        let (v, e) ← getNormalString c exp
+        exp := e
+        vs := vs.push v
+      return (← mkNConcat vs, exp)
+    return (x, exp)
+
+/-- `BaseSolver::explainBestContentEqc`. -/
+def explainBestContentEqc (n eqc : Node) (exp : Array Node) : EEM (Option Node × Array Node) := do
+  match ← baseInfo? eqc with
+  | some bei =>
+    let exp := match bei.exp with | some e => flattenAnd e exp | none => exp
+    let exp := match bei.base with | some b => addToExplanation n b exp | none => exp
+    return (bei.bestContent, exp)
+  | none => return (none, exp)
+
+/-- `ExtfSolver::getCurrentSubstitutionFor` (efforts below 3). -/
+def currentSubstitution (effort : Nat) (n : Node) (exp : Array Node) : EEM (Node × Array Node) := do
+  let nr ← rep n
+  if effort ≥ 1 && isStringLike n then
+    let some nf := (← chk).normalForms.get? ⟨nr⟩ | return (n, exp)
+    if let .app (.kind .STRING_CONCAT) cs := n then
+      if n != nf.base then
+        let mut exp := exp
+        let mut vec : Array Node := #[]
+        for c in cs do
+          let cr ← rep c
+          let nfc ← normalForm cr
+          let (nsc, e) ← getNormalString nfc.base exp
+          exp := addToExplanation c nfc.base e
+          vec := vec.push nsc
+        return (← mkNConcat vec, exp)
+    let (ns, exp) ← getNormalString nf.base exp
+    return (ns, addToExplanation n nf.base exp)
+  let (c, cexp) ← explainBestContentEqc n nr #[]
+  let mut c := c
+  let mut cexp := cexp
+  if c.isSome then
+    if let .app (.kind .STRING_CONCAT) cs := n then
+      cexp := #[]
+      let mut vec : Array Node := #[]
+      for nc in cs do
+        let ncr ← rep nc
+        let (cc, e) ← explainBestContentEqc nc ncr cexp
+        cexp := e
+        vec := vec.push (cc.getD nc)
+      c := some (← mkNConcat vec)
+  match c with
+  | some cc => return (cc, exp ++ cexp)
+  | none => return (n, exp)
+
+/-- `TermRegistry::getSymbolicDefinition`: the term with its leaves replaced by
+their proxy variables (the equalities added to `exp`); none if a leaf has none.
+The children of a regular expression are kept. -/
+partial def symbolicDefinition (n : Node) (exp : Array Node) : EEM (Option Node × Array Node) := do
+  let leaf := match n with
+    | .app _ cs => cs.isEmpty
+    | _ => true
+  if leaf then
+    let some pn := (← st).proxyVar.get? ⟨n⟩ | return (none, exp)
+    let eq ← rw (Node.eqNode n pn)
+    return (some pn, if exp.contains eq then exp else exp.push eq)
+  let .app op cs := n | return (none, exp)
+  let mut exp := exp
+  let mut out : Array Node := #[]
+  for c in cs do
+    if n.typeHint == some .regExp then out := out.push c
+    else
+      let (s, e) ← symbolicDefinition c exp
+      exp := e
+      let some s := s | return (none, exp)
+      out := out.push s
+  return (some (.app op out), exp)
+
+/-- `InferenceManager::sendInternalInference`. -/
+partial def sendInternalInference (exp : Array Node) (conc : Node) (id : String) : EEM Bool := do
+  match conc with
+  | .app (.kind .AND) cs =>
+    let mut ret := true
+    for c in cs do ret := (← sendInternalInference exp c id) && ret
+    return ret
+  | .app (.kind .NOT) #[.app (.kind .OR) cs] =>
+    let mut ret := true
+    for c in cs do ret := (← sendInternalInference exp (negLit c) id) && ret
+    return ret
+  | _ =>
+  let (lit, pol) := match conc with
+    | .app (.kind .NOT) #[a] => (a, false)
+    | a => (a, true)
+  if let .app (.kind .EQUAL) #[a, b] := lit then
+    for x in [a, b] do
+      if !x.isConst && !(← hasTerm x) then return false
+    if ← (if pol then areEq a b else areDiseq a b) then return true
+  else if lit.isConst then
+    if lit == Node.mkTrue then return true
+  else if !(← hasTerm lit) then return false
+  else if ← areEq lit (Node.mkBool pol) then return true
+  let _ ← sendInference exp conc id
+  return true
+
+/-- The information of an extended term in one evaluation (`ExtfInfoTmp`). -/
+structure ExtfInfo where
+  const : Option Node := none
+  exp : Array Node := #[]
+  initExp : Array Node := #[]
+  deriving Inhabited
+
+/-- `ExtfSolver::checkExtfEval` at effort 0 or 1. -/
+def checkExtfEval (effort : Nat) : EEM Unit := do
+  let terms := (← st).activeExt
+  let mut infos : Std.HashMap Key ExtfInfo := {}
+  let mut toOrig : Std.HashMap Key Node := {}
+  let mut inferProcessed : Std.HashSet Key := {}
+  for n in terms do
+    let r ← rep n
+    let mut einfo : ExtfInfo := { const := ← getConstantEqc r }
+    let .app op cs := n | continue
+    let mut exp : Array Node := #[]
+    let mut schildren : Array Node := #[]
+    let mut schanged := false
+    for c in cs do
+      let (sc, e) ← currentSubstitution effort c exp
+      exp := e
+      schildren := schildren.push sc
+      schanged := schanged || sc != c
+    let mut reduced := false
+    let mut toReduce := n
+    if schanged then
+      let sn := Node.app op schildren
+      einfo := { einfo with initExp := einfo.initExp ++ exp, exp := einfo.exp ++ exp }
+      let nrc ← rw sn
+      if nrc.isConst then
+        modifyStrings fun s => s.markInactive n
+        -- the symbolic definition, unless it rewrites
+        let (nrs, _) ← symbolicDefinition sn #[]
+        let nrs : Option Node ← match nrs with
+          | some d => do
+            let dr ← rw d
+            pure (if dr != d then none else some d)
+          | none => pure none
+        let isBool := n.typeHint == some .boolean
+        let mut conc : Option Node := none
+        match nrs with
+        | some d =>
+          if !(← areEq d nrc) then
+            conc := some (if isBool then (if nrc == Node.mkTrue then d else Node.notNode d) else Node.eqNode d nrc)
+            einfo := { einfo with exp := #[] }
+        | none =>
+          if !(← areEq n nrc) then
+            conc := some (if isBool then (if nrc == Node.mkTrue then n else Node.notNode n) else Node.eqNode n nrc)
+        if let some cc := conc then
+          let id := if effort == 0 then "STRINGS_EXTF" else "STRINGS_EXTF_N"
+          let _ ← sendInference einfo.exp cc id false true
+        reduced := true
+      else
+        if let some c := einfo.const then
+          if nrc.typeHint == some .boolean && nrc != n then
+            let pol := c == Node.mkTrue
+            let nrcAssert := if pol then nrc else Node.notNode nrc
+            let nAssert := if pol then n else Node.notNode n
+            einfo := { einfo with exp := einfo.exp.push nAssert }
+            let id := if effort == 0 then "STRINGS_EXTF_D" else "STRINGS_EXTF_D_N"
+            let _ ← sendInternalInference einfo.exp nrcAssert id
+        toReduce := nrc
+    infos := infos.insert ⟨n⟩ einfo
+    if !reduced && !inferProcessed.contains ⟨n⟩ then
+      inferProcessed := inferProcessed.insert ⟨n⟩
+      -- `checkExtfInference`: a term with the same rewrite before
+      match toOrig.get? ⟨toReduce⟩ with
+      | some no =>
+        if !(← areEq n no) then
+          let eito := (infos.get? ⟨no⟩).getD {}
+          let _ ← sendInference (einfo.initExp ++ eito.initExp) (Node.eqNode n no) "STRINGS_EXTF_REW_SAME"
+      | none => toOrig := toOrig.insert ⟨toReduce⟩ n
+    if ← inConflict then return
+
+/-! ## Codes (`CodePointSolver`) -/
+
+/-- `CodePointSolver::checkCodes`: injectivity of `str.to_code` on the
+relevant disequal classes (`STRINGS_CODE_INJ`). -/
+def checkCodes : EEM Unit := do
+  if !(← st).hasStrCode then return
+  let negOne := intConst (-1)
+  let mut codes : Std.HashMap Key Node := {}
+  for eqc in (← chk).stringLikeEqc do
+    if eqc.typeHint != some .string then continue
+    let codeArg ← if eqc.isConst then do
+        if wordLen eqc != 1 then continue
+        match (← st).proxyVar.get? ⟨eqc⟩ with
+        | some p => pure p
+        | none => continue
+      else
+        match ((← st).getEqcInfo? eqc).bind (·.codeTerm) with
+        | some a => pure a
+        | none => continue
+    let vc := Node.mkNode .STRING_TO_CODE #[codeArg]
+    if ← areEq vc negOne then continue
+    codes := codes.insert ⟨eqc⟩ vc
+  if (← hasProcessed) || codes.size ≤ 1 then return
+  for eq in (← chk).rlvDeq do
+    let .app (.kind .EQUAL) #[a, b] := eq | continue
+    let some c0 := codes.get? ⟨← rep a⟩ | continue
+    let some c1 := codes.get? ⟨← rep b⟩ | continue
+    if ← areDiseq c0 c1 then continue
+    let .app _ #[x0] := c0 | continue
+    let .app _ #[x1] := c1 | continue
+    let deq := Node.notNode (Node.eqNode c0 c1)
+    let inj := Node.mkNode .OR #[Node.eqNode c0 negOne, deq, Node.eqNode x0 x1]
+    let deq ← rw deq
+    modifyStrings fun s => { s with pendingPhases := s.pendingPhases.push (deq, false) }
+    let _ ← sendInference #[] inj "STRINGS_CODE_INJ"
+
+/-! ## Regular expressions (`RegExpSolver`), stage 3 in part
+
+At full effort, with model-based reduction (`stringModelBasedReduction`), as
+cvc5: the asserted memberships of each class; inclusion between two of them
+(`stringRegexpInclusion`: a conflict `STRINGS_RE_INTER_INCLUDE`, or one marked
+inactive); evaluation under normal forms (`STRINGS_RE_NF_CONFLICT`) and the
+empty string (`STRINGS_RE_DELTA`, `STRINGS_RE_DELTA_CONF`); the unfolding of
+the positive ones (`STRINGS_RE_UNFOLD_POS`). Intersection is off
+(`re-inter-mode=none`). The negative ones are unfolded at last call, which is
+not ported: a `sat` answer then rests on the model check of the memberships. -/
+
+/-- `RegExpSolver::computeAssertions`: the asserted memberships of each class
+(by representative, in node order), in the order of the extended terms. -/
+def computeAssertedMemberships : EEM (Array (Node × Array Node)) := do
+  let mut m : Std.HashMap Key (Array Node) := {}
+  for n in (← st).activeExt (some .STRING_IN_REGEXP) do
+    let r ← rep n
+    if !r.isConst then continue
+    let .app _ #[x, _] := n | continue
+    let xr ← rep x
+    m := m.insert ⟨xr⟩ ((m.getD ⟨xr⟩ #[]).push (if r == Node.mkTrue then n else Node.notNode n))
+  let keys ← sortNodes (m.toArray.map (·.1.node))
+  return keys.map fun k => (k, m.getD ⟨k⟩ #[])
+
+def atomOf (l : Node) : Bool × Node :=
+  match l with
+  | .app (.kind .NOT) #[a] => (false, a)
+  | a => (true, a)
+
+/-- `RegExpSolver::checkEqcInclusion`, at full effort. -/
+def checkEqcInclusion (mems : Array Node) : EEM Bool := do
+  let mut remove : Array Node := #[]
+  for m1 in mems do
+    let (p1, l1) := atomOf m1
+    if remove.contains m1 then continue
+    for m2 in mems do
+      if m1 == m2 then continue
+      let (p2, l2) := atomOf m2
+      let .app _ #[x1, r1] := l1 | continue
+      let .app _ #[x2, r2] := l2 | continue
+      if p1 == p2 then
+        let basisUnfolded := (← st).reduced.contains ⟨if !p1 then m1 else m2⟩
+        -- (the negative ones are unfolded at last call)
+        if !basisUnfolded && p1 then
+          if regExpIncludes r1 r2 then
+            modifyStrings fun s => s.markInactive l1
+            remove := remove.push m1
+            break
+      else
+        let (pos, neg) := if !p1 then (l2, l1) else (l1, l2)
+        let .app _ #[xp, rp] := pos | continue
+        let .app _ #[xn, rn] := neg | continue
+        let _ := (x1, x2, r1, r2)
+        if regExpIncludes rn rp then
+          let mut vec := #[pos, Node.notNode neg]
+          if xp != xn then vec := vec.push (Node.eqNode xp xn)
+          let _ ← sendInference vec Node.mkFalse "STRINGS_RE_INTER_INCLUDE" false true
+          return false
+  return true
+
+/-- `RegExpSolver::getNormalSymRegExp`: the strings of `str.to_re` replaced by
+their normal forms, rewritten. -/
+partial def normalSymRegExp (r : Node) (exp : Array Node) : EEM (Node × Array Node) := do
+  match r with
+  | .app (.kind .STRING_TO_REGEXP) #[s] =>
+    if s.isConst then return (r, exp)
+    let (t, exp) ← getNormalString s exp
+    return (if t != s then Node.mkNode .STRING_TO_REGEXP #[t] else r, exp)
+  | .app (.kind k) cs =>
+    if k == .REGEXP_CONCAT || k == .REGEXP_UNION || k == .REGEXP_INTER || k == .REGEXP_STAR ||
+        k == .REGEXP_COMPLEMENT then
+      let mut exp := exp
+      let mut out : Array Node := #[]
+      for c in cs do
+        let (d, e) ← normalSymRegExp c exp
+        exp := e
+        out := out.push d
+      return (← rw (Node.mkNode k out), exp)
+    return (r, exp)
+  | _ => return (r, exp)
+
+/-- `RegExpSolver::checkPDerivative` (`stringRegexpDeriveConflicts` is off). -/
+def checkPDerivative (x r atom : Node) (nfExp : Array Node) : EEM Unit := do
+  let emp := emptyWord
+  if !(← areEq x emp) then return
+  match delta r with
+  | (0, some e) =>
+    let noExplain := #[atom, Node.eqNode x emp]
+    let _ ← sendInference (nfExp ++ noExplain) e "STRINGS_RE_DELTA" false false noExplain
+    modifyStrings fun s => s.markInactive atom
+  | (1, _) => modifyStrings fun s => s.markInactive atom
+  | (2, _) =>
+    let noExplain := if x != emp then #[atom, Node.eqNode x emp] else #[atom]
+    let _ ← sendInference (nfExp ++ noExplain) Node.mkFalse "STRINGS_RE_DELTA_CONF" false false noExplain
+  | _ => pure ()
+
+/-- `RegExpSolver::checkEvaluations`. -/
+def checkEvaluations (mems : Array (Node × Array Node)) : EEM Unit := do
+  for (_, as) in mems do
+    for assertion in as do
+      let (pol, atom) := atomOf assertion
+      let .app _ #[x, r] := atom | continue
+      let mut nfexp : Array Node := #[]
+      let mut r := r
+      let mut rnfexp : Array Node := #[]
+      let mut nx := x
+      if !x.isConst then
+        let (t, e) ← getNormalString x nfexp
+        nx := t
+        nfexp := e
+      if !checkConstRegExp r then
+        let (r', e) ← normalSymRegExp r rnfexp
+        r := r'
+        rnfexp := e
+        nfexp := nfexp ++ rnfexp
+        let tmp ← rw (Node.mkNode .STRING_IN_REGEXP #[nx, r])
+        if tmp.isConst then
+          if (tmp == Node.mkTrue) == pol then
+            modifyStrings fun s => s.markInactive atom
+            continue
+          else
+            let _ ← sendInference (nfexp.push assertion) Node.mkFalse "STRINGS_RE_NF_CONFLICT" false false
+              #[assertion]
+            break
+        if !checkConstRegExp r then continue
+      if pol then checkPDerivative x r atom rnfexp
+
+/-- `RegExpSolver::checkUnfold` at full effort: the positive memberships, in
+node order, unfolded once (`RegExpOpr::simplify`); one that does not unfold
+makes the check incomplete. -/
+def checkUnfold (mems : Array (Node × Array Node)) : EEM Unit := do
+  let all ← sortNodes (mems.foldl (fun acc (_, as) => acc ++ as) #[])
+  for assertion in all do
+    let (pol, atom) := atomOf assertion
+    if !pol then continue
+    if (← st).reduced.contains ⟨assertion⟩ then continue
+    match reduceRegExpPos atom with
+    | some conc =>
+      let _ ← sendInference #[assertion] conc "STRINGS_RE_UNFOLD_POS" false false #[assertion]
+      modifyStrings fun s => { s with reduced := s.reduced.insert ⟨assertion⟩ }
+    | none => modifyStrings fun s => { s with incomplete := true }
+  let _ := ()
+
+/-- `RegExpSolver::checkMemberships` at full effort. -/
+def checkMemberships : EEM Unit := do
+  let mems ← computeAssertedMemberships
+  -- `checkInclusions` (intersection is off)
+  let mut mems' : Array (Node × Array Node) := #[]
+  for (r, as) in mems do
+    if !(← checkEqcInclusion as) then return
+    mems' := mems'.push (r, as)
+  if ← inConflict then return
+  checkEvaluations mems
+  if ← inConflict then return
+  checkUnfold mems
+
 /-- The kinds of the extended functions and regular expressions, which later
 stages handle. -/
 def laterKind (k : Kind) : Bool :=
@@ -1427,14 +1823,15 @@ def laterKind (k : Kind) : Bool :=
     k == .STRING_INDEXOF || k == .STRING_INDEXOF_RE || k == .STRING_REPLACE ||
     k == .STRING_REPLACE_ALL || k == .STRING_REPLACE_RE || k == .STRING_REPLACE_RE_ALL ||
     k == .STRING_TO_LOWER || k == .STRING_TO_UPPER || k == .STRING_REV || k == .STRING_CONTAINS ||
-    k == .STRING_LEQ || k == .STRING_LT || k == .STRING_IN_REGEXP || k == .STRING_TO_CODE ||
+    k == .STRING_LEQ || k == .STRING_LT ||
     k == .STRING_FROM_CODE || k == .STRING_IS_DIGIT || k == .STRING_PREFIX || k == .STRING_SUFFIX
 
 /-- `runStrategy` at full effort: the steps, until one has something to process.
 -/
 def runStrategy : EEM Unit := do
-  let steps : List (EEM Unit) := [checkInit, checkConstantEquivalenceClasses, checkCycles,
-    checkFlatForms, checkNormalFormsEqProp, checkNormalFormsEq, checkNormalFormsDeq, checkLengthsEqc]
+  let steps : List (EEM Unit) := [checkInit, checkConstantEquivalenceClasses, checkExtfEval 0,
+    checkCycles, checkFlatForms, checkNormalFormsEqProp, checkNormalFormsEq, checkExtfEval 1,
+    checkNormalFormsDeq, checkCodes, checkLengthsEqc, checkMemberships]
   for s in steps do
     s
     if ← hasProcessed then return

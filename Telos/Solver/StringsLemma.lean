@@ -66,10 +66,64 @@ def skolemOfEq? (e : Node) : Option Node :=
     | _, _ => none
   | _ => none
 
+/-- The CPC proof of `(=> h F)` by one rule from the assumption `h`. -/
+def underAssumption (h F : Node) (r : CRule) (args : List PArg) : Option EqProof :=
+  let act : EmitM Unit := do
+    let p ← push ⟨.refl, [.node h], [], .assume⟩
+    let c ← push ⟨r, args, [p], .step⟩
+    let _ ← push ⟨.scope, [], [c], .pop⟩
+  match act.run {} with
+  | .ok ((), st) => some (.valid (Node.mkNode .IMPLIES #[h, F]) (toCmds st.steps))
+  | .error _ => none
+
+/-- The term of an eager reduction lemma (`utils::eagerReduce`). -/
+def eagerTerm? (lem : Node) : Option Node :=
+  match lem with
+  | .app (.kind .ITE) #[_, _, .app (.kind .EQUAL) #[t, _]] => some t
+  | .app (.kind .AND) #[.app (.kind .OR) #[.app (.kind .EQUAL) #[t, _], _], _] => some t
+  | .app (.kind .GEQ) #[t, _] => some t
+  | _ => none
+
+/-- The purification skolems of constants in a node. -/
+partial def constPurifies (n : Node) (acc : Array Node := #[]) : Array Node :=
+  match n with
+  | .skolem .PURIFY #[t] => if t.isConst && !acc.contains n then acc.push n else acc
+  | .app _ cs => cs.foldl (fun a c => constPurifies c a) acc
+  | _ => acc
+
+/-- A proof of `(lem, true)` for a lemma that, with its purification skolems
+of constants replaced by the constants (`skolem_intro`), rewrites to `true`
+(the symbolic definitions of `checkExtfEval`). -/
+def bySymbolic (lem : Node) : Option EqProof := do
+  let mut cur := lem
+  let mut acc : Option EqProof := none
+  for k in constPurifies lem do
+    let (t, pk) ← purify? k
+    let some q := StringsCore.substOne k t pk cur | continue
+    let some (_, cur') := EqProof.check #[] q | none
+    cur := cur'
+    acc := some (match acc with | some a => .trans a q | none => q)
+  if Telos.rewrite cur != Node.mkTrue then none
+  let p := match acc with | some a => .trans a (.rw cur) | none => .rw cur
+  checked lem p
+
 /-- **A proof of `(lem, true)`** from no assumptions, for the lemma `lem` sent
 with the identifier `id`. -/
 def prove (id : String) (lem : Node) (o : NodeOrder := {}) : Option EqProof := do
   match id, lem with
+  -- an eager reduction (`STRING_EAGER_REDUCTION`)
+  | "STRINGS_REGISTER_TERM", l@(.app (.kind .ITE) _) | "STRINGS_REGISTER_TERM", l@(.app (.kind .GEQ) _)
+  | "STRINGS_REGISTER_TERM", l@(.app (.kind .AND) #[.app (.kind .OR) _, _]) =>
+    let t ← eagerTerm? l
+    checked lem (.valid lem [DT.argStep .string_eager_reduction t])
+  | "STRINGS_RE_UNFOLD_POS", .app (.kind .IMPLIES) #[h, c] =>
+    checked lem (← underAssumption h c .re_unfold_pos [])
+  | "STRINGS_CODE_INJ", .app (.kind .OR) #[.app (.kind .EQUAL) #[.app (.kind .STRING_TO_CODE) #[t], _], _,
+      .app (.kind .EQUAL) #[_, s']] =>
+    checked lem (.valid lem [.step .string_code_inj (.cons t.toEo (.cons s'.toEo .nil)) .nil])
+  | "STRINGS_EXTF", l@(.app (.kind .STRING_IN_REGEXP) _) | "STRINGS_EXTF_N", l@(.app (.kind .STRING_IN_REGEXP) _)
+  | "STRINGS_EXTF", l@(.app (.kind .NOT) _) | "STRINGS_EXTF_N", l@(.app (.kind .NOT) _) =>
+    bySymbolic l
   | "STRINGS_REGISTER_TERM", .app (.kind .AND) #[eq, ceq] =>
     let k ← skolemOfEq? eq
     let (t, pk) ← purify? k

@@ -1724,6 +1724,44 @@ conflict analysis (an index out of bounds, and a refutation of a satisfiable
 benchmark that the certificate rejected). One that the SAT solver asserted to
 the equality engine is its own explanation there.
 
+**Status of stages 2 and 3, in part: memberships.** Ported
+(`Telos/Solver/Theory/StringsSolver.lean`, `StringsRegexOps.lean`):
+- the extended terms (`ExtTheory`): registered at preregistration, active or
+  inactive in the SAT context, reduced in the user context (`StringsState`);
+- their evaluation (`checkExtfEval`, efforts 0 and 1): the substitution of the
+  constants or normal forms of the arguments, `STRINGS_EXTF`/`STRINGS_EXTF_N`
+  (stated of the symbolic definition, over the proxy variables, when it has
+  one), `STRINGS_EXTF_D`, `STRINGS_EXTF_REW_SAME`; the inferences of
+  `str.contains` and the extended rewriting of equalities come with stage 2;
+- codes (`CodePointSolver`): the eager reduction of `str.to_code` (and of
+  `str.indexof`, `str.to_int`), `STRINGS_CODE_INJ`, and the model's strings of
+  length one by the values of their codes;
+- the regular expression solver at full effort (`RegExpSolver`, with
+  model-based reduction): inclusion (`regExpIncludes`), evaluation under normal
+  forms and the empty string (`STRINGS_RE_NF_CONFLICT`, `STRINGS_RE_DELTA`), and
+  the positive unfolding (`STRINGS_RE_UNFOLD_POS`, with the skolems
+  `@re_unfold_pos_component`); the eager solver's endpoints of positive
+  memberships in concatenations (`STRINGS_PREFIX_CONFLICT`);
+- certificates: `re_unfold_pos`, `string_code_inj`, `string_eager_reduction`,
+  the symbolic definitions by `skolem_intro` and the rewriter, and the prefix
+  conflicts of memberships by the equality of their unfolding, as cvc5's
+  `InferProofCons`.
+
+Not yet: the negative unfolding (`STRINGS_RE_UNFOLD_NEG`, at last call, which
+strings does not have yet: a `sat` answer with a negative membership rests on
+the model check); the length bounds of memberships
+(`stringsEagerLenEntRegexp` is off) and the arithmetic entailment the
+certificate of `STRINGS_ARITH_BOUND_CONFLICT` needs over them.
+
+The translation of a component skolem is exponential as a tree (its `i`-th
+component nests `str.substr` and `str.indexof_re_split` `i` times), and Logos
+types it without sharing: `termTyF` (`Telos/Core/Node/TermTyDefs.lean`, proven
+`termTyF_eq`) types it from the string and the regular expression, and the
+translation's side conditions (`Telos/Core/FastTranslation.lean`) and nils
+(`Node.toEoF` and the other `@[csimp]` copies in `SmtTypeFast.lean`) use it.
+On the 35 regular expression benchmarks of the SMT-LIB sample that telos
+answered `unknown`, 21 are now answered as cvc5 does, all certified.
+
 Not yet: the deep chains of skolems of some splits are slow (a benchmark that
 cvc5 solves in a second times out; the terms are trees whose size doubles with
 each skolem, though shared in memory).

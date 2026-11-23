@@ -1,6 +1,7 @@
 import Cpc.Parser
 import Telos.Core.Node.OfEo
 import Telos.Core.Node.Print
+import Telos.Core.Node.SmtTypeFast
 
 /-!
 # Printing Logos terms in Eunoia syntax
