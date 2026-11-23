@@ -91,10 +91,11 @@ def setupPolynomial (p : Poly) : ArithM Unit := do
     markSetup p.node
 
 /-- The normal form of an atom for the solver: an equality is normalized
-(`rewriter::normalizeEquality`), an inequality is already. -/
-def normalAtom (atom : Node) : Node :=
+(`rewriter::normalizeEquality`, under the node order `o`, which decides the
+term it is solved for), an inequality is already. -/
+def normalAtom (atom : Node) (o : NodeOrder) : Node :=
   match atom with
-  | .app (.kind .EQUAL) _ => ((Telos.Arith.normalizeEquality atom).map (·.1)).getD atom
+  | .app (.kind .EQUAL) _ => ((Telos.Arith.normalizeEquality atom o).map (·.1)).getD atom
   | _ => atom
 
 
@@ -109,7 +110,7 @@ def sendLemma (id : String) (lem : Node) (cert : Option LinCert := none) : Arith
 
 /-- `setupAtom`. -/
 def setupAtom (atom : Node) : ArithM Unit := do
-  let natom := normalAtom atom
+  let natom := normalAtom atom (← get).opts.order
   let some cmp := Comparison.parse? natom | unsupported s!"an atom not in normal form: {atom.toSmtLib}"
   let nvp := cmp.normalizedVariablePart (← get).opts.order
   if !(← isSetup nvp.node) then setupPolynomial nvp
