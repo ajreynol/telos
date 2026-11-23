@@ -307,7 +307,7 @@ theorem and_sem {N : SmtModel} {cs : Array Node} (hc : ∀ c ∈ cs.toList, Bool
   have hm : (cs.toList.map fun c => MVal.bool (bval N c)) = (cs.toList.map (bval N)).map MVal.bool := by simp
   have e : Model.combine .AND cs (cs.toList.map fun c => MVal.bool (bval N c)) =
       some (.bool ((cs.toList.map (bval N)).all id)) := by
-    rw [hm]; simp only [Model.combine, List.length_map, Array.length_toList, h2, ↓reduceIte, bools_map, Option.map_some]
+    rw [hm]; simp only [Model.combine, Model.isReKind, Bool.false_eq_true, List.length_map, Array.length_toList, h2, ↓reduceIte, bools_map, Option.map_some]
   obtain ⟨hb, hiff⟩ := conn_sem hc e
   refine ⟨hb, hiff.trans ?_⟩
   rw [List.all_eq_true]
@@ -320,7 +320,7 @@ theorem or_sem {N : SmtModel} {cs : Array Node} (hc : ∀ c ∈ cs.toList, BoolV
   have hm : (cs.toList.map fun c => MVal.bool (bval N c)) = (cs.toList.map (bval N)).map MVal.bool := by simp
   have e : Model.combine .OR cs (cs.toList.map fun c => MVal.bool (bval N c)) =
       some (.bool ((cs.toList.map (bval N)).any id)) := by
-    rw [hm]; simp only [Model.combine, List.length_map, Array.length_toList, h2, ↓reduceIte, bools_map, Option.map_some]
+    rw [hm]; simp only [Model.combine, Model.isReKind, Bool.false_eq_true, List.length_map, Array.length_toList, h2, ↓reduceIte, bools_map, Option.map_some]
   obtain ⟨hb, hiff⟩ := conn_sem hc e
   refine ⟨hb, hiff.trans ?_⟩
   rw [List.any_eq_true]
@@ -345,7 +345,7 @@ theorem ite_sem {N : SmtModel} {cs : Array Node} (hc : ∀ c ∈ cs.toList, Bool
       [.bool (bval N cs[0]), .bool (bval N cs[1]), .bool (bval N cs[2])] := by rw [toList_three h3]; rfl
   have e : Model.combine .ITE cs (cs.toList.map fun c => MVal.bool (bval N c)) =
       some (.bool (if bval N cs[0] then bval N cs[1] else bval N cs[2])) := by
-    rw [hm]; simp only [Model.combine]; split <;> rfl
+    rw [hm]; simp only [Model.combine, Model.isReKind, Bool.false_eq_true, ↓reduceIte]; split <;> rfl
   obtain ⟨hb, hiff⟩ := conn_sem hc e
   refine ⟨hb, hiff.trans ?_⟩
   by_cases h0 : TrueIn N cs[0].toEo
@@ -456,7 +456,7 @@ theorem defClauses_sat {N : SmtModel} (hN : model_wf N) {n : Node} (hconn : isCo
         · rename_i _ _ _ hk
           obtain ⟨rfl, h2⟩ := hk
           have hs := (bin_sem (k := .EQUAL) hbv h2 (f := fun a b => a == b)
-            (fun a b => by cases a <;> cases b <;> simp [Model.combine])).2
+            (fun a b => by cases a <;> cases b <;> simp [Model.combine, Model.isReKind, MVal.isRe])).2
           have l0 := L cs[0] (by simp); have l1 := L cs[1] (by simp)
           simp only [List.mem_cons, List.mem_singleton, List.not_mem_nil, or_false] at hd
           have e0 := bval_of_iff l0.2.1; have e0' := bval_of_iff_not l0.2.2.1
@@ -816,7 +816,7 @@ theorem input_sat {N : SmtModel} (hN : model_wf N) (f : Node) (neg : Bool) (ht :
                     simp [isConn, this, ← e, hty]
                   obtain ⟨hbv, hch⟩ := bin_children hN ht (by simp [isConnOrNot, hconn])
                   have hs := bval_of_iff_eq (bin_sem (k := .EQUAL) hbv h2 (f := fun a b => a == b)
-                    (fun a b => by cases a <;> cases b <;> simp [Model.combine])).2
+                    (fun a b => by cases a <;> cases b <;> simp [Model.combine, Model.isReKind, MVal.isRe])).2
                   have hfb := bval_not_of hf
                   have l0 := child_lits hN (hch cs[0] (by simp)); have l1 := child_lits hN (hch cs[1] (by simp))
                   have e0 := bval_of_iff l0.2.1; have e0' := bval_of_iff_not l0.2.2.2

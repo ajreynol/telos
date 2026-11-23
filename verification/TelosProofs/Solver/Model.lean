@@ -1,5 +1,6 @@
 import TelosProofs.Solver.Solve
 import Telos.Solver.Model
+import TelosProofs.Solver.Regex
 
 /-!
 # Models are sound
@@ -57,6 +58,7 @@ noncomputable def toVal : MVal → SmtValue
       | _ => .NotValue
     else .NotValue
   | .str w => .Seq (native_pack_string (w.map MVal.clampChar))
+  | .re r => .RegLan r.toS
 
 /-! ### Strings -/
 
@@ -153,6 +155,10 @@ theorem toVal_props : ∀ v : MVal,
   | .uval .. | .fn .. => by
     refine ⟨?_, ?_, fun _ h => by simp [MVal.isSet] at h⟩ <;>
       simp [toVal, MVal.ty, __smtx_typeof_value, __smtx_value_canonical, native_usort_mem]
+  | .re r => by
+    refine ⟨?_, ?_, fun _ h => by simp [MVal.isSet] at h⟩
+    · rfl
+    · simp only [toVal, __smtx_value_canonical]; exact TRe.toS_canonical r
   | .app f a => by
     obtain ⟨hf1, hf2, -⟩ := toVal_props f
     obtain ⟨ha1, ha2, -⟩ := toVal_props a
@@ -478,10 +484,10 @@ theorem toVal_nonset_shape (v : MVal) (h : v.isSet = false) :
     (∀ m, toVal v ≠ .Set m) ∧ toVal v ≠ .NotValue := by
   cases v <;> simp_all [MVal.isSet, toVal]
 
-theorem toVal_not_reglan (v : MVal) (r : SmtRegLan) : toVal v ≠ .RegLan r := by
+theorem toVal_not_reglan (v : MVal) (hv : v.isRe = false) (r : SmtRegLan) : toVal v ≠ .RegLan r := by
   by_cases h : v.isSet = true
   · rcases toVal_set_shape v h with ⟨m, hm⟩ | hm <;> rw [hm] <;> simp
-  · cases v <;> simp_all [MVal.isSet, toVal]
+  · cases v <;> simp_all [MVal.isSet, MVal.isRe, toVal]
 
 /-- A set's type is a set type, or none. -/
 theorem set_ty_shape (v : MVal) (h : v.isSet = true) : (∃ T, v.ty = .Set T) ∨ v.ty = .None := by
@@ -629,6 +635,10 @@ theorem veq_iff (a b : MVal) : MVal.veq a b = true ↔ toVal a = toVal b := by
       constructor
       · intro h; rw [h]
       · intro h; exact List.map_injective_iff.2 (fun a b e => by cases e; rfl) h
+    case re.re x y =>
+      rw [MVal.veq.eq_def]
+      simp only [MVal.isSet, Bool.or_self, Bool.false_eq_true, ↓reduceIte, toVal, SmtValue.RegLan.injEq]
+      exact TRe.ceq_iff x y
     all_goals (rw [MVal.veq.eq_def]; simp [MVal.isSet, toVal])
 termination_by sizeOf a + sizeOf b
 decreasing_by
@@ -835,9 +845,9 @@ theorem eval_eq_of_not_reglan (v w : SmtValue) (h : ∀ r, v ≠ .RegLan r) :
     __smtx_model_eval_eq v w = SmtValue.Boolean (native_veq v w) := by
   cases v <;> simp_all [__smtx_model_eval_eq]
 
-theorem eval_eq_toVal (a b : MVal) :
+theorem eval_eq_toVal (a b : MVal) (ha : a.isRe = false) :
     __smtx_model_eval_eq (toVal a) (toVal b) = SmtValue.Boolean (a.veq b) := by
-  rw [eval_eq_of_not_reglan _ _ (toVal_not_reglan a)]
+  rw [eval_eq_of_not_reglan _ _ (toVal_not_reglan a ha)]
   congr 1
   by_cases h : a.veq b = true
   · simp [native_veq, (veq_iff a b).1 h, h]
@@ -1042,12 +1052,223 @@ theorem toSmt_un {k : Kind} {op : UserOp} (hk : k.eoShape = .spine (Term.UOp op)
   rw [Node.toEo_app, toList_one h]
   simp [Op.eoShape, hk, AppShape.toEo, Arity.accepts]
 
+/-! ### Regular expressions -/
+
+omit [LogosFacts] in
+theorem clampChar_eq : MVal.clampChar = reClamp := rfl
+
+omit [LogosFacts] in
+theorem unpack_str (w : List Nat) :
+    native_unpack_seq (native_pack_string (w.map MVal.clampChar)) = (w.map reClamp).map SmtValue.Char := by
+  simp only [native_pack_string, unpack_pack, clampChar_eq]
+
+omit [LogosFacts] in
+theorem reConcatV_sound {a b r : MVal} (h : Model.reConcatV a b = some r) :
+    __smtx_model_eval_re_concat (toVal a) (toVal b) = toVal r := by
+  cases a <;> cases b <;> simp only [Model.reConcatV, reduceCtorEq, Option.some.injEq] at h
+  subst h
+  simp [toVal, __smtx_model_eval_re_concat, TRe.mkConcat_toS]
+
+omit [LogosFacts] in
+theorem reUnionV_sound {a b r : MVal} (h : Model.reUnionV a b = some r) :
+    __smtx_model_eval_re_union (toVal a) (toVal b) = toVal r := by
+  cases a <;> cases b <;> simp only [Model.reUnionV, reduceCtorEq, Option.some.injEq] at h
+  subst h
+  simp [toVal, __smtx_model_eval_re_union, TRe.mkUnion_toS]
+
+omit [LogosFacts] in
+theorem reInterV_sound {a b r : MVal} (h : Model.reInterV a b = some r) :
+    __smtx_model_eval_re_inter (toVal a) (toVal b) = toVal r := by
+  cases a <;> cases b <;> simp only [Model.reInterV, reduceCtorEq, Option.some.injEq] at h
+  subst h
+  simp [toVal, __smtx_model_eval_re_inter, TRe.mkInter_toS]
+
+omit [LogosFacts] in
+theorem toEo_constChain {k : Kind} {op : UserOp} {nil : Term} (hk : k.eoShape = .rightAssocNil op (.const nil))
+    (cs : Array Node) (h : 2 ≤ cs.size) :
+    (Node.app (.kind k) cs).toEo = eoRightAssocNil op nil (cs.toList.map Node.toEo) := by
+  rw [Node.toEo_app]
+  simp only [Op.eoShape, hk, AppShape.toEo, List.length_map, Array.length_toList, h, ↓reduceIte, Nil.eval]
+
+omit [LogosFacts] in
+theorem toSmt_nul {k : Kind} {op : UserOp} (hk : k.eoShape = .spine (Term.UOp op) (.exactly 0))
+    {cs : Array Node} (h : cs.size = 0) :
+    (Node.app (.kind k) cs).toSmt = __eo_to_smt (Term.UOp op) := by
+  have : cs.toList = [] := by simpa using h
+  unfold Node.toSmt
+  rw [Node.toEo_app, this]
+  simp [Op.eoShape, hk, AppShape.toEo, Arity.accepts]
+
+omit [LogosFacts] in
+/-- **A regular expression operation has its value.** -/
+theorem combineRe_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List MVal} {r : MVal}
+    (hv : ValsIn N cs.toList vs) (h : Model.combineRe k vs = some r) :
+    __smtx_model_eval N (Node.app (.kind k) cs).toSmt = toVal r := by
+  have hlen : cs.size = vs.length := by simpa using hv.length_eq
+  unfold Model.combineRe at h
+  split at h
+  · -- `re.++`
+    split at h
+    · have hs : 2 ≤ cs.size := by omega
+      unfold Node.toSmt
+      rw [toEo_constChain (op := UserOp.re_concat) rfl cs hs]
+      exact eval_opChain N UserOp.re_concat Model.reConcatV SmtTerm.re_concat __smtx_model_eval_re_concat
+        (fun _ _ => rfl) (fun _ _ => by rw [__smtx_model_eval.eq_def]) (fun _ _ _ => reConcatV_sound) _ _
+        (by rw [show __eo_to_smt (Term.Apply (Term.UOp UserOp.str_to_re) (Term.String [])) =
+              SmtTerm.str_to_re (SmtTerm.String []) from rfl, __smtx_model_eval.eq_def]
+            simp only
+            rw [__smtx_model_eval.eq_def]; rfl) _ _ _ (vals_map hv) h
+    · cases h
+  · -- `re.union`
+    split at h
+    · have hs : 2 ≤ cs.size := by omega
+      unfold Node.toSmt
+      rw [toEo_constChain (op := UserOp.re_union) rfl cs hs]
+      exact eval_opChain N UserOp.re_union Model.reUnionV SmtTerm.re_union __smtx_model_eval_re_union
+        (fun _ _ => rfl) (fun _ _ => by rw [__smtx_model_eval.eq_def]) (fun _ _ _ => reUnionV_sound) _ _
+        (by rw [show __eo_to_smt (Term.UOp UserOp.re_none) = SmtTerm.re_none from rfl, __smtx_model_eval.eq_def]
+            rfl) _ _ _ (vals_map hv) h
+    · cases h
+  · -- `re.inter`
+    split at h
+    · have hs : 2 ≤ cs.size := by omega
+      unfold Node.toSmt
+      rw [toEo_constChain (op := UserOp.re_inter) rfl cs hs]
+      exact eval_opChain N UserOp.re_inter Model.reInterV SmtTerm.re_inter __smtx_model_eval_re_inter
+        (fun _ _ => rfl) (fun _ _ => by rw [__smtx_model_eval.eq_def]) (fun _ _ _ => reInterV_sound) _ _
+        (by rw [show __eo_to_smt (Term.UOp UserOp.re_all) = SmtTerm.re_all from rfl, __smtx_model_eval.eq_def]
+            rfl) _ _ _ (vals_map hv) h
+    · cases h
+  all_goals first
+    | (cases h; done)
+    | skip
+  -- the nullary operations
+  all_goals first
+    | (have hs : cs.size = 0 := by simpa using hlen
+       cases h
+       first
+       | (rw [toSmt_nul (op := UserOp.re_none) rfl hs,
+            show __eo_to_smt (Term.UOp UserOp.re_none) = SmtTerm.re_none from rfl, __smtx_model_eval.eq_def]; rfl)
+       | (rw [toSmt_nul (op := UserOp.re_all) rfl hs,
+            show __eo_to_smt (Term.UOp UserOp.re_all) = SmtTerm.re_all from rfl, __smtx_model_eval.eq_def]; rfl)
+       | (rw [toSmt_nul (op := UserOp.re_allchar) rfl hs,
+            show __eo_to_smt (Term.UOp UserOp.re_allchar) = SmtTerm.re_allchar from rfl, __smtx_model_eval.eq_def]; rfl))
+    | skip
+  -- the unary and binary operations
+  all_goals first
+    | (have hs : cs.size = 1 := by simpa using hlen
+       rw [toList_one hs] at hv
+       obtain ⟨h0, -⟩ := List.forall₂_cons.1 hv
+       cases h
+       first
+       | (rw [toSmt_un (op := UserOp.str_to_re) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.str_to_re) x)
+            = SmtTerm.str_to_re (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, h0]
+          simp only [toVal, __smtx_model_eval_str_to_re, unpack_str, TRe.ofList_toS])
+       | (rw [toSmt_un (op := UserOp.re_mult) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.re_mult) x)
+            = SmtTerm.re_mult (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, h0]
+          simp only [toVal, __smtx_model_eval_re_mult, TRe.mkStar_toS])
+       | (rw [toSmt_un (op := UserOp.re_plus) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.re_plus) x)
+            = SmtTerm.re_plus (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, h0]
+          simp only [toVal, __smtx_model_eval_re_plus, __smtx_model_eval_re_mult, __smtx_model_eval_re_concat,
+            TRe.mkStar_toS, TRe.mkConcat_toS])
+       | (rw [toSmt_un (op := UserOp.re_opt) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.re_opt) x)
+            = SmtTerm.re_opt (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, h0]
+          simp only [toVal, __smtx_model_eval_re_opt, __smtx_model_eval_re_union, TRe.mkUnion_toS]; rfl)
+       | (rw [toSmt_un (op := UserOp.re_comp) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.re_comp) x)
+            = SmtTerm.re_comp (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, h0]
+          simp only [toVal, __smtx_model_eval_re_comp, TRe.mkComp_toS]))
+    | (have hs : cs.size = 2 := by simpa using hlen
+       rw [toList_two hs] at hv
+       obtain ⟨h0, hv⟩ := List.forall₂_cons.1 hv
+       obtain ⟨h1, -⟩ := List.forall₂_cons.1 hv
+       cases h
+       first
+       | (rw [toSmt_bin (op := UserOp.str_in_re) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.str_in_re) x) y)
+            = SmtTerm.str_in_re (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+          simp only [toVal, __smtx_model_eval_str_in_re, unpack_str, TRe.inRe_toS])
+       | (rw [toSmt_bin (op := UserOp.re_diff) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.re_diff) x) y)
+            = SmtTerm.re_diff (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+          simp only [toVal, __smtx_model_eval_re_diff, native_re_diff, TRe.mkInter_toS, TRe.mkComp_toS])
+       | (rw [toSmt_bin (op := UserOp.re_range) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.re_range) x) y)
+            = SmtTerm.re_range (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+          simp only [toVal, __smtx_model_eval_re_range, unpack_str, TRe.mkRange_toS]))
+
+omit [LogosFacts] in
+theorem exp_toS (r : TRe) : ∀ n, __smtx_re_exp_rec n (.RegLan r.toS) = .RegLan (r.exp n).toS
+  | 0 => rfl
+  | n + 1 => by
+    simp only [__smtx_re_exp_rec, exp_toS r n, __smtx_model_eval_re_concat, TRe.exp, TRe.mkConcat_toS]
+
+omit [LogosFacts] in
+theorem loopRec_toS (lo : Int) (r : TRe) : ∀ n hi,
+    __smtx_re_loop_rec n (.Numeral lo) (.Numeral hi) (.RegLan r.toS) = .RegLan (r.loopRec lo n hi).toS
+  | 0, hi => by simp [__smtx_re_loop_rec, __smtx_model_eval_re_exp, exp_toS, TRe.loopRec, native_int_to_nat]
+  | n + 1, hi => by
+    simp only [__smtx_re_loop_rec, loopRec_toS lo r n, __smtx_model_eval_re_exp, exp_toS, native_zplus, native_zneg,
+      __smtx_model_eval_re_union, TRe.loopRec, TRe.mkUnion_toS, native_int_to_nat]
+
+omit [LogosFacts] in
+/-- **An indexed operation has its value.** -/
+theorem combineIdx_sound_in (N : SmtModel) {k : Kind} {is : Array Int} {cs : Array Node} {vs : List MVal} {r : MVal}
+    (hv : ValsIn N cs.toList vs) (h : Model.combineIdx k is.toList vs = some r) :
+    __smtx_model_eval N (Node.app (.indexed k is) cs).toSmt = toVal r := by
+  have hlen : cs.size = vs.length := by simpa using hv.length_eq
+  unfold Model.combineIdx at h
+  split at h
+  · rename_i i rr his
+    cases h
+    have hs : cs.size = 1 := by simpa using hlen
+    rw [toList_one hs] at hv
+    obtain ⟨h0, -⟩ := List.forall₂_cons.1 hv
+    unfold Node.toSmt
+    rw [Node.toEo_app, toList_one hs]
+    simp only [Op.eoShape, his, indexedEoShape, AppShape.toEo, Arity.accepts, List.length_cons,
+      List.length_nil, List.map_cons, List.map_nil, List.foldl_cons, List.foldl_nil]
+    simp only [show ((0 + 1 == 1) = true) from rfl, ↓reduceIte]
+    rw [show ∀ x, __eo_to_smt (Term.Apply (Term.UOp1 UserOp1.re_exp (Term.Numeral i)) x)
+      = SmtTerm.re_exp (SmtTerm.Numeral i) (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+    simp only
+    rw [← Node.toSmt, h0, __smtx_model_eval.eq_def]
+    simp only [toVal, __smtx_model_eval_re_exp, exp_toS, native_int_to_nat]
+  · rename_i i j rr his
+    cases h
+    have hs : cs.size = 1 := by simpa using hlen
+    rw [toList_one hs] at hv
+    obtain ⟨h0, -⟩ := List.forall₂_cons.1 hv
+    unfold Node.toSmt
+    rw [Node.toEo_app, toList_one hs]
+    simp only [Op.eoShape, his, indexedEoShape, AppShape.toEo, Arity.accepts, List.length_cons,
+      List.length_nil, List.map_cons, List.map_nil, List.foldl_cons, List.foldl_nil]
+    simp only [show ((0 + 1 == 1) = true) from rfl, ↓reduceIte]
+    rw [show ∀ x, __eo_to_smt (Term.Apply (Term.UOp2 UserOp2.re_loop (Term.Numeral i) (Term.Numeral j)) x)
+      = SmtTerm.re_loop (SmtTerm.Numeral i) (SmtTerm.Numeral j) (__eo_to_smt x) from fun _ => rfl,
+      __smtx_model_eval.eq_def]
+    simp only
+    rw [← Node.toSmt, h0, __smtx_model_eval.eq_def, __smtx_model_eval.eq_def]
+    simp only [toVal, __smtx_model_eval_re_loop, __smtx_model_eval_gt, __smtx_model_eval_lt, native_zlt, TRe.loop,
+      __smtx_model_eval_ite]
+    by_cases hij : j < i
+    · simp [hij, native_re_none, TRe.toS]
+    · simp [hij, loopRec_toS, native_zplus, native_zneg, native_int_to_nat]
+  · cases h
+
 /-- **A connective has its value.** -/
 theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List MVal} {r : MVal}
     (hv : ValsIn N cs.toList vs) (h : Model.combine k cs vs = some r) :
     __smtx_model_eval N (Node.app (.kind k) cs).toSmt = toVal r := by
   have hlen : cs.size = vs.length := by simpa using hv.length_eq
   unfold Model.combine at h
+  split at h
+  · exact combineRe_sound_in N hv h
+  rename_i hnre
   split at h
   · rename_i b
     cases h
@@ -1087,12 +1308,16 @@ theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List 
     rw [toSmt_xor hs, eval_xor', h0, h1]
     cases a <;> cases b <;>
       simp [toVal, __smtx_model_eval_xor, __smtx_model_eval_eq, __smtx_model_eval_not, native_veq, native_not]
-  · cases h
+  · rename_i a b
+    split at h
+    · cases h
+    rename_i hre
+    cases h
     have hs : cs.size = 2 := by simpa using hlen
     rw [toList_two hs] at hv
     obtain ⟨h0, hv⟩ := List.forall₂_cons.1 hv
     obtain ⟨h1, -⟩ := List.forall₂_cons.1 hv
-    rw [toSmt_eq hs, eval_eq', h0, h1, eval_eq_toVal]
+    rw [toSmt_eq hs, eval_eq', h0, h1, eval_eq_toVal a b (by simpa using hre)]
     rfl
   · rename_i c a b
     cases h
@@ -1244,7 +1469,7 @@ theorem typedNil_cons (x : Term) :
   · exact Or.inr ⟨_, rfl⟩
 
 theorem eval_pairs (M : Model) (T : Term) (s : SmtTerm) (sv : MVal)
-    (hs : __smtx_model_eval (toSmtModelE M env) s = toVal sv) : ∀ (xs : List Term) (vs : List MVal),
+    (hs : __smtx_model_eval (toSmtModelE M env) s = toVal sv) (hsr : sv.isRe = false) : ∀ (xs : List Term) (vs : List MVal),
     List.Forall₂ (fun x v => __smtx_model_eval (toSmtModelE M env) (__eo_to_smt x) = toVal v) xs vs →
     __smtx_model_eval (toSmtModelE M env)
         (__eo_to_smt_distinct_pairs s (tl (Term.Apply (Term.UOp UserOp._at__at_TypedList_nil) T) xs)) =
@@ -1254,31 +1479,34 @@ theorem eval_pairs (M : Model) (T : Term) (s : SmtTerm) (sv : MVal)
     exact eval_true _
   | x :: xs, v :: vs, .cons hx hr => by
     simp only [tl, eoRightAssocNil, eoApp2, __eo_to_smt_distinct_pairs]
-    rw [eval_and, eval_not', eval_eq', hs, hx, eval_eq_toVal]
-    have := eval_pairs M T s sv hs xs vs hr
+    rw [eval_and, eval_not', eval_eq', hs, hx, eval_eq_toVal _ _ hsr]
+    have := eval_pairs M T s sv hs hsr xs vs hr
     simp only [tl] at this
     rw [this]
     cases hb : (sv.veq v) <;> simp [hb, __smtx_model_eval_not, __smtx_model_eval_and, native_and, native_not]
 
 theorem eval_distinct (M : Model) (T : Term) : ∀ (xs : List Term) (vs : List MVal),
     List.Forall₂ (fun x v => __smtx_model_eval (toSmtModelE M env) (__eo_to_smt x) = toVal v) xs vs →
+    vs.any (·.isRe) = false →
     __smtx_model_eval (toSmtModelE M env)
         (__eo_to_smt_distinct (tl (Term.Apply (Term.UOp UserOp._at__at_TypedList_nil) T) xs)) =
       SmtValue.Boolean (Model.distinctVals vs)
-  | [], [], .nil => by
+  | [], [], .nil, _ => by
     simp only [tl, eoRightAssocNil, __eo_to_smt_distinct]
     exact eval_true _
-  | x :: xs, v :: vs, .cons hx hr => by
+  | x :: xs, v :: vs, .cons hx hr, hnr => by
+    simp only [List.any_cons, Bool.or_eq_false_iff] at hnr
     simp only [tl, eoRightAssocNil, eoApp2, __eo_to_smt_distinct]
-    have hp := eval_pairs M T _ v hx xs vs hr
-    have hd := eval_distinct M T xs vs hr
+    have hp := eval_pairs M T _ v hx hnr.1 xs vs hr
+    have hd := eval_distinct M T xs vs hr hnr.2
     simp only [tl] at hp hd
     rw [eval_and, hp, hd]
     simp [Model.distinctVals, __smtx_model_eval_and, native_and]
 
 /-- **A `distinct` has its value.** -/
 theorem distinct_sound (M : Model) {cs : Array Node} {vs : List MVal}
-    (hv : Vals M env cs.toList vs) (hty : Model.distinctTyped cs = true) (h2 : 2 ≤ vs.length) :
+    (hv : Vals M env cs.toList vs) (hty : Model.distinctTyped cs = true) (h2 : 2 ≤ vs.length)
+    (hnr : vs.any (·.isRe) = false) :
     __smtx_model_eval (toSmtModelE M env) (Node.app (.kind .DISTINCT) cs).toSmt =
       toVal (.bool (Model.distinctVals vs)) := by
   have hs : 2 ≤ cs.size := by have := hv.length_eq; simp at this; omega
@@ -1299,7 +1527,7 @@ theorem distinct_sound (M : Model) {cs : Array Node} {vs : List MVal}
   · rw [hn] at hnl
     exact absurd (by rw [__eo_to_smt_typed_list_elem_type.eq_def]) hnl
   · simp only [hn]
-    exact eval_distinct M T _ _ (vals_map hv)
+    exact eval_distinct M T _ _ (vals_map hv) hnr
 
 /-! ### Applications of declared functions -/
 
@@ -1787,7 +2015,8 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
         split at h
         · rename_i h2
           cases h
-          exact distinct_sound M (hv1 vs rfl) hty h2
+          simp only [Bool.and_eq_true, decide_eq_true_eq, Bool.not_eq_true'] at h2
+          exact distinct_sound M (hv1 vs rfl) hty h2.1 h2.2
         · cases h
     · exact ⟨hS, fun v h => by cases h⟩
   · rename_i k cs _
@@ -1801,6 +2030,14 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
     cases r1 with
     | none => exact ⟨hS1, fun v h => by cases h⟩
     | some vs => exact ⟨hS1, fun v h => combine_sound M (hv1 vs rfl) h⟩
+  · rename_i k is cs
+    obtain ⟨hS1, hv1⟩ := evList_sound M n IH cs.toList S hS
+    rcases e1 : M.evList env n cs.toList S with ⟨r1, S1⟩
+    rw [e1] at hS1 hv1
+    try dsimp only
+    cases r1 with
+    | none => exact ⟨hS1, fun v h => by cases h⟩
+    | some vs => exact ⟨hS1, fun v h => combineIdx_sound_in _ (hv1 vs rfl) h⟩
   · rename_i f T cs
     cases hf : M.const f T with
     | none => exact ⟨hS, fun v h => by cases h⟩

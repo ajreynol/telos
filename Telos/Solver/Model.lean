@@ -4,6 +4,7 @@ import Telos.Core.Node.Key
 import Telos.Core.Node.FastType
 import Telos.Core.Node.ToEo
 import Telos.Solver.EqualityEngine
+import Telos.Solver.Regex
 
 /-!
 # Models and their evaluation
@@ -30,7 +31,9 @@ some values of its variables among those of the model (`candidates`). A
 `forall` that is true is not evaluated (the domains may be infinite).
 
 The values are those of the theories telos solves: Booleans, the elements of
-uninterpreted sorts (numbered), functions, and datatype values. A function is
+uninterpreted sorts (numbered), functions, datatype values, numbers, sets,
+strings and regular expressions (`TRe`, membership by derivatives as Logos's).
+A function is
 given by a finite table (`FunTable`) with a default, curried as in Logos: a
 function of two arguments maps the first to a function of one. A datatype
 value is shaped as Logos's: a constructor (`dtc`) applied to its arguments
@@ -95,6 +98,10 @@ inductive MVal where
   | sins (e s : MVal)
   /-- A string, of code points (Logos's `Seq` of `Char`s). -/
   | str (w : List Nat)
+  /-- A regular expression (Logos's `RegLan`). Two are compared structurally
+  (`TRe.ceq`), as Logos's values are, but `=` on them is not evaluated: Logos's
+  is the equality of their languages. -/
+  | re (r : TRe)
   deriving DecidableEq, Inhabited
 
 /-- A character as Logos has it: one that is not valid (`native_char_valid`)
@@ -122,6 +129,7 @@ def MVal.ty : MVal → SmtType
   | .int _ => .Int
   | .rat _ => .Real
   | .str _ => .Seq .Char
+  | .re _ => .RegLan
   | .sempty T => .Set T
   | .sins e s =>
     if s.isSet then
@@ -142,7 +150,7 @@ theorem MVal.sizeOf_lt_of_mem_elems : ∀ {s e : MVal}, e ∈ s.elems → sizeOf
     · simp; omega
     · have := MVal.sizeOf_lt_of_mem_elems h; simp; omega
   | .sempty _, _, h | .bool _, _, h | .uval .., _, h | .fn .., _, h | .dtc .., _, h | .app .., _, h
-  | .int _, _, h | .rat _, _, h | .str _, _, h => by simp [MVal.elems] at h
+  | .int _, _, h | .rat _, _, h | .str _, _, h | .re _, _, h => by simp [MVal.elems] at h
 
 /-- **Equality of values, as Logos's** (`native_veq` of their Logos values):
 two well-typed sets are equal when they have the same element type and the
@@ -161,6 +169,7 @@ def MVal.veq (a b : MVal) : Bool :=
   else match a, b with
     | .app f x, .app g y => MVal.veq f g && MVal.veq x y
     | .str x, .str y => x.map MVal.clampChar == y.map MVal.clampChar
+    | .re x, .re y => x.ceq y
     | a, b => a == b
 termination_by sizeOf a + sizeOf b
 decreasing_by
@@ -168,6 +177,11 @@ decreasing_by
   all_goals first
     | (have := MVal.sizeOf_lt_of_mem_elems ‹_ ∈ a.elems›; have := MVal.sizeOf_lt_of_mem_elems ‹_ ∈ b.elems›; omega)
     | omega
+
+/-- Whether a value is a regular expression. -/
+def MVal.isRe : MVal → Bool
+  | .re _ => true
+  | _ => false
 
 /-- An ill-typed set, whose Logos value is `NotValue`: no function or
 constructor applies to it (Logos's application of anything to `NotValue` is
@@ -345,21 +359,64 @@ def concatV : MVal → MVal → Option MVal
   | .str a, .str b => some (.str (a ++ b))
   | _, _ => none
 
+/-- The concatenation, union and intersection of two regular expressions. -/
+def reConcatV : MVal → MVal → Option MVal
+  | .re a, .re b => some (.re (TRe.mkConcat a b))
+  | _, _ => none
+
+def reUnionV : MVal → MVal → Option MVal
+  | .re a, .re b => some (.re (TRe.mkUnion a b))
+  | _, _ => none
+
+def reInterV : MVal → MVal → Option MVal
+  | .re a, .re b => some (.re (TRe.mkInter a b))
+  | _, _ => none
+
 /-- A right-associated chain of a binary operation, ending in `nil`. -/
 def chainV (f : MVal → MVal → Option MVal) (nil : MVal) : List MVal → Option MVal
   | [] => some nil
   | v :: vs => (chainV f nil vs).bind (f v)
 
-/-- The value of a connective (or equality, or `ite`, or an arithmetic
-operation) of kind `k` on the values `vs` of its children `cs`. -/
+/-- Whether `k` is an operator of regular expressions, or membership in one
+(`combineRe`). -/
+def isReKind : Kind → Bool
+  | .REGEXP_CONCAT | .REGEXP_UNION | .REGEXP_INTER | .STRING_TO_REGEXP | .STRING_IN_REGEXP
+  | .REGEXP_NONE | .REGEXP_ALL | .REGEXP_ALLCHAR | .REGEXP_STAR | .REGEXP_PLUS | .REGEXP_OPT
+  | .REGEXP_COMPLEMENT | .REGEXP_DIFF | .REGEXP_RANGE => true
+  | _ => false
+
+/-- The value of an operator of regular expressions, or of membership in one,
+of kind `k` on the values `vs` of its children. -/
+def combineRe (k : Kind) (vs : List MVal) : Option MVal :=
+  match k, vs with
+  | .REGEXP_CONCAT, vs => if 2 ≤ vs.length then chainV reConcatV (.re .epsilon) vs else none
+  | .REGEXP_UNION, vs => if 2 ≤ vs.length then chainV reUnionV (.re .empty) vs else none
+  | .REGEXP_INTER, vs => if 2 ≤ vs.length then chainV reInterV (.re (.star .allchar)) vs else none
+  | .STRING_TO_REGEXP, [.str w] => some (.re (TRe.ofList w))
+  | .STRING_IN_REGEXP, [.str w, .re r] => some (.bool (TRe.inRe w r))
+  | .REGEXP_NONE, [] => some (.re .empty)
+  | .REGEXP_ALL, [] => some (.re (.star .allchar))
+  | .REGEXP_ALLCHAR, [] => some (.re .allchar)
+  | .REGEXP_STAR, [.re r] => some (.re (TRe.mkStar r))
+  | .REGEXP_PLUS, [.re r] => some (.re (TRe.mkConcat r (TRe.mkStar r)))
+  | .REGEXP_OPT, [.re r] => some (.re (TRe.mkUnion r .epsilon))
+  | .REGEXP_COMPLEMENT, [.re r] => some (.re (TRe.mkComp r))
+  | .REGEXP_DIFF, [.re a, .re b] => some (.re (TRe.mkInter a (TRe.mkComp b)))
+  | .REGEXP_RANGE, [.str a, .str b] => some (.re (TRe.mkRange a b))
+  | _, _ => none
+
+/-- The value of a connective (or equality, or `ite`, or an arithmetic, string,
+set or regular expression operation) of kind `k` on the values `vs` of its
+children `cs`. -/
 def combine (k : Kind) (cs : Array Node) (vs : List MVal) : Option MVal :=
+  if isReKind k then combineRe k vs else
   match k, vs with
   | .NOT, [.bool b] => some (.bool !b)
   | .AND, vs => if 2 ≤ vs.length then (bools vs).map fun bs => .bool (bs.all id) else none
   | .OR, vs => if 2 ≤ vs.length then (bools vs).map fun bs => .bool (bs.any id) else none
   | .IMPLIES, [.bool a, .bool b] => some (.bool (!a || b))
   | .XOR, [.bool a, .bool b] => some (.bool (a != b))
-  | .EQUAL, [a, b] => some (.bool (a.veq b))
+  | .EQUAL, [a, b] => if a.isRe then none else some (.bool (a.veq b))
   | .ITE, [.bool c, a, b] => some (if c then a else b)
   | .ADD, vs => if 2 ≤ vs.length then
       (chainNil .ADD (cs[0]?.getD default).smtTypeF).bind fun nil => chainV plusV nil vs
@@ -396,6 +453,14 @@ where
     match a.ty, b.ty with
     | .Set T, .Set U => if a.isSet && b.isSet && T == U then f T else none
     | _, _ => none
+
+/-- The value of an indexed operator of kind `k`, of indices `is`, on the
+values `vs` of its children. -/
+def combineIdx (k : Kind) (is : List Int) (vs : List MVal) : Option MVal :=
+  match k, is, vs with
+  | .REGEXP_REPEAT, [i], [.re r] => some (.re (r.exp i.toNat))
+  | .REGEXP_LOOP, [i, j], [.re r] => some (.re (TRe.loop i j r))
+  | _, _, _ => none
 
 /-- The CPC list of the arguments of a `distinct` (as `Node.toEo` writes it). -/
 def distinctList (cs : Array Node) : Term :=
@@ -462,13 +527,17 @@ mutual
       if distinctTyped cs then
         match evList M env n cs.toList S with
         | (none, S) => (none, S)
-        | (some vs, S) => (if 2 ≤ vs.length then some (.bool (distinctVals vs)) else none, S)
+        | (some vs, S) => (if 2 ≤ vs.length && !vs.any (·.isRe) then some (.bool (distinctVals vs)) else none, S)
       else (none, S)
     | .app (.kind k) cs =>
       if k == .FORALL || k == .EXISTS then (quant M env n (k == .EXISTS) cs, S) else
       match evList M env n cs.toList S with
       | (none, S) => (none, S)
       | (some vs, S) => (combine k cs vs, S)
+    | .app (.indexed k is) cs =>
+      match evList M env n cs.toList S with
+      | (none, S) => (none, S)
+      | (some vs, S) => (combineIdx k is.toList vs, S)
     | .app (.node .APPLY_UF (.var f T)) cs =>
       match M.const f T with
       | none => (none, S)
