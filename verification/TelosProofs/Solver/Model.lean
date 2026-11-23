@@ -911,6 +911,25 @@ theorem subV_sound {a b r : MVal} (h : Model.subV a b = some r) :
     simp [toVal, __smtx_model_eval__, native_zplus, native_zneg, native_rplus, native_rneg]
 
 omit [LogosFacts] in
+theorem divV_sound (N : SmtModel) {a b r : MVal} (h : Model.divV a b = some r) :
+    (__smtx_model_eval_ite
+      (__smtx_model_eval_eq (__smtx_to_real_coerce (toVal b)) (SmtValue.Real (native_mk_real 0 1)))
+      (__smtx_model_eval_apply N (native_model_lookup N native_qdiv_by_zero_id
+        (SmtType.FunType SmtType.Real SmtType.Real)) (__smtx_to_real_coerce (toVal a)))
+      (__smtx_model_eval_qdiv_total (__smtx_to_real_coerce (toVal a)) (__smtx_to_real_coerce (toVal b)))) =
+    toVal r := by
+  cases a <;> cases b <;> simp only [Model.divV, reduceCtorEq] at h
+  rename_i qa qb
+  split at h
+  · cases h
+  · rename_i hb
+    simp only [Option.some.injEq] at h
+    subst h
+    have hb' : (qb : ℝ) ≠ 0 := by exact_mod_cast (by simpa using hb)
+    simp [toVal, __smtx_to_real_coerce, __smtx_model_eval_eq, native_veq, native_mk_real, hb',
+      __smtx_model_eval_ite, __smtx_model_eval_qdiv_total, native_rdiv_total]
+
+omit [LogosFacts] in
 theorem negV_sound {a r : MVal} (h : Model.negV a = some r) :
     __smtx_model_eval_uneg (toVal a) = toVal r := by
   cases a <;> simp only [Model.negV, reduceCtorEq, Option.some.injEq] at h <;> subst h <;>
@@ -1137,6 +1156,9 @@ theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List 
        | (rw [toSmt_bin (op := UserOp.neg) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.neg) x) y)
             = SmtTerm.neg (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
           simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact subV_sound h)
+       | (rw [toSmt_bin (op := UserOp.qdiv) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.qdiv) x) y)
+            = SmtTerm.qdiv (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact divV_sound N h)
        | (rw [toSmt_bin (op := UserOp.lt) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.lt) x) y)
             = SmtTerm.lt (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
           simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact ltV_sound h)
@@ -1984,14 +2006,14 @@ theorem solveScript_sat (sc : Script) (u : UserOptions) (ee pp wp co vs : Bool)
   · simp at h
   · -- whichever solved it, the answer is `sat` only if the model satisfies the
     -- input
-    have key : ∀ (o : NodeOrder) (r0 : Solver.Result), (if r0.answer != .sat then r0 else
+    have key : ∀ (o : NodeOrder) (r0 : Solver.Result) (msg : String), (if r0.answer != .sat then r0 else
         if (Solver.buildModel r0.ee (Solver.relevantTerms r0.asserted) (Solver.freeConsts as)
-            (engineDefs as opts pp o) as r0.arithModel).satisfies as then
+            (engineDefs as opts pp o) as r0.arithModel r0.asserted).satisfies as then
           { r0 with model := some (Solver.buildModel r0.ee (Solver.relevantTerms r0.asserted)
-            (Solver.freeConsts as) (engineDefs as opts pp o) as r0.arithModel) }
-        else { r0 with answer := .unknown, uncertified := some "the model does not satisfy the input" }).answer = .sat →
+            (Solver.freeConsts as) (engineDefs as opts pp o) as r0.arithModel r0.asserted) }
+        else { r0 with answer := .unknown, uncertified := some msg }).answer = .sat →
         ∃ M, model_wf M ∧ TrueIn M (inputNode as).toEo := by
-      intro _ r0 hs
+      intro _ r0 _ hs
       split at hs
       · rename_i hne
         simp [hs] at hne
@@ -2002,11 +2024,11 @@ theorem solveScript_sat (sc : Script) (u : UserOptions) (ee pp wp co vs : Bool)
     split at h
     · try simp only [Except.ok.injEq, Prod.mk.injEq] at h
       obtain ⟨rfl, rfl⟩ := h
-      exact key _ _ hs
+      exact key _ _ _ hs
     · split at h
       · simp at h
       · try simp only [Except.ok.injEq, Prod.mk.injEq] at h
         obtain ⟨rfl, rfl⟩ := h
-        exact key _ _ hs
+        exact key _ _ _ hs
 
 end Telos.Frontend

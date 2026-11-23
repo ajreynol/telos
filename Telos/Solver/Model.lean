@@ -308,6 +308,13 @@ def subV : MVal → MVal → Option MVal
   | .rat a, .rat b => some (.rat (a + -b))
   | _, _ => none
 
+/-- Division by a nonzero rational (Logos's `qdiv` then is `qdiv_total`; by
+zero, its value is that of the model's `@div_by_zero` function: not
+evaluated). -/
+def divV : MVal → MVal → Option MVal
+  | .rat a, .rat b => if b == 0 then none else some (.rat (a / b))
+  | _, _ => none
+
 def negV : MVal → Option MVal
   | .int a => some (.int (-a))
   | .rat a => some (.rat (-a))
@@ -364,6 +371,7 @@ def combine (k : Kind) (cs : Array Node) (vs : List MVal) : Option MVal :=
       (chainNil .STRING_CONCAT (cs[0]?.getD default).smtTypeF).bind fun nil => chainV concatV nil vs
     else none
   | .SUB, [a, b] => subV a b
+  | .DIVISION, [a, b] => divV a b
   | .NEG, [a] => negV a
   | .LT, [a, b] => ltV a b
   | .LEQ, [a, b] => leqV a b
@@ -1028,10 +1036,11 @@ partial def relevantTerms (asserted : Array Node) : Std.HashSet Key :=
 /-- **Build a model** from the equality engine's classes of the relevant terms
 `relevant`, for the free constants `syms` of the input assertions `inputs`,
 and the definitions `defs` (`x := t`) of the variables solved by
-preprocessing, in order. -/
+preprocessing, in order; the Boolean variables the equality engine does not
+have get their values from the literals `asserted` (the SAT solver's). -/
 def buildModel (ee : EE.EqualityEngine) (relevant : Std.HashSet Key) (syms : List Node)
     (defs : List (Node × Node)) (inputs : List Node)
-    (arith : Array (Node × Rat) := #[]) : Model := Id.run do
+    (arith : Array (Node × Rat) := #[]) (asserted : Array Node := #[]) : Model := Id.run do
   let mut b : Builder := {}
   let vals := classValues ee arith
   let valOf (t : Node) : Option MVal := (ee.nodeIds.get? ⟨t⟩).bind fun j => vals.get? (EE.find ee j)
@@ -1085,6 +1094,14 @@ def buildModel (ee : EE.EqualityEngine) (relevant : Std.HashSet Key) (syms : Lis
   for (x, q) in arith do
     if let .var name T := x then
       b := setConst name T (if T == .integer then .int q.floor else .rat q) b
+  -- the Boolean variables the SAT solver assigned (not in the equality engine)
+  for l in asserted do
+    match l with
+    | .var name .boolean =>
+      if (b.model.const name .boolean).isNone then b := setConst name .boolean (.bool true) b
+    | .app (.kind .NOT) #[.var name .boolean] =>
+      if (b.model.const name .boolean).isNone then b := setConst name .boolean (.bool false) b
+    | _ => pure ()
   -- the other constants: the defaults of those not defined, then the
   -- definitions (which may use them), then the defaults of the rest
   let defined := defs.map (·.1)

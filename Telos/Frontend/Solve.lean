@@ -153,6 +153,39 @@ imitating cvc5's order; else the structural order. -/
 def orderFor (cvc5Order : Bool) (sc : Script) (as : List Node) : NodeOrder :=
   if cvc5Order then Profile.time "order" (fun _ => "input") fun _ => inputOrder sc as else {}
 
+/-- Why the model does not satisfy the assertions: the first that is not true,
+and its value. -/
+def modelRejection (N : DtNames) (M : Solver.Model) (as : List Node) : String :=
+  -- (into conjunctions: the first conjunct that is not true)
+  let rec culprit (fuel : Nat) (a : Node) : Node :=
+    match fuel, a with
+    | fuel + 1, .app (.kind .AND) cs =>
+      match cs.find? fun c => M.eval c != some (.bool true) with
+      | some c => culprit fuel c
+      | none => a
+    | _, _ => a
+  let why := match as.find? fun a => M.eval a != some (.bool true) with
+    | some a =>
+      let a := culprit 1000 a
+      let v := match M.eval a with
+        | some (.bool false) => "false"
+        | some _ => "a non-Boolean value"
+        | none => "not evaluated"
+      -- the values of its constants
+      let showV (v : Solver.MVal) : String := match v with
+        | .bool b => toString b
+        | .int k => toString k
+        | .rat q => toString q
+        | .uval s i => s!"@u{s}_{i}"
+        | .fn fid .. => s!"@table{fid}"
+        | _ => "…"
+      let vars := (a.vars.take 12).filterMap fun (x : Node) => match x with
+        | .var name T => (M.const name T).map fun v => s!"{name}={showV v}"
+        | _ => none
+      s!": {(a.toSmtLibLet N).take 300} is {v} (with {", ".intercalate vars})"
+    | none => if M.tablesOk && M.constsOk then "" else ": its tables or constants are ill-typed"
+  s!"the model does not satisfy the input{why}"
+
 /-- Solve the assertions of `sc`: the assertions given to the engine, and the
 engine's result. A conjunction of literals goes to the engine alone
 (`Solver.run`), and to the SAT solver too if a theory sends a lemma; anything
@@ -160,7 +193,7 @@ else to the SAT solver and the engine (`Solver.runSat`), as do conjunctions
 with `viaSat`. -/
 def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Bool := false)
     (preprocess : Bool := true) (wantProof : Bool := false) (cvc5Order : Bool := true)
-    (viaSat : Bool := false) (triggerEvents : Bool := false) :
+    (viaSat : Bool := false) (triggerEvents : Bool := false) (events : Bool := true) :
     Except String (List Node × Solver.Result) := do
   let theories ← enabledTheories (sc.logic.getD "ALL")
   let (opts, as) ← ppInput sc u
@@ -171,7 +204,7 @@ def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Boo
   let engOrder := pre.2
   let named (n : Node) : String :=
     (substSkolems ((namedSkolems sc.dtNames out).map fun (k, v, _) => (k, v)) n).toSmtLibLet sc.dtNames
-  let cfg : Solver.Config := { theories, termBased := opts.termBased, eeEvents, triggerEvents, wantProof, cvc5Order,
+  let cfg : Solver.Config := { theories, termBased := opts.termBased, eeEvents, triggerEvents, events, wantProof, cvc5Order,
                                 arith := { Solver.arithOptionsOf (sc.logic.getD "ALL") with order := engOrder },
                                 order := engOrder,
                                 decision := Solver.decisionModeOf (sc.logic.getD "ALL") (u.decision <|> sc.decision),
@@ -186,10 +219,17 @@ def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Boo
   -- a `sat` stands only if its model satisfies the input assertions
   let r := if r.answer != .sat then r else
     let M := buildModel r.ee (relevantTerms r.asserted) (freeConsts as) (engineDefs as opts preprocess order) as
-      r.arithModel
+      r.arithModel r.asserted
     if M.satisfies as then { r with model := some M }
-    else { r with answer := .unknown, uncertified := some "the model does not satisfy the input" }
+    else { r with answer := .unknown, uncertified := some (modelRejection sc.dtNames M as) }
   return (out, r)
+
+/-- Solve the script and give only its answer (no events are recorded), and
+why an answer was not certified, if it was not. -/
+def solveAnswer (sc : Script) (u : Preprocess.UserOptions := {}) (viaSat : Bool := false) :
+    Except String (Solver.Answer × Option String) := do
+  let (_, r) ← solveScript sc u (viaSat := viaSat) (events := false)
+  return (r.answer, r.uncertified.map fun e => s!"answer not certified ({e}): answering unknown")
 
 /-- Preprocess `sc`, solve the result if it is a conjunction of literals, and
 print the events and the answer; also why an `unsat` of the engine was not

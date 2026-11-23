@@ -126,6 +126,8 @@ structure Config where
   eeEvents : Bool := false
   /-- Print the triggers made (`-o trigger`). -/
   triggerEvents : Bool := false
+  /-- Record the events (off when only the answer is wanted: `telos --solve`). -/
+  events : Bool := true
   /-- Leave the explanation of a conflict to `run`, which certifies it
   (`certifyV`), rather than explaining it when it happens. -/
   defer : Bool := false
@@ -465,8 +467,8 @@ became active (its local assertions). -/
 
 abbrev EngineM := ReaderT Config (StateM State)
 
-def emit (e : Event) : EngineM Unit :=
-  modify fun s => { s with events := s.events.push e }
+def emit (e : Event) : EngineM Unit := do
+  if (← read).events then modify fun s => { s with events := s.events.push e }
 
 def level : EngineM Nat := do return (← get).level
 

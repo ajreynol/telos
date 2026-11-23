@@ -74,6 +74,7 @@ structure Options where
   theoryEvents : Bool := false
   theoryEventsEE : Bool := false
   triggers : Bool := false
+  solve : Bool := false
   noPreprocess : Bool := false
   /-- Do not imitate cvc5's order of nodes (`Solver.Config.cvc5Order`). -/
   noCvc5Order : Bool := false
@@ -93,6 +94,7 @@ def parseArgs : List String → Options → Except String Options
   | "--theory-events" :: rest, o => parseArgs rest { o with theoryEvents := true }
   | "--theory-events-ee" :: rest, o => parseArgs rest { o with theoryEventsEE := true }
   | "--trigger" :: rest, o => parseArgs rest { o with triggers := true }
+  | "--solve" :: rest, o => parseArgs rest { o with solve := true }
   | "--no-preprocess" :: rest, o => parseArgs rest { o with noPreprocess := true }
   | "--via-sat" :: rest, o => parseArgs rest { o with viaSat := true }
   | "--dimacs" :: rest, o => parseArgs rest { o with dimacs := true }
@@ -146,6 +148,16 @@ def main (args : List String) : IO UInt32 := do
         | none => IO.print text
       | some (.error e) => IO.eprintln s!"telos: no proof: {e}"; return 1
       | none => pure ()
+      if opts.profile then Profile.report
+      return 0
+    | .error e => IO.eprintln s!"telos: {e}"; return 1
+  -- solving, the answer only: with `--solve`, or for a benchmark (assertions,
+  -- no `simplify` queries)
+  if opts.solve || (!opts.postAsserts && sc.queries.isEmpty && !sc.assertions.isEmpty) then
+    match solveAnswer sc opts.pp opts.viaSat with
+    | .ok (a, unc) =>
+      if let some e := unc then IO.eprintln s!"telos: {e}"
+      IO.println a.name
       if opts.profile then Profile.report
       return 0
     | .error e => IO.eprintln s!"telos: {e}"; return 1
