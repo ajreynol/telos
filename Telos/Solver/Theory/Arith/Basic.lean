@@ -159,16 +159,25 @@ structure Options where
   rewriteEq : Bool := true
   /-- The order of node ids of the rewriter (`NodeOrder`). -/
   order : NodeOrder := {}
+  /-- The logic is nonlinear: a monomial is a variable of its own, for the
+  nonlinear extension (`Telos/Solver/Theory/Arith/Nl/`). -/
+  nonlinear : Bool := false
+  /-- Pure integer arithmetic (`logic.isPure(THEORY_ARITH) &&
+  !logic.areRealsUsed()`): the nonlinear extension's tangent planes are
+  interleaved. -/
+  pureInt : Bool := false
   deriving Inhabited, Repr
 
 /-- The options of a logic: pure (arithmetic and no other theory),
 quantified, linear, with integers, difference logic. -/
-def Options.ofLogic (pure quantified linear integers difference : Bool) : Options :=
+def Options.ofLogic (pure quantified linear integers difference : Bool) (reals : Bool := true) : Options :=
   let pureQF := pure && !quantified
   { heuristicPivots := if pureQF then (if difference then -1 else if !integers then 0 else 5) else 5
     pivotThreshold := if pureQF && difference then 16 else 2
     varOrderPivots := if pureQF then 200 else -1
-    rewriteEq := pureQF && linear }
+    rewriteEq := pureQF && linear
+    nonlinear := !linear
+    pureInt := pure && !reals }
 
 /-- `ArithType`. -/
 inductive ArithType where

@@ -45,13 +45,17 @@ def setupVariable (n : Node) : ArithM Unit := do
   markSetup n
 
 /-- `setupVariableList`: the variables of a monomial's variable part. A
-product of several variables is nonlinear, which a linear logic rejects. -/
+product of several variables is nonlinear: a variable of its own in a
+nonlinear logic (`d_foundNl`), which a linear logic rejects. -/
 def setupVariableList (m : Node) : ArithM Unit := do
   match m with
   | .app (.kind .MULT) cs =>
     for v in cs do
       if !(← isSetup v) then setupVariable v
-    unsupported s!"a nonlinear term: {m.toSmtLib}"
+    if (← get).opts.nonlinear then
+      let _ ← requestArithVar m false (Telos.Arith.isInt m)
+      markSetup m
+    else unsupported s!"a nonlinear term: {m.toSmtLib}"
   | _ => if !(← isSetup m) then setupVariable m
 
 /-- `LinearEqualityModule::computeRowValue`. -/

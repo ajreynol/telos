@@ -20,6 +20,7 @@ import Telos.Solver.SetsLemma
 import Telos.Solver.StringsLemma
 import Telos.Solver.QuantLemma
 import Telos.Solver.Theory.Arith.Solver
+import Telos.Solver.NlLemma
 import Telos.Solver.Decision
 
 /-!
@@ -88,7 +89,7 @@ def enabledTheories (logic : String) : Except String (List Theory) := do
 /-- The linear solver's options of a logic (`SetDefaults`). -/
 def arithOptionsOf (logic : String) : Arith.Options :=
   match Preprocess.Logic.parse logic with
-  | .ok l => let l := l.widen; Arith.Options.ofLogic l.pureArith l.quantified l.linear l.integers l.difference
+  | .ok l => let l := l.widen; Arith.Options.ofLogic l.pureArith l.quantified l.linear l.integers l.difference l.reals
   | .error _ => Arith.Options.ofLogic false true false true false
 
 /-- `SetDefaults::setDefaultDecisionMode`: justification for `ALL`,
@@ -185,6 +186,10 @@ def Config.sharing (c : Config) : Bool :=
 /-- The linear arithmetic solver is on (`Telos/Solver/Theory/Arith/`): arithmetic
 is enabled. -/
 def Config.arithSolver (c : Config) : Bool := c.theories.contains .THEORY_ARITH
+
+/-- The nonlinear extension is on (`Telos/Solver/Theory/Arith/Nl/`): arithmetic
+is enabled in a nonlinear logic. -/
+def Config.nlSolver (c : Config) : Bool := c.arithSolver && c.arith.nonlinear
 
 /-- The engine and the SAT solver handle the enabled theories (some only in
 part: arithmetic answers `unknown` until its solver is complete): they are
@@ -316,6 +321,11 @@ structure State where
   events : Array Event := #[]
   /-- The linear arithmetic solver (`Telos/Solver/Theory/Arith/`). -/
   arith : Arith.State := {}
+  /-- The nonlinear extension (`Telos/Solver/Theory/Arith/Nl/`). -/
+  nl : Arith.Nl.NlState := {}
+  /-- The model of arithmetic as the nonlinear extension repaired it, at its
+  last full-effort check (`d_arithModelCache`). -/
+  nlModel : Option (Array (Node × Rat)) := none
   /-- The SAT context level. -/
   level : Nat := 0
   assignment : Assignment := {}
@@ -1003,6 +1013,7 @@ def pushLevel : EngineM Unit :=
       s.sharedLog.size, s.registerLog.size, s.skActive.size, s.ufFunctionTerms.size, s.arithShared.size,
       s.setsShared.size, s.stringsShared.size⟩
     { s with saved := s.saved.push sv, level := s.level + 1, ee := EE.push s.ee, arith := s.arith.push,
+             nl := s.nl.push,
              quant := { s.quant with st := s.quant.st.push },
              quantSaved := s.quantSaved.push (s.quantFacts.size, s.quantHead) }
 
@@ -1072,6 +1083,10 @@ def popTo (k : Nat) : EngineM Unit := do
     let mut a := s.arith
     while a.marks.size > k do a := a.pop
     return a }
+  modify fun s => { s with nl := Id.run do
+    let mut n := s.nl
+    while n.marks.size > k do n := n.pop
+    return n }
   -- the shared terms database and the propagation marks
   let (at₀, tt₀, nt₀, ms₀, mb₀, log) ← modifyGet fun s =>
     ((s.atomTerms, s.termTheories, s.notified, s.markedSat, s.markedBuiltin, s.sharedLog),
@@ -1321,7 +1336,10 @@ def cnfHostWith (notify : Node → EngineM Unit) (c : Config) : Cnf.Host (StateT
 
 mutual
 partial def theoryPreRegister (T : Theory) (t : Node) : EngineM Unit := do
-  if T == .THEORY_ARITH && (← read).arithSolver then withArith (Arith.preRegisterTerm t)
+  if T == .THEORY_ARITH && (← read).arithSolver then
+    withArith (Arith.preRegisterTerm t)
+    -- `NonlinearExtension::preRegisterTerm`
+    if (← read).nlSolver then modify fun s => { s with nl := s.nl.preRegisterTerm t }
   if T == .THEORY_UF && (← read).eeSolver then
     withEE (UF.preRegisterTerm t)
     -- (`d_functionsTerms`)
@@ -1699,6 +1717,123 @@ def stringsPostCheck (full : Bool) : EngineM Unit := do
       if c.satMode then withCnf (Cnf.preferPhase n pol) }
   Strings.postCheck ops full relevant (do return (← get).outputUsed || (← get).lemmasAdded)
 
+/-! ## The nonlinear extension -/
+
+/-- The classes of the equality engine (`EqClassesIterator`), each with its
+terms from the representative (`EqClassIterator`). -/
+def eeClasses (ee : EE.EqualityEngine) : Array (Array Node) := Id.run do
+  let mut out := #[]
+  for i in [0:ee.nodes.size] do
+    if EE.find ee i != i || ee.isInternal[i]! then continue
+    let mut cls := #[]
+    let mut j := i
+    for _ in [0:ee.nodes.size] do
+      if !ee.isInternal[j]! then cls := cls.push ee.nodes[j]!
+      j := ee.enodes[j]!.next
+      if j == i then break
+    out := out.push cls
+  return out
+
+/-- The context of the nonlinear extension. -/
+def nlCtx : EngineM Arith.Nl.Ctx := do
+  let s ← get
+  let c ← read
+  let ee := s.ee
+  let rep? := fun (t : Node) => (ee.nodeIds.get? ⟨t⟩).map fun i => ee.nodes[EE.find ee i]!
+  return { order := { c.arith.order with fresh := ee.freshIds }, facts := s.arithFacts, shared := s.arithShared,
+           rep?, areEqual := fun a b => a == b || (match rep? a, rep? b with
+             | some x, some y => x == y
+             | _, _ => false),
+           classes := fun _ => eeClasses ee,
+           quantified := c.theories.contains .THEORY_QUANTIFIERS,
+           pureInt := c.arith.pureInt,
+           lemmasSent := s.arith.lemmasSent }
+
+/-- Run an operation of the nonlinear extension. -/
+def withNl (x : Arith.Nl.NlM α) : EngineM α := do
+  let ctx ← nlCtx
+  let st ← modifyGet fun s => (s.nl, { s with nl := {} })
+  let (a, st) := (x.run ctx).run st
+  modify fun s => { s with nl := st }
+  return a
+
+/-- `TheoryInferenceManager::lemma` of a lemma of the nonlinear extension:
+unless it was sent before (arithmetic's cache of rewritten lemmas), the event,
+and the clauses, with the lemma's certificate (`NlLemma.prove`); whether it
+was sent. -/
+def nlSend (l : Arith.Nl.Lemma) : EngineM Bool := do
+  let c ← read
+  let r := Telos.rewrite l.lem { c.arith.order with fresh := (← get).ee.freshIds }
+  if (← get).arith.lemmasSent.contains ⟨r⟩ then return false
+  modify fun s => { s with arith := { s.arith with lemmasSent := s.arith.lemmasSent.insert ⟨r⟩ } }
+  emit (.lemma (← level) .THEORY_ARITH l.id l.lem)
+  if c.satMode then
+    let cl := (← get).nl.compareLits
+    let pf := NlLemma.prove (fun n => cl.get? ⟨n⟩) l
+    modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (l.lem, false, none, pf),
+                             outputUsed := true, lemmasAdded := true }
+  else
+    modify fun s => { s with lemmaSent := true, lemmaQueue := s.lemmaQueue.push l.lem, lemmasAdded := true }
+  flushLemmas
+  return true
+
+/-- `doPendingLemmas` of the nonlinear extension's buffered lemmas. -/
+def nlFlushPending : EngineM Unit := do
+  let ls ← modifyGet fun s => (s.nl.pending, { s with nl := { s.nl with pending := #[] } })
+  for l in ls do let _ ← nlSend l
+
+/-- `Theory::collectAssertedTerms` of arithmetic (with its shared terms): the
+terms of its facts, through the operators it owns (and `not`, `=`), not below
+quantifiers. -/
+def arithTermSet : EngineM (Std.HashSet Key) := do
+  let s ← get
+  let c ← read
+  let mut set : Std.HashSet Key := {}
+  for root in s.arithFacts ++ s.arithShared do
+    let mut work := #[root]
+    while !work.isEmpty do
+      let cur := work.back!
+      work := work.pop
+      if set.contains ⟨cur⟩ then continue
+      set := set.insert ⟨cur⟩
+      let k := cur.getKind
+      if (k == .NOT || k == .EQUAL || c.theoryOf cur == .THEORY_ARITH) && k != .FORALL && k != .EXISTS then
+        work := work ++ cur.getChildren
+  return set
+
+/-- `TheoryArith::postCheck` at full effort, after the linear solver sent
+nothing: the nonlinear extension (`NonlinearExtension::checkFullEffort`). Its
+`ExtTheory` lemmas go out at once; its other lemmas wait for last call. -/
+def nlFullCheck : EngineM Unit := do
+  modify fun s => { s with nlModel := none }
+  -- `ExtTheory::doInferences`: sent at once
+  withNl Arith.Nl.extDoInferences
+  let sentNow ← modifyGet fun s => (s.nl.sent, { s with nl := { s.nl with sent := #[] } })
+  let mut sent := #[]
+  for l in sentNow do
+    if ← nlSend l then sent := sent.push l
+  modify fun s => { s with nl := { s.nl with sent } }
+  if !(← get).nl.hasNlTerms || (← get).inConflict then
+    modify fun s => { s with nl := { s.nl with sent := #[] } }
+    return
+  let termSet ← arithTermSet
+  let c ← read
+  let shared := (← get).arithShared
+  let vals := (Arith.modelValues (← get).arith).filter fun (n, _) =>
+    termSet.contains ⟨n⟩ && (c.theoryOf n == .THEORY_ARITH || shared.contains n)
+  let r ← withNl (Arith.Nl.checkFullEffort vals termSet)
+  modify fun s => { s with nl := { s.nl with sent := #[] }, nlModel := r }
+  if (← get).nl.incomplete then
+    let l ← level
+    emit (.modelUnsound l .THEORY_ARITH "ARITH_NL")
+    modify fun s => { s with modelUnsoundAt := s.modelUnsoundAt.orElse fun _ => some l }
+
+/-- `NonlinearExtension::presolve`: the initial sign lemmas, sent at once. -/
+def nlPresolve : EngineM Unit := do
+  if !(← read).nlSolver then return
+  withNl Arith.Nl.presolve
+  nlFlushPending
+
 /-- `Theory::check` of one theory: for UF, its facts are asserted to the
 equality engine, until the engine is in conflict. -/
 def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
@@ -1743,10 +1878,14 @@ def theoryCheck (T : Theory) (e : Effort) : EngineM Unit := do
       -- a lemma (a disequality's split) goes to the CNF stream at once, which
       -- preregisters its atoms before the facts and the check go on
       flushLemmas
-    let _ ← withArith (Arith.postCheck (e == .full))
+    -- (`TheoryArith::postCheck` at full effort: the buffered lemmas of the
+    -- last full check are dropped)
+    if e == .full then modify fun st => { st with nl := { st.nl with pending := #[], waiting := #[] } }
+    let sentLin ← withArith (Arith.postCheck (e == .full))
     flushArithDeferred
     -- its lemmas go to the CNF stream before the next theory's check
     flushLemmas
+    if e == .full && (← read).nlSolver && !sentLin && !(← get).inConflict then nlFullCheck
   if T == .THEORY_QUANTIFIERS && (← read).quantSolver then
     repeat
       let s ← get
@@ -1952,10 +2091,14 @@ def check (e : Effort) : EngineM Unit := do
     if e == .full && (← read).sharing && !st.factsAsserted && !(st.outputUsed || st.lemmasAdded) &&
         !st.inConflict then
       combineTheories
-  -- last call: the quantifiers engine (`QuantifiersEngine::check`), if the full
-  -- check left nothing to do
+  -- last call, if the full check left nothing to do: arithmetic's
+  -- `needsCheckLastEffort` sends the nonlinear extension's buffered lemmas,
+  -- then the quantifiers engine (`QuantifiersEngine::check`)
   let st ← get
-  if e == .full && (← read).quantSolver && !st.inConflict && !(st.outputUsed || st.lemmasAdded) then
+  let lastCall := e == .full && !st.inConflict && !(st.outputUsed || st.lemmasAdded)
+  if lastCall && (← read).nlSolver then nlFlushPending
+  let st ← get
+  if lastCall && (← read).quantSolver && !st.inConflict then
     let ee := st.ee
     let mut all : Array Node := #[]
     for i in [0:ee.nodes.size] do

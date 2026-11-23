@@ -336,6 +336,7 @@ def propSolve (formulas : List Node) : PropM Sat.Solver.Result := do
   -- `TheoryProxy::presolve`: the decision engine's, then the theories'
   modifyThe PropState fun p => { p with dec := p.dec.presolve }
   if c.arithSolver then onEngineTop (withArith Arith.presolve)
+  if c.nlSolver then onEngineTop nlPresolve
   onEngine (modify fun s => { s with satBusy := true })
   Sat.Solver.solve
 
@@ -428,7 +429,16 @@ def runSat (c : Config) (formulas : List Node) : Result :=
         -- quantifiers, unless the model is unsound
         (T == .THEORY_QUANTIFIERS && c.quantSolver)) && e.modelUnsoundAt.isNone
     { answer := if solved then .sat else .unknown, events := e.events, ee := e.ee,
-      asserted := e.asserted ++ bools, arithModel := if arithOk then Arith.modelValues e.arith else #[] }
+      asserted := e.asserted ++ bools,
+      arithModel := if !arithOk then #[] else
+        let lin := Arith.modelValues e.arith
+        match e.nlModel with
+        | none => lin
+        | some nl =>
+          -- the nonlinear extension's repaired values, the monomials dropped
+          let lin := (lin.filter fun (n, _) => !Arith.Nl.isNlMult n).map fun (n, q) =>
+            ((nl.find? (·.1 == n)).map (·)).getD (n, q)
+          lin ++ nl.filter fun (n, _) => !lin.any (·.1 == n) }
   | .unsat =>
     -- the certificate, post hoc
     let p := ((explainLevelZero.run c).run p).2

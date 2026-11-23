@@ -147,7 +147,10 @@ answer. That cvc5 output needs the patch `cvc5-theory-events.patch`.
 So far the engine, UF, datatypes, cvc5's MiniSat with its decision engine (the
 justification heuristic) and linear arithmetic are ported: cvc5's equality engine, used as the central one, UF and datatypes
 over it, and linear arithmetic (`Telos/Solver/Theory/Arith/`: the simplex,
-branch and bound and the Diophantine solver; not yet with other theories). In
+branch and bound and the Diophantine solver; not yet with other theories), with
+cvc5's nonlinear extension in part (`Telos/Solver/Theory/Arith/Nl/`: model-based
+refinement by sign, magnitude, bound, tangent plane, factoring and flattening
+lemmas, each certified by CPC rules, `Telos/Solver/NlLemma.lean`). In
 other logics the theories' checks do nothing, and the answer is `unknown` as
 soon as a theory gets a literal.
 

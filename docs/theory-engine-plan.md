@@ -1913,6 +1913,113 @@ Steps, each with its fuzz generator, events and certificates:
 3. CEGQI for linear arithmetic, then datatypes;
 4. alpha-equivalence and the remaining preprocessing.
 
+## Stage 11: nonlinear arithmetic (in progress: milestone 1)
+
+cvc5's nonlinear extension (`src/theory/arith/nl/`) in safe mode: `nl-ext=full`
+with its default techniques. Coverings (`nl-cov`) are off in safe mode, ICP is
+an expert option, and transcendental functions, `iand` and `pow2` are excluded
+from the input, so their solvers are not ported; nor is `nl-ext-split-zero`
+(expert, off). The relevant C++ is about 5k lines: `nonlinear_extension.cpp`,
+`nl_model.cpp`, `ext/` (the monomial database, the sign, magnitude, bounds,
+tangent plane, factoring and flattening checks), `ext_theory.cpp`,
+`bound_inference.cpp`, `arith_msum.cpp`, `arith_subs.cpp`.
+
+### Design
+
+`Telos/Solver/Theory/Arith/Nl/`:
+- `Basic.lean`: monomial sums (`ArithMSum`, a `std::map` keyed by monomial in
+  node order, the constant first), substitutions below arithmetic
+  (`ArithSubs`), the monomial database (`MonomialDb` and its index of
+  divisibility, `MonomialIndex`). A monomial is cvc5's `NONLINEAR_MULT`, which
+  telos writes as `MULT` without a constant (`isNlMult`);
+- `Model.lean`: `NlModel`, the abstract (linear) and concrete (computed from
+  the factors) values, and the model check that solves equalities for a
+  variable and fixes the other variables to their values
+  (`solveEqualitySimple`, `simpleCheckModelLit`), whose values then override
+  the linear model's (`getModelValueRepair`). Approximate bounds come only from
+  transcendental functions, so there are none;
+- `Ext.lean`: the extension: `ExtTheory`'s simplification of monomials by the
+  constants of the equality engine (`nl-ext-rewrites`, `EXTT_SIMPLIFY`, sent at
+  once), the assertions with the bound inference (`nlRlvAssertBounds`, in
+  quantifier-free logics), the strategy (`Strategy::initializeStrategy`: init,
+  signs, magnitudes against `1`, flattening, magnitudes against variables and
+  monomials, bound inference with tangent planes interleaved in pure integer
+  logics, then the waiting lemmas, factoring, and waiting tangent planes),
+  `modelBasedRefinement`, the splits of shared terms that the repaired model
+  made equal, and the initial sign lemmas at presolve
+  (`nl-ext-initial-sign-lemmas`, not with quantifiers).
+
+The linear solver makes each monomial a variable of its own in a nonlinear
+logic (`setupVariableList`, `Arith.Options.nonlinear`), integer if its factors
+are. The engine (`nlFullCheck`) runs the extension in arithmetic's full-effort
+check when the linear solver sent nothing, with the facts of arithmetic, its
+shared terms, the linear model on the relevant terms (`collectAssertedTerms`)
+and the equality engine's classes. As in cvc5, the strategy's lemmas are
+buffered and sent at last call (`TheoryArith::needsCheckLastEffort`), before
+the quantifiers engine's last call, and dropped at the next full-effort check
+if they were not; an incomplete model (`setModelUnsound(ARITH_NL)`) makes a
+`sat` answer `unknown`. A `sat` model takes the repaired values, the monomials
+evaluated from their factors.
+
+State: `ExtTheory`'s terms and their activity in the SAT context
+(`NlState.push`, `pop`); its lemmas, the terms inactive for good and the initial
+sign lemmas sent, in the user context; the monomial and constraint databases,
+the tangent planes' points, the factoring skolems and `d_mono_diff` for good.
+The flattening check shuffles with a generator of its own, seeded as cvc5's
+(cvc5 shares one `Random` with its other users).
+
+### Certificates
+
+`Telos/Solver/NlLemma.lean` gives each lemma an `EqProof` of `(lem, true)`,
+checked when the lemma is sent:
+- the sign lemmas: `arith_mult_sign`; a factor equal to zero by substitution
+  and the rewriter under the assumption, then `scope`;
+- the comparisons of magnitudes, as cvc5's `ArithNlCompareProofGenerator`:
+  each comparison literal of the explanation as `(⋈ (abs a) (abs b))` by the
+  RARE rules `arith-abs-eq`, `arith-abs-int-gt` and `arith-abs-real-gt` (cvc5
+  leaves these steps trusted), repeated to the exponents of the conclusion,
+  strict ones guarded by disequalities to zero, `arith_mult_abs_comparison`,
+  the rewriter, and the RARE rule back to the conclusion's form; the
+  conclusions of the rules are read back from Logos (`StringsCore.M`);
+- tangent planes: `arith_mult_tangent`;
+- bound inference: `arith_mult_pos` or `arith_mult_neg` on the bound as the
+  check states it, related to the lemma by their rewrites;
+- factoring: the skolem's definition by `skolem_intro`, the lemma by
+  substituting it, after which it rewrites to `true`;
+- flattening and `EXTT_SIMPLIFY`: substitution of the explanation's equalities
+  and the rewriter on both sides;
+- the splits: `split`.
+
+### Results
+
+QF_NIA example (`x*y ≥ 4`, `x*y*z < 2`, `z ≥ 2`, …): the initial sign lemmas
+and the events up to the first SAT decision are cvc5's; `unsat`, certified,
+with every lemma (comparisons included) certified. On cvc5's `regress0`
+(the 442 benchmarks of the earlier survey that cvc5's safe mode solves), four
+more answers than before (`nl/issue12296`, `nl/issue10990-subst-model`,
+`nl/dd.polypaver-bench-exp-3d-chunk-0067`, `proofs/proj-issue775-mult-sign`),
+none lost, no wrong answer. `scripts/fuzz-solve.py --theory nra|nia` generates
+random benchmarks of monomials of degree up to three. With `--sat --size 4`,
+seed 1, 30 each: QF_NIA 11 the same events as cvc5, QF_NRA 7 (14 cvc5
+timeouts); the first differences are mostly before the extension (the order
+of monomials in preprocessed sums, the orientation of `(= x (- 1))`), the
+Diophantine solver's cuts on monomials, and SAT decisions. Answers on these
+60 (20 seconds each): 45 agree (39 `sat`, 6 `unsat`, all certified), 3 both
+time out, telos times out on 10 that cvc5 answers and answers 2 `sat` on
+which cvc5 times out; none differ.
+
+### Not yet
+
+- Fidelity: the node order of monomials and coefficients is approximated, as
+  elsewhere; `BoundInference`'s new bounds come after the facts in cvc5's
+  `unordered_set` order, which telos cannot reproduce (it uses the order of
+  their terms); the arithmetic model cache of `getEqualityStatus` after a
+  repair (telos uses the linear assignment).
+- The remaining failures of `regress0/nl` are outside the extension: models
+  with division by zero (`(div x 0)`, `(/ x 0)`, `(mod 0 0)`), atoms
+  `(= (to_real x) c)` that the linear solver does not normalize to `x`, the
+  parser, and two timeouts.
+
 ## Order of work (all stages)
 
 1. **Equality engine.** Port `theory/uf/equality_engine.cpp` (about 3k lines)

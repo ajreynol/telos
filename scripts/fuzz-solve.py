@@ -464,6 +464,49 @@ def lra_benchmark(rng, size, clauses=False, prelude=LRA_PRELUDE):
     return prelude + "".join(f"(assert {l})\n" for l in out) + "(check-sat)\n"
 
 
+NRA_PRELUDE = """(set-logic QF_NRA)
+(declare-fun x () Real)
+(declare-fun y () Real)
+(declare-fun z () Real)
+"""
+NIA_PRELUDE = NRA_PRELUDE.replace("QF_NRA", "QF_NIA").replace("Real", "Int")
+
+
+def nl_monomial(rng):
+    """A product of one to three variables (repetitions allowed)."""
+    fs = [rng.choice(["x", "y", "z"]) for _ in range(rng.choice([1, 2, 2, 2, 3]))]
+    return fs[0] if len(fs) == 1 else "(* " + " ".join(fs) + ")"
+
+
+def nl_literal(rng):
+    """A comparison of a sum of one to three monomials with a constant."""
+    terms = []
+    for _ in range(rng.randint(1, 3)):
+        m = nl_monomial(rng)
+        c = rng.choice([1, 1, 1, 2, -1, -2])
+        terms.append(m if c == 1 else f"(* {c} {m})" if c > 0 else f"(* (- {-c}) {m})")
+    lhs = terms[0] if len(terms) == 1 else "(+ " + " ".join(terms) + ")"
+    rel = rng.choice(["<=", "<", ">=", ">", "<=", ">=", "="])
+    c = rng.randint(-6, 6)
+    atom = f"({rel} {lhs} {c if c >= 0 else f'(- {-c})'})"
+    return atom if rel == "=" or rng.random() < 0.8 else f"(not {atom})"
+
+
+def nl_benchmark(rng, size, clauses=False, prelude=NRA_PRELUDE):
+    out = []
+    for _ in range(rng.randint(2, size)):
+        if clauses and rng.random() < 0.5:
+            k = rng.randint(2, 3)
+            out.append("(or " + " ".join(nl_literal(rng) for _ in range(k)) + ")")
+        else:
+            out.append(nl_literal(rng))
+    return prelude + "".join(f"(assert {l})\n" for l in out) + "(check-sat)\n"
+
+
+def nia_benchmark(rng, size, clauses=False):
+    return nl_benchmark(rng, size, clauses, NIA_PRELUDE)
+
+
 UFLRA_PRELUDE = LRA_PRELUDE.replace("QF_LRA", "QF_UFLRA") + """(declare-fun f (Real) Real)
 (declare-fun g (Real Real) Real)
 """
@@ -649,6 +692,13 @@ def neg_free(e):
     if isinstance(e, str):
         if e.endswith("/1") and e[:-2].lstrip("-").isdigit():
             return e[:-2]
+        # cvc5's decimals (the real constants it builds, such as the nonlinear
+        # extension's `0.0`), as telos prints the rational
+        m = re.fullmatch(r"(\d+)\.(\d+)", e)
+        if m:
+            from fractions import Fraction
+            q = Fraction(e)
+            return str(q.numerator) if q.denominator == 1 else f"{q.numerator}/{q.denominator}"
         return e
     n = num_atom(e)
     if n is not None:
@@ -845,7 +895,7 @@ def main():
     ap.add_argument("--sat", action="store_true",
                     help="solve with telos's SAT solver (--via-sat), cvc5 with --sat-solver=minisat")
     ap.add_argument("--size", type=int, default=6, help="the most literals of a random benchmark")
-    ap.add_argument("--theory", choices=["uf", "dt", "lra", "lia", "uflra", "uflia", "dtlia", "sets", "strings", "ufq"], default="uf", help="the theory of the random benchmarks")
+    ap.add_argument("--theory", choices=["uf", "dt", "lra", "lia", "uflra", "uflia", "dtlia", "sets", "strings", "ufq", "nra", "nia"], default="uf", help="the theory of the random benchmarks")
     ap.add_argument("--decision", choices=["internal", "justification", "stoponly"],
                     help="the SAT solver's decision mode, for both (otherwise the logic's)")
     ap.add_argument("--ite", action="store_true", help="arithmetic literals with ite terms")
@@ -872,14 +922,16 @@ def main():
                                   "lia": (LIA_PRELUDE, lra_literal), "uflra": (UFLRA_PRELUDE, uflra_literal),
                                   "uflia": (UFLIA_PRELUDE, uflra_literal), "dtlia": (DTLIA_PRELUDE, dtlia_literal),
                                   "sets": (SETS_PRELUDE, sets_literal),
-                                  "strings": (STRINGS_PRELUDE, strings_literal)}.get(
+                                  "strings": (STRINGS_PRELUDE, strings_literal),
+                                  "nra": (NRA_PRELUDE, nl_literal), "nia": (NIA_PRELUDE, nl_literal)}.get(
                     a.theory, (UF_PRELUDE, uf_literal))
                 p.write_text(bool_benchmark(prelude, lit, rng, a.size))
             else:
                 gen = {"dt": dt_benchmark, "lra": lra_benchmark, "lia": lia_benchmark,
                        "uflra": uflra_benchmark, "uflia": uflia_benchmark,
                        "dtlia": dtlia_benchmark, "sets": sets_benchmark,
-                       "strings": strings_benchmark, "ufq": ufq_benchmark}.get(a.theory, uf_benchmark)
+                       "strings": strings_benchmark, "ufq": ufq_benchmark,
+                       "nra": nl_benchmark, "nia": nia_benchmark}.get(a.theory, uf_benchmark)
                 p.write_text(gen(rng, a.size, a.clauses or a.replay))
             files.append(p)
     counts = collections.Counter()
