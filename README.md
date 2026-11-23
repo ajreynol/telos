@@ -152,7 +152,9 @@ cvc5's nonlinear extension in part (`Telos/Solver/Theory/Arith/Nl/`: model-based
 refinement by sign, magnitude, bound, tangent plane, factoring and flattening
 lemmas, each certified by CPC rules, `Telos/Solver/NlLemma.lean`). In
 other logics the theories' checks do nothing, and the answer is `unknown` as
-soon as a theory gets a literal.
+soon as a theory gets a literal. Bit-vectors and arrays that a logic enables
+(`ALL`, say) but the input does not use are inert, as in cvc5: their checks do
+nothing, and the other theories are solved.
 
 An `unsat` answer is certified. With SAT structure, the SAT solver's
 refutation comes with a clausal certificate (`Telos/Solver/SatProof.lean`):

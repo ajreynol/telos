@@ -120,6 +120,10 @@ def decisionModeOf (logic : String) (user : Option String := none) : Decision.Mo
 structure Config where
   /-- The enabled theories, in cvc5's order. -/
   theories : List Theory
+  /-- Enabled theories that the input does not use (bit-vectors and arrays in
+  logic `ALL`, say): their checks do nothing, as in cvc5, so they need no
+  solver (`inertTheories`). -/
+  inert : List Theory := []
   /-- cvc5's `theoryof-mode` is `term` (`PPOptions.termBased`). -/
   termBased : Bool := false
   /-- Also record the central equality engine's notifications
@@ -193,12 +197,40 @@ def Config.nlSolver (c : Config) : Bool := c.arithSolver && c.arith.nonlinear
 
 /-- The engine and the SAT solver handle the enabled theories (some only in
 part: arithmetic answers `unknown` until its solver is complete): they are
-among UF, datatypes and arithmetic, and the logic is quantifier-free. -/
+among UF, datatypes, arithmetic, sets, strings and quantifiers, or inert (not
+used by the input, `Config.inert`). -/
 def Config.satSupported (c : Config) : Bool :=
   c.theories.all fun T => [.THEORY_BUILTIN, .THEORY_BOOL, .THEORY_UF, .THEORY_DATATYPES, .THEORY_ARITH,
     .THEORY_SETS, .THEORY_STRINGS].contains T ||
     -- quantifiers (Stage 10; strings enable them, `strings-exp`)
-    T == .THEORY_QUANTIFIERS
+    T == .THEORY_QUANTIFIERS || c.inert.contains T
+
+/-- The theories among `[THEORY_BV, THEORY_ARRAYS]` enabled but not used by
+the formulas `fs`: no subterm has a kind or a type of theirs. No theory telos
+solves introduces their terms, so they stay unused while solving. -/
+partial def inertTheories (theories : List Theory) (fs : List Node) : List Theory := Id.run do
+  let mut bv := false
+  let mut arr := false
+  let mut seen : Std.HashSet Key := {}
+  let mut work := fs.toArray
+  while !work.isEmpty && !(bv && arr) do
+    let t := work.back!
+    work := work.pop
+    if seen.contains ⟨t⟩ then continue
+    seen := seen.insert ⟨t⟩
+    match t.typeHint with
+    | some (.bitVector _) => bv := true
+    | some (.array ..) => arr := true
+    | _ => pure ()
+    match t with
+    | .app op cs =>
+      match op.getKind.theoryId with
+      | .THEORY_BV => bv := true
+      | .THEORY_ARRAYS => arr := true
+      | _ => pure ()
+      work := work ++ cs
+    | _ => pure ()
+  return theories.filter fun T => (T == .THEORY_BV && !bv) || (T == .THEORY_ARRAYS && !arr)
 
 /-- The central equality engine runs, with UF and datatypes: the theories are
 supported (with arithmetic or not). -/
