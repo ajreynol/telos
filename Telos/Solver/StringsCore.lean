@@ -432,9 +432,81 @@ def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M
 def premiseFormula (P : Array Node) : Node :=
   if h : P.size = 1 then P[0] else Node.mkNode .AND P
 
+/-- The intersection inferences (`STRINGS_RE_INTER_INCLUDE`, `_CONF`, `_INFER`),
+as cvc5's `InferProofCons`: each membership of the premises as a positive one
+(a negative one is a membership in the complement, by their rewrites), over
+the first one's string (by the premises' equalities), their intersection by
+`re_inter`, and its rewrite to the conclusion (`false`). -/
+partial def hasReInter (n : Node) : Bool :=
+  n.getKind == .REGEXP_INTER || n.getChildren.any hasReInter
+
+def proveReInter (P : Array Node) (conc : Node) : Option (Node × List CCmd) := do
+  if P.isEmpty || conc != Node.mkFalse then none
+  -- (a guard: the inclusion is decided by CPC's `$str_re_includes`, run by
+  -- Logos, whose search over intersections nested in concatenations is
+  -- exponential without cvc5's cache; such a conflict stays uncertified)
+  if P.any hasReInter then none
+  let h := premiseFormula P
+  let F := Node.mkNode .IMPLIES #[h, conc]
+  let act : M Unit := do
+    let p ← push ⟨.refl, [.node h], [], .assume⟩
+    let mut facts : Array Nat := #[]
+    if P.size == 1 then facts := #[← known h p]
+    else
+      for i in [0:P.size] do
+        let q ← push ⟨.and_elim, [.term (Term.Numeral i)], [p], .step⟩
+        facts := facts.push (← known P[i]! q)
+    -- the premises' equalities, as proofs between their sides
+    let eqs : Array (Node × Node × Nat) := (P.zip facts).filterMap fun (l, i) => match l with
+      | .app (.kind .EQUAL) #[a, b] => some (a, b, i)
+      | _ => none
+    let some x := P.findSome? fun l => match l with
+        | .app (.kind .STRING_IN_REGEXP) #[a, _] => some a
+        | .app (.kind .NOT) #[.app (.kind .STRING_IN_REGEXP) #[a, _]] => some a
+        | _ => none
+      | throw "no membership"
+    let toX (a : Node) : Option EqProof :=
+      if a == x then none
+      else eqs.findSome? fun (l, r, i) =>
+        if l == a && r == x then some (EqProof.assume i)
+        else if r == a && l == x then some (.symm (.assume i)) else none
+    let mut mems : Array (Node × Nat) := #[]
+    for (l, i) in P.zip facts do
+      let (a, r, pa) ← match l with
+        | .app (.kind .STRING_IN_REGEXP) #[a, r] => pure (a, r, atomProof l i)
+        | .app (.kind .NOT) #[.app (.kind .STRING_IN_REGEXP) #[a, r]] =>
+          -- `(str.in_re a (re.comp r))`, which has the rewrite of `(not atom)`
+          let tgt := Node.mkNode .STRING_IN_REGEXP #[a, Node.mkNode .REGEXP_COMPLEMENT #[r]]
+          if Telos.rewrite tgt != Telos.rewrite l then throw "a complement that does not rewrite"
+          let notTrue : EqProof := .trans (.congAt l #[some (atomProof l i)]) (.rw (Node.notNode Node.mkFalse))
+          let (_, j) ← litFact (.trans (.rw tgt) (.trans (.symm (.rw l)) notTrue))
+          pure (a, Node.mkNode .REGEXP_COMPLEMENT #[r], atomProof tgt j)
+        | _ => continue
+      let m := Node.mkNode .STRING_IN_REGEXP #[a, r]
+      -- over `x`
+      let (_, j) ← match toX a with
+        | none => litFact pa
+        | some q => litFact (.trans (.symm (.congAt m #[some q, none])) pa)
+      mems := mems.push (Node.mkNode .STRING_IN_REGEXP #[x, r], j)
+    let some (first, j₀) := mems[0]? | throw "no membership"
+    let mut cur := (first, j₀)
+    for k in [1:mems.size] do
+      let (_, jk) := mems[k]!
+      let (C, c) ← rule .re_inter [] [cur.2, jk]
+      cur := (C, c)
+    let c ← conclude cur.1 cur.2 conc
+    let _ ← push ⟨.scope, [], [← posOf c], .pop⟩
+  match (act.run {}).run {} with
+  | .ok (((), _), st) =>
+    let cs := toCmds st.steps
+    if (EqProof.check #[] (.valid F cs)).isSome then some (F, cs) else none
+  | .error _ => none
+
 /-- **A CPC proof of `(=> (premiseFormula P) conc)`** for the core inference
 `id`, which Logos checks. -/
 def prove (id : String) (P : Array Node) (conc : Node) : Option (Node × List CCmd) := do
+  if id == "STRINGS_RE_INTER_INCLUDE" || id == "STRINGS_RE_INTER_CONF" || id == "STRINGS_RE_INTER_INFER" then
+    return ← proveReInter P conc
   let k ← kindOf id
   if P.isEmpty then none
   let h := premiseFormula P

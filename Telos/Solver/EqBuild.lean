@@ -164,7 +164,7 @@ mutual
             let (x, y) := EqProof.assumptionEq conc
             if x == a && y == b then return p
             if x == b && y == a then return .symm p
-        throw "a reason is not an assumption"
+        throw s!"a reason is not an assumption: {edge.reason.toSmtLib}"
     | .congruence =>
       let args ← appArgs C cur next
       -- a term no asserted literal has (a theory's): its typing is checked
@@ -397,7 +397,47 @@ mutual
     let some i := C.ee.nodeIds.get? ⟨a⟩ | throw "a term is not in the engine"
     let some j := C.ee.nodeIds.get? ⟨b⟩ | throw "a term is not in the engine"
     let some (lo, hi) := C.ee.diseqReasons.get? (i, j) | throw "no reasons for a disequality"
-    if hi != lo + 1 then throw "a disequality from several reasons is not supported"
+    if hi != lo + 1 then
+      -- several reasons: `a` and `b` are equal to the sides of an equality
+      -- merged with `false`; congruence, then that merge
+      let side (s t : Node) : BuildM (Option EqProof) := do
+        if s == t then return none
+        let some i := C.ee.nodeIds.get? ⟨s⟩ | throw "a term is not in the engine"
+        let some j := C.ee.nodeIds.get? ⟨t⟩ | throw "a term is not in the engine"
+        proveIds C i j
+      let some k := (List.range (hi - lo)).find? fun k => (C.ee.deducedReasons[lo + k]!).2 == C.ee.falseId
+        | do
+          -- no merge with false: the reasons are `a` and `b` equal to distinct
+          -- constants (`(a, c₁)`, `(b, c₂)`), whose equality the rewriter
+          -- evaluates to false
+          let pairs := (List.range (hi - lo)).map fun k => C.ee.deducedReasons[lo + k]!
+          let some i := C.ee.nodeIds.get? ⟨a⟩ | throw "a term is not in the engine"
+          let some j := C.ee.nodeIds.get? ⟨b⟩ | throw "a term is not in the engine"
+          let constOf (t : Nat) : Option (Nat × Nat) :=
+            pairs.findSome? fun (u, v) =>
+              if u == t && C.ee.nodes[v]!.isConst then some (u, v)
+              else if v == t && C.ee.nodes[u]!.isConst then some (v, u) else none
+          let some (_, ia) := constOf i | throw "a disequality without a merge with false"
+          let some (_, ib) := constOf j | throw "a disequality without a merge with false"
+          let ec := Node.eqNode C.ee.nodes[ia]! C.ee.nodes[ib]!
+          if Telos.rewrite ec != Node.mkFalse then throw "a disequality of constants the rewriter does not decide"
+          let pa ← proveIds C i ia
+          let pb ← proveIds C j ib
+          return .trans (.congAt (Node.eqNode a b) #[pa, pb]) (.rw ec)
+      let (x, _) := C.ee.deducedReasons[lo + k]!
+      let some p ← proveIds C x C.ee.falseId | throw "an empty disequality reason"
+      let .app (.kind .EQUAL) #[l, r] := C.ee.nodes[x]! | throw "a disequality reason that is not an equality"
+      let e := Node.eqNode a b
+      return ← try
+          let pa ← side a l
+          let pb ← side b r
+          pure (EqProof.trans (.congAt e #[pa, pb]) p)
+        catch _ => do
+          let pa ← side a r
+          let pb ← side b l
+          let e' := Node.eqNode r l
+          if Telos.rewrite e' != Telos.rewrite (Node.eqNode l r) then throw "a disequality reason for the other orientation"
+          pure (.trans (.congAt e #[pa, pb]) (.trans (.rw e') (.trans (.symm (.rw (Node.eqNode l r))) p)))
     let (x, y) := C.ee.deducedReasons[lo]!
     if y != C.ee.falseId then throw "a disequality reason is not a merge with false"
     let some p ← proveIds C x y | throw "an empty disequality reason"

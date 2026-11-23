@@ -279,6 +279,35 @@ def apply (M : Model) (f a : MVal) : Option MVal :=
     | none => none
   | _ => none
 
+
+/-- The names of Logos's functions of division by zero
+(`native_div_by_zero_id`, `native_mod_by_zero_id`, `native_qdiv_by_zero_id`;
+equal, `divByZeroName_eq`). -/
+def divByZeroName : native_String := native_string_lit "@div_by_zero"
+def modByZeroName : native_String := native_string_lit "@mod_by_zero"
+def qdivByZeroName : native_String := native_string_lit "@qdiv_by_zero"
+
+/-- Integer division and modulus, total or not, and division by zero, as
+Logos evaluates them: by a nonzero integer, `native_div_total` and
+`native_mod_total`; by zero, the model's functions `@div_by_zero`,
+`@mod_by_zero` and `@qdiv_by_zero` (the values of cvc5's
+`@int_div_by_zero`, `@mod_by_zero` and `@div_by_zero` skolems) applied to the
+dividend. `none` for the other operations (`combine`'s). -/
+def divMod? (M : Model) (k : Kind) (vs : List MVal) : Option (Option MVal) :=
+  match k, vs with
+  | .INTS_DIVISION, [.int a, .int b] =>
+    some (if b == 0 then (M.lookup divByZeroName (.FunType .Int .Int)).bind (M.apply · (.int a))
+          else some (.int (native_div_total a b)))
+  | .INTS_MODULUS, [.int a, .int b] =>
+    some (if b == 0 then (M.lookup modByZeroName (.FunType .Int .Int)).bind (M.apply · (.int a))
+          else some (.int (native_mod_total a b)))
+  | .INTS_DIVISION_TOTAL, [.int a, .int b] => some (some (.int (native_div_total a b)))
+  | .INTS_MODULUS_TOTAL, [.int a, .int b] => some (some (.int (native_mod_total a b)))
+  | .DIVISION, [.rat a, .rat b] =>
+    if b == 0 then some ((M.lookup qdivByZeroName (.FunType .Real .Real)).bind (M.apply · (.rat a)))
+    else none
+  | _, _ => none
+
 /-- Apply a function value to arguments, left to right. -/
 def applyAll (M : Model) (f : MVal) : List MVal → Option MVal
   | [] => some f
@@ -533,7 +562,7 @@ mutual
       if k == .FORALL || k == .EXISTS then (quant M env n (k == .EXISTS) cs, S) else
       match evList M env n cs.toList S with
       | (none, S) => (none, S)
-      | (some vs, S) => (combine k cs vs, S)
+      | (some vs, S) => ((M.divMod? k vs).getD (combine k cs vs), S)
     | .app (.indexed k is) cs =>
       match evList M env n cs.toList S with
       | (none, S) => (none, S)
@@ -1117,6 +1146,28 @@ partial def selectorsOf (ns : List Node) : List (native_String × SmtDatatypeDec
     if let .app _ cs := n then for c in cs do go c
   ((ns.forM go).run ({}, #[])).2.2.toList
 
+/-- The function of division by zero of a skolem (cvc5's `@int_div_by_zero`,
+`@mod_by_zero`, `@div_by_zero`): Logos's name for it and its type. -/
+def byZeroFn : SkolemId → Option (native_String × SmtType)
+  | .INT_DIV_BY_ZERO => some (Model.divByZeroName, .FunType .Int .Int)
+  | .MOD_BY_ZERO => some (Model.modByZeroName, .FunType .Int .Int)
+  | .DIV_BY_ZERO => some (Model.qdivByZeroName, .FunType .Real .Real)
+  | _ => none
+
+/-- The functions of division by zero that the divisions of `ns` use. -/
+partial def byZeroOf (ns : List Node) : List (native_String × SmtType) :=
+  let rec go (n : Node) : StateM (Std.HashSet Key × Array (native_String × SmtType)) Unit := do
+    if (← get).1.contains ⟨n⟩ then return
+    modify fun (s, a) => (s.insert ⟨n⟩, a)
+    let f : Option (native_String × SmtType) := match n.getKind with
+      | .INTS_DIVISION => byZeroFn .INT_DIV_BY_ZERO
+      | .INTS_MODULUS => byZeroFn .MOD_BY_ZERO
+      | .DIVISION => byZeroFn .DIV_BY_ZERO
+      | _ => none
+    if let some fT := f then modify fun (s, a) => (s, if a.contains fT then a else a.push fT)
+    if let .app _ cs := n then for c in cs do go c
+  ((ns.forM go).run ({}, #[])).2.2.toList
+
 /-- Set the value of a constant. -/
 def setConst (x : String) (T : TypeNode) (v : MVal) (b : Builder) : Builder :=
   { b with model := { b.model with consts := b.model.consts.insert (keyName x) (tyS T, v) } }
@@ -1163,6 +1214,12 @@ def buildModel (ee : EE.EqualityEngine) (relevant : Std.HashSet Key) (syms : Lis
           let T := Model.wrongSelType s dd c j
           if !wrong.any (·.1 == key) then wrong := wrong.push (key, Model.wrongSelName c j, T)
           b := ((addEntry key T [vx] v).run b).2
+    | .app (.node .APPLY_UF (.skolem id #[])) #[x] =>
+      -- a division by zero: an entry of Logos's function of it
+      if let (some (name, T), some vx) := (byZeroFn id, valOf x) then
+        let key := "\u0000byzero " ++ String.ofList (name.map Char.ofNat)
+        if !wrong.any (·.1 == key) then wrong := wrong.push (key, name, T)
+        b := ((addEntry key T [vx] v).run b).2
     | _ => match ufApp? t with
       | some (f, T, cs) =>
         let args := cs.toList.filterMap valOf
@@ -1172,6 +1229,10 @@ def buildModel (ee : EE.EqualityEngine) (relevant : Std.HashSet Key) (syms : Lis
   -- every selector applied in the input has one, so that each of its
   -- applications evaluates (to the table's default when the engine has no
   -- entry)
+  -- every function of division by zero the input uses has one, too
+  for (name, T) in byZeroOf inputs do
+    let key := "\u0000byzero " ++ String.ofList (name.map Char.ofNat)
+    if !wrong.any (·.1 == key) then wrong := wrong.push (key, name, T)
   for (s, dd, c, j) in selectorsOf inputs do
     let key := s!"\u0000wrong {c} {j} " ++ String.ofList (s.map Char.ofNat)
     if !wrong.any (·.1 == key) then wrong := wrong.push (key, Model.wrongSelName c j, Model.wrongSelType s dd c j)

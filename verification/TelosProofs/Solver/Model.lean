@@ -1805,6 +1805,116 @@ theorem wrongSelName_eq (i j : Nat) : Model.wrongSelName i j = native_wrong_appl
 
 /-! ### The evaluation -/
 
+omit [LogosFacts] in
+theorem divByZeroName_eq : Model.divByZeroName = native_div_by_zero_id := rfl
+omit [LogosFacts] in
+theorem modByZeroName_eq : Model.modByZeroName = native_mod_by_zero_id := rfl
+omit [LogosFacts] in
+theorem qdivByZeroName_eq : Model.qdivByZeroName = native_qdiv_by_zero_id := rfl
+
+/-- **Integer division and modulus, and division by zero, are Logos's**
+(`Model.divMod?`): by a nonzero integer, Logos's total operations; by zero,
+the model's function of division by zero applied to the dividend. -/
+theorem divMod_sound (M : Model) {k : Kind} {cs : Array Node} {vs : List MVal} {r : MVal}
+    (hv : Vals M env cs.toList vs) (h : M.divMod? k vs = some (some r)) :
+    __smtx_model_eval (toSmtModelE M env) (Node.app (.kind k) cs).toSmt = toVal r := by
+  have hlen : cs.size = vs.length := by simpa using hv.length_eq
+  unfold Model.divMod? at h
+  split at h
+  · -- `div`
+    rename_i a b
+    have hs : cs.size = 2 := by simpa using hlen
+    rw [toList_two hs] at hv
+    obtain ⟨h0, hv⟩ := List.forall₂_cons.1 hv
+    obtain ⟨h1, -⟩ := List.forall₂_cons.1 hv
+    rw [toSmt_bin (op := UserOp.div) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.div) x) y)
+      = SmtTerm.div (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+    simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+    simp only [Option.some.injEq] at h
+    split at h
+    · rename_i hb
+      obtain ⟨fv, hl, ha⟩ := Option.bind_eq_some_iff.1 h
+      have hb' : b = 0 := by simpa using hb
+      subst hb'
+      simp only [toVal, __smtx_model_eval_eq, native_veq, decide_true, __smtx_model_eval_ite]
+      rw [← divByZeroName_eq, lookup_sound hl]
+      exact apply_sound ha
+    · rename_i hb
+      have hb' : b ≠ 0 := by simpa using hb
+      cases h
+      simp [toVal, __smtx_model_eval_eq, native_veq, hb', __smtx_model_eval_ite,
+        __smtx_model_eval_div_total]
+  · -- `mod`
+    rename_i a b
+    have hs : cs.size = 2 := by simpa using hlen
+    rw [toList_two hs] at hv
+    obtain ⟨h0, hv⟩ := List.forall₂_cons.1 hv
+    obtain ⟨h1, -⟩ := List.forall₂_cons.1 hv
+    rw [toSmt_bin (op := UserOp.mod) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.mod) x) y)
+      = SmtTerm.mod (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+    simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+    simp only [Option.some.injEq] at h
+    split at h
+    · rename_i hb
+      obtain ⟨fv, hl, ha⟩ := Option.bind_eq_some_iff.1 h
+      have hb' : b = 0 := by simpa using hb
+      subst hb'
+      simp only [toVal, __smtx_model_eval_eq, native_veq, decide_true, __smtx_model_eval_ite]
+      rw [← modByZeroName_eq, lookup_sound hl]
+      exact apply_sound ha
+    · rename_i hb
+      have hb' : b ≠ 0 := by simpa using hb
+      cases h
+      simp [toVal, __smtx_model_eval_eq, native_veq, hb', __smtx_model_eval_ite,
+        __smtx_model_eval_mod_total]
+  · -- `div_total`
+    rename_i a b
+    have hs : cs.size = 2 := by simpa using hlen
+    rw [toList_two hs] at hv
+    obtain ⟨h0, hv⟩ := List.forall₂_cons.1 hv
+    obtain ⟨h1, -⟩ := List.forall₂_cons.1 hv
+    rw [toSmt_bin (op := UserOp.div_total) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.div_total) x) y)
+      = SmtTerm.div_total (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+    simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+    simp only [Option.some.injEq] at h
+    cases h
+    rfl
+  · -- `mod_total`
+    rename_i a b
+    have hs : cs.size = 2 := by simpa using hlen
+    rw [toList_two hs] at hv
+    obtain ⟨h0, hv⟩ := List.forall₂_cons.1 hv
+    obtain ⟨h1, -⟩ := List.forall₂_cons.1 hv
+    rw [toSmt_bin (op := UserOp.mod_total) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.mod_total) x) y)
+      = SmtTerm.mod_total (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+    simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+    simp only [Option.some.injEq] at h
+    cases h
+    rfl
+  · -- `/` by zero
+    rename_i a b
+    split at h
+    · rename_i hb
+      have hs : cs.size = 2 := by simpa using hlen
+      rw [toList_two hs] at hv
+      obtain ⟨h0, hv⟩ := List.forall₂_cons.1 hv
+      obtain ⟨h1, -⟩ := List.forall₂_cons.1 hv
+      rw [toSmt_bin (op := UserOp.qdiv) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.qdiv) x) y)
+        = SmtTerm.qdiv (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+      simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+      simp only [Option.some.injEq] at h
+      obtain ⟨fv, hl, ha⟩ := Option.bind_eq_some_iff.1 h
+      have hb' : b = 0 := by simpa using hb
+      subst hb'
+      simp only [toVal, __smtx_to_real_coerce, __smtx_model_eval_eq, native_veq, native_mk_real,
+        __smtx_model_eval_ite]
+      simp only [Rat.cast_zero, Int.cast_zero, Int.cast_one, zero_div, decide_true]
+      rw [← qdivByZeroName_eq, lookup_sound hl]
+      exact apply_sound ha
+    · cases h
+  · cases h
+
+
 /-- The evaluation at fuel `n` is sound. -/
 def EvOk (M : Model) (n : Nat) : Prop :=
   ∀ env t S, MemoOk M env S → MemoOk M env (M.ev env n t S).2 ∧ ∀ v, (M.ev env n t S).1 = some v → __smtx_model_eval (toSmtModelE M env) t.toSmt = toVal v
@@ -2029,7 +2139,17 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
     try dsimp only
     cases r1 with
     | none => exact ⟨hS1, fun v h => by cases h⟩
-    | some vs => exact ⟨hS1, fun v h => combine_sound M (hv1 vs rfl) h⟩
+    | some vs =>
+      refine ⟨hS1, fun v h => ?_⟩
+      dsimp only at h
+      cases hd : M.divMod? k vs with
+      | none =>
+        rw [hd] at h
+        exact combine_sound M (hv1 vs rfl) h
+      | some o =>
+        rw [hd] at h
+        simp only [Option.getD_some] at h
+        exact divMod_sound M (hv1 vs rfl) (by rw [hd, h])
   · rename_i k is cs
     obtain ⟨hS1, hv1⟩ := evList_sound M n IH cs.toList S hS
     rcases e1 : M.evList env n cs.toList S with ⟨r1, S1⟩

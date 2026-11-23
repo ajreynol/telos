@@ -1286,7 +1286,12 @@ def explainAllSteps (lits : Array Node) (all : Bool) (record : Bool) :
     match l with
     | .app (.kind .AND) cs => todo := todo ++ cs.map (·, top)
     | _ =>
-      if c.arithSolver && c.theoryOf (atomOf l).1 == .THEORY_ARITH && !shared then
+      -- (by the theory that propagated it, `d_propagationMap`; else by the
+      -- theory of its atom)
+      let byArith := match (← get).propagator.get? ⟨l⟩ with
+        | some T => T == .THEORY_ARITH
+        | none => c.theoryOf (atomOf l).1 == .THEORY_ARITH
+      if c.arithSolver && byArith && !shared then
         -- `TheoryArith::explain`
         let e ← withArith (Arith.explain l)
         if record && !forced then

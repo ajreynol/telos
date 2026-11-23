@@ -114,6 +114,30 @@ def nameSkolems (N : DtNames) (ns : List Node) : List Node × List String :=
   let named := namedSkolems N ns
   (ns.map (substSkolems (named.map fun (k, v, _) => (k, v))), named.map (·.2.2))
 
+/-- SMT-LIB's implicit casts of mixed arithmetic, as cvc5's parser makes them
+(Logos's typing has none): an integer argument of `/`, or of an operation or
+comparison with a real argument, or a branch of an `ite` with a real one, is
+cast with `to_real` (an integer constant becomes the rational); `to_real` of a
+real is dropped. Untrusted: the theorems are about the result. -/
+partial def castMixedArith (n : Node) : Node :=
+  match n with
+  | .app op cs =>
+    let cs := cs.map castMixedArith
+    let k := op.getKind
+    let isR := fun (c : Node) => c.typeHint == some .real
+    let isI := fun (c : Node) => c.typeHint == some .integer
+    let toR := fun (c : Node) => if !isI c then c else match c with
+      | .const (.integer i) => .const (.rational i)
+      | c => Node.mkNode .TO_REAL #[c]
+    if k == .TO_REAL && cs.size == 1 && isR cs[0]! then cs[0]!
+    else if k == .DIVISION then .app op (cs.map toR)
+    else if [Kind.ADD, .SUB, .MULT, .LT, .LEQ, .GT, .GEQ, .EQUAL, .DISTINCT].contains k &&
+        cs.any isR && cs.any isI then .app op (cs.map toR)
+    else if k == .ITE && cs.size == 3 && ((isR cs[1]! && isI cs[2]!) || (isI cs[1]! && isR cs[2]!)) then
+      .app op #[cs[0]!, toR cs[1]!, toR cs[2]!]
+    else .app op cs
+  | n => n
+
 /-- The assertions of the script, as nodes (`define-fun`s expanded): what the
 solver's correctness theorems are about. Each must be a formula: of type
 `Bool`, by telos's type and by Logos's (`smtTypeF`, which is Logos's type of
@@ -121,6 +145,7 @@ its translation, `Node.smtTypeF_eq`). -/
 def inputAssertions (sc : Script) : Except String (List Node) := do
   let as ← sc.assertions.mapM fun a => match a.node with
     | .ok n =>
+      let n := castMixedArith n
       if n.typeHint == some .boolean then pure n
       else throw s!"the assertion is not a well-typed formula: {a.source}"
     | .error e => throw s!"{e}: {a.source}"
