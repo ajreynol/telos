@@ -512,6 +512,20 @@ def cegqiApplies (lit : Node) : Bool :=
       | _ => false
   | _ => false
 
+/-- The arithmetic solver's values (`collectModelValues`) of the terms of its
+facts and of its shared terms (a variable of an atom that is not asserted to it
+may belong to another theory's facts only), with the nonlinear extension's
+repaired values, the monomials dropped. -/
+def arithModelOf (c : Config) (e : State) : Array (Node × Rat) :=
+  let termSet := ((arithTermSet.run c).run e).1
+  let lin := (Arith.modelValues e.arith).filter fun (n, _) => termSet.contains ⟨n⟩
+  match e.nlModel with
+  | none => lin
+  | some nl =>
+    let lin := (lin.filter fun (n, _) => !Arith.Nl.isNlMult n).map fun (n, q) =>
+      ((nl.find? (·.1 == n)).map (·)).getD (n, q)
+    lin ++ nl.filter fun (n, _) => !lin.any (·.1 == n)
+
 /-- **Solve formulas** with the SAT solver and the theory engine. A `sat`
 answer comes with the engine's state, from which the caller builds a model
 (and checks it); the SAT solver's Boolean variables are added to the
@@ -571,15 +585,7 @@ def runSat (c : Config) (formulas : List Node) : Result :=
       else none
     { answer := if solved then .sat else .unknown, events := e.events, ee := e.ee, why, restsOnModel,
       asserted := e.asserted ++ bools,
-      arithModel := if !arithOk then #[] else
-        let lin := Arith.modelValues e.arith
-        match e.nlModel with
-        | none => lin
-        | some nl =>
-          -- the nonlinear extension's repaired values, the monomials dropped
-          let lin := (lin.filter fun (n, _) => !Arith.Nl.isNlMult n).map fun (n, q) =>
-            ((nl.find? (·.1 == n)).map (·)).getD (n, q)
-          lin ++ nl.filter fun (n, _) => !lin.any (·.1 == n) }
+      arithModel := if !arithOk then #[] else arithModelOf c e }
   | .unsat =>
     -- the certificate, post hoc
     let p := ((explainLevelZero.run c).run p).2

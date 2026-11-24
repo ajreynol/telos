@@ -207,7 +207,7 @@ theorem indexed_children (k : Kind) (is : List Int) :
     | exact spine2 (fun x y h => LogosFacts.update_args _ _ x y (.inl rfl) h)
 
 omit [LogosFacts] in
-/-- The argument of an application of a function skolem of strings. -/
+/-- The argument of an application of a function skolem. -/
 theorem fnSkolem_children {id : SkolemId} {ks : Array Node}
     (hc : (Op.node .APPLY_UF (.skolem id ks)).childrenTypedOfParent = true) :
     ∀ xs : List Term, Typed ((Op.node .APPLY_UF (.skolem id ks)).eoShape.toEo xs) → ∀ x ∈ xs, Typed x := by
@@ -220,9 +220,13 @@ theorem fnSkolem_children {id : SkolemId} {ks : Array Node}
     simp
   simp only [Op.eoShape, nodeEoShape, hto]
   generalize ks.toList = l at hlen ⊢
-  cases id <;> simp only [SkolemId.isStringsFn, Bool.false_eq_true] at hf <;>
+  cases id <;> simp only [SkolemId.isFn, Bool.false_eq_true] at hf <;>
     simp only [SkolemId.numCacheVals] at hlen
   all_goals first
+    | (obtain rfl := List.length_eq_zero_iff.1 hlen
+       simp only [SkolemId.toEo, SkolemId.eoShape, AppShape.toEo, Arity.accepts, List.map_nil,
+         List.length_nil, List.foldl_nil, isFnSkolemTerm, ↓reduceIte, show ((0 == 0) = true) from rfl]
+       exact spine1 (fun x h => by typed1))
     | (obtain ⟨a, rfl⟩ := List.length_eq_one_iff.1 hlen
        simp only [SkolemId.toEo, SkolemId.eoShape, AppShape.toEo, Arity.accepts, List.map_cons, List.map_nil,
          List.length_cons, List.length_nil, List.foldl_cons, List.foldl_nil, isFnSkolemTerm, ↓reduceIte,

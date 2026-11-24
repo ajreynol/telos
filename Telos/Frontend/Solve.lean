@@ -238,6 +238,14 @@ def rejectModel (r : Solver.Result) (w : Solver.Unknown) : Solver.Result :=
 
 @[simp] theorem rejectModel_answer (r : Solver.Result) (w : Solver.Unknown) : (rejectModel r w).answer = .unknown := rfl
 
+/-- The model is accepted for the assertions: it satisfies them, or (if it does
+not evaluate them: quantifiers that the rewriter removes, operators that
+preprocessing eliminates) what preprocessing makes of them, which is equivalent
+to them (`preprocess_correct`). -/
+def accepts (M : Solver.Model) (as : List Node) (opts : Preprocess.PPOptions) (preprocess : Bool)
+    (o : NodeOrder) : Bool :=
+  M.satisfies as || (preprocess && M.satisfies [(Preprocess.preprocessCert as opts o).1])
+
 /-- Solve the assertions of `sc`: the assertions given to the engine, and the
 engine's result. A conjunction of literals goes to the engine alone
 (`Solver.run`), and to the SAT solver too if a theory sends a lemma; anything
@@ -273,7 +281,7 @@ def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Boo
   let r := if r.answer != .sat then r else
     let M := buildModel r.ee (relevantTerms r.asserted) (freeConsts as) (engineDefs as opts preprocess order) as
       r.arithModel r.asserted
-    if M.satisfies as then { r with model := some M }
+    if accepts M as opts preprocess order then { r with model := some M }
     else rejectModel r (rejectionWhy sc.dtNames r M as out)
   return (out, r)
 

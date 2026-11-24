@@ -132,7 +132,7 @@ SMT-LIB notations that cvc5 reads, written as what Logos's parser reads, before
 the script is read (`desugar`): `define-sort` (a sort macro, expanded),
 `define-const` (a `define-fun`), a term named by `(! t :named n)` outside
 binders (`n` is then a `define-fun` after the command), a quoted symbol `|x|`
-of a simple symbol `x` (`x`), `(as true Bool)` (`true`), and cvc5's legacy
+of a simple symbol `x` (`x`), `(as c T)` of a Boolean or a declared symbol (`c`), and cvc5's legacy
 tester `(is-C t)` of a constructor `C` (`((_ is C) t)`). -/
 
 /-- `s` with the sort macros of `defs` (name, parameters, body) expanded. -/
@@ -148,6 +148,7 @@ partial def expandSorts (defs : List (String × List String × Sexp)) (s : Sexp)
     | some (_, ps, body) =>
       if ps.length == args.length && !ps.isEmpty then
         expandSorts defs (subst (ps.zip args) body)
+      else if ps.isEmpty then .expr (expandSorts defs (.atom h) :: args)
       else .expr (.atom h :: args)
     | none => .expr (.atom h :: args)
   | .expr xs => .expr (xs.map (expandSorts defs))
@@ -178,17 +179,112 @@ partial def namedTerms (s : Sexp) : List (String × Sexp) :=
 
 /-- The term notations above, in `s`, with the constructors `cons` (a legacy
 tester `is-C` is one only if `is-C` is not a declared symbol). -/
-partial def termNotations (cons : List String) : Sexp → Sexp
+partial def termNotations (cons : List String) (declared : List String := []) : Sexp → Sexp
   | .atom a => .atom (unquote a)
   | .expr [.atom "as", .atom b, .atom "Bool"] => if b == "true" || b == "false" then .atom b
+      else if declared.contains (unquote b) then .atom (unquote b)
       else .expr [.atom "as", .atom b, .atom "Bool"]
+  | .expr [.atom "as", .atom c, T] =>
+    if declared.contains (unquote c) then .atom (unquote c) else .expr [.atom "as", .atom (unquote c), T]
   | .expr (.atom h :: args) =>
-    let args := args.map (termNotations cons)
+    let args := args.map (termNotations cons declared)
     let c := (h.drop 3).toString
     if h.startsWith "is-" && cons.contains c then
       .expr (.expr [.atom "_", .atom "is", .atom c] :: args)
     else .expr (.atom (unquote h) :: args)
-  | .expr xs => .expr (xs.map (termNotations cons))
+  | .expr xs => .expr (xs.map (termNotations cons declared))
+
+/-- `s` with the atoms of `σ` replaced (under binders that do not rebind
+them). -/
+partial def substAtoms (σ : List (String × Sexp)) : Sexp → Sexp
+  | .atom a => match σ.find? (·.1 == a) with
+    | some (_, t) => t
+    | none => .atom a
+  | .expr [.atom q, .expr bs, body] =>
+    if ["forall", "exists", "let", "lambda"].contains q then
+      let bound := bs.filterMap fun b => match b with
+        | .expr (.atom x :: _) => some x
+        | _ => none
+      let σ' := σ.filter fun (x, _) => !bound.contains x
+      let bs := if q != "let" then bs else bs.map fun
+        | .expr [x, t] => .expr [x, substAtoms σ t]
+        | b => b
+      .expr [.atom q, .expr bs, substAtoms σ' body]
+    else .expr [.atom q, .expr (bs.map (substAtoms σ)), substAtoms σ body]
+  | .expr xs => .expr (xs.map (substAtoms σ))
+
+/-- `s` without the names of its terms (`(! t :named n)`). -/
+partial def stripNames : Sexp → Sexp
+  | .expr [.atom "!", t, .atom ":named", .atom _] => stripNames t
+  | .expr xs => .expr (xs.map stripNames)
+  | a => a
+
+/-- `s` without any annotation. -/
+partial def stripAttrs : Sexp → Sexp
+  | .expr (.atom "!" :: t :: _) => stripAttrs t
+  | .expr xs => .expr (xs.map stripAttrs)
+  | a => a
+
+/-- The atoms of `s`, counted. -/
+partial def countAtoms (m : Std.HashMap String Nat) : Sexp → Std.HashMap String Nat
+  | .atom a => m.alter a fun k => some (k.getD 0 + 1)
+  | .expr xs => xs.foldl countAtoms m
+
+/-- The symbol is the head of a binder of variables. -/
+def isBinderHead (q : String) : Bool := q == "forall" || q == "exists" || q == "lambda"
+
+/-- The variables that the binders in `s` bind. -/
+partial def binderVars : Sexp → List String
+  | .atom _ => []
+  | .expr xs =>
+    let here := match xs with
+      | .atom q :: .expr vs :: _ => if !isBinderHead q then [] else vs.filterMap fun
+        | .expr (.atom x :: _) => some x
+        | _ => none
+      | _ => []
+    here ++ xs.flatMap binderVars
+
+/-- **Binders that do not capture.** Logos's parser expands `let`s and macros by
+name: in `(forall ((x T)) (let ((y (f x))) (exists ((x T)) (p x y))))`, the `x`
+of `y` would be captured by the inner binder. So a bound variable whose name
+occurs in the value of a `let` around it, or is one of `avoid`, is renamed to a
+symbol that the script does not use (the state has those used). `ren` renames
+the variables in scope; `scope` has the symbols of the `let`s' values. -/
+partial def renameBinders (avoid : List String) (ren : List (String × String)) (scope : List String) (s : Sexp) :
+    StateM (Std.HashSet String) Sexp := do
+  match s with
+  | .atom a => return .atom ((ren.lookup a).getD a)
+  | .expr (.atom q :: .expr vs :: rest) =>
+    if isBinderHead q then
+      let mut ren := ren
+      let mut out : Array Sexp := #[]
+      for v in vs do
+        match v with
+        | .expr (.atom x :: T) =>
+          let mut y := x
+          if scope.contains x || avoid.contains x then
+            let mut k := 1
+            while (← get).contains s!"{y}" do
+              y := s!"{x}_{k}"
+              k := k + 1
+            modify (·.insert y)
+          ren := (x, y) :: ren
+          out := out.push (.expr (.atom y :: T))
+        | v => out := out.push v
+      return .expr (.atom q :: .expr out.toList :: (← rest.mapM (renameBinders avoid ren scope)))
+    else if q == "let" then
+      let bs ← vs.mapM fun
+        | .expr [.atom x, t] => return Sexp.expr [.atom x, ← renameBinders avoid ren scope t]
+        | b => return b
+      let bound := vs.filterMap fun | .expr (.atom x :: _) => some x | _ => none
+      let ren := bound.map (fun x => (x, x)) ++ ren
+      let scope := bs.foldl (fun acc b => match b with
+        | .expr [_, t] => (countAtoms {} t).fold (fun acc a _ => a :: acc) acc
+        | _ => acc) scope
+      return .expr (.atom q :: .expr bs :: (← rest.mapM (renameBinders avoid ren scope)))
+    else
+      return .expr (.atom ((ren.lookup q).getD q) :: (← (Sexp.expr vs :: rest).mapM (renameBinders avoid ren scope)))
+  | .expr xs => return .expr (← xs.mapM (renameBinders avoid ren scope))
 
 /-- The constructors a datatype declaration declares. -/
 def declaredCons : Sexp → List String
@@ -212,6 +308,8 @@ def desugar (ss : List Sexp) : List Sexp := Id.run do
   -- the symbols `is-C` the script declares (not legacy testers)
   let mut userIs : List String := []
   let mut out : Array Sexp := #[]
+  let mut declared : List String := []
+  let atoms : Std.HashMap String Nat := ss.foldl countAtoms {}
   for s in ss do
     match s with
     | .expr [.atom "define-sort", .atom n, .expr ps, body] =>
@@ -225,17 +323,53 @@ def desugar (ss : List Sexp) : List Sexp := Id.run do
           x.startsWith "is-" then
         userIs := (x.drop 3).toString :: userIs
     | _ => pure ()
-    let s := termNotations (cons.filter (!userIs.contains ·)) (expandSorts sorts s)
+    match s with
+    | .expr (.atom d :: .atom x :: _) =>
+      if d == "declare-fun" || d == "declare-const" then declared := unquote x :: declared
+    | _ => pure ()
+    let s := termNotations (cons.filter (!userIs.contains ·)) declared (expandSorts sorts s)
     let s := match s with
       | .expr [.atom "define-const", n, ty, t] => .expr [.atom "define-fun", n, .expr [], ty, t]
       | s => s
     cons := cons ++ declaredCons s
+    -- the named terms of a command that are used, in it or (as definitions after
+    -- it) in the next ones
+    let names := match s with
+      | .expr [.atom "assert", t] => namedTerms t
+      | .expr [.atom "define-fun", _, .expr [], _, t] => namedTerms t
+      | _ => []
+    let names := (names.filter fun (n, _) => atoms.getD n 0 > 1).map fun (n, t) => (n, stripNames t)
+    let here := countAtoms {} s
+    let s := if names.any fun (n, _) => here.getD n 0 > 1 then
+        names.foldl (fun s σ => substAtoms [σ] s) (stripNames s)
+      else s
+    let s := match s with
+      | .expr [.atom "define-fun", f, args, ty, t] => .expr [.atom "define-fun", f, args, ty, stripAttrs t]
+      | s => s
     out := out.push s
-    -- the named terms of an assertion, as definitions after it
-    if let .expr [.atom "assert", t] := s then
-      for (n, t) in namedTerms t do
-        out := out.push (.expr [.atom "define-fun", .atom n, .expr [], .atom "Bool", t])
-  return out.toList
+    for (n, t) in names do
+      out := out.push (.expr [.atom "define-fun", .atom n, .expr [], .atom "Bool", stripAttrs t])
+  -- binders that do not capture: in a macro with arguments, whose binders would
+  -- capture the variables of its uses, those bound anywhere else
+  let bound := out.toList.map binderVars
+  let mut used : Std.HashSet String := atoms.fold (fun u a _ => u.insert a) {}
+  let mut res : Array Sexp := #[]
+  for h : i in [0:out.size] do
+    match out[i] with
+    | .expr [.atom "define-fun", f, .expr args, ty, t] =>
+      let avoid := if args.isEmpty then [] else (bound.zipIdx.filter (·.2 != i)).flatMap (·.1)
+      let params := args.filterMap fun | .expr (.atom x :: _) => some x | _ => none
+      let (t, u) := (renameBinders (avoid ++ params) [] [] t).run used
+      used := u
+      res := res.push (.expr [.atom "define-fun", f, .expr args, ty, t])
+    | .expr (.atom c :: rest) =>
+      if c == "assert" || c == "simplify" || c == "get-value" then
+        let (rest, u) := (rest.mapM (renameBinders [] [] [])).run used
+        used := u
+        res := res.push (.expr (.atom c :: rest))
+      else res := res.push out[i]
+    | s => res := res.push s
+  return res.toList
 
 /-- `(and t)`, `(or t)`, `(+ t)` and `(* t)` written as `t`, as cvc5's parser
 reads them (Logos's would read `(and t true)`, which telos does not). -/
@@ -322,22 +456,12 @@ mutual
       | _ => e) env
 end
 
-/-- `s` with the atoms of `σ` replaced (under binders that do not rebind
-them). -/
-partial def substAtoms (σ : List (String × Sexp)) : Sexp → Sexp
-  | .atom a => match σ.find? (·.1 == a) with
-    | some (_, t) => t
-    | none => .atom a
-  | .expr [.atom q, .expr bs, body] =>
-    if ["forall", "exists", "let", "lambda"].contains q then
-      let bound := bs.filterMap fun b => match b with
-        | .expr (.atom x :: _) => some x
-        | _ => none
-      let σ' := σ.filter fun (x, _) => !bound.contains x
-      let bs := if q == "let" then bs.map (substAtoms σ) else bs
-      .expr [.atom q, .expr bs, substAtoms σ' body]
-    else .expr [.atom q, .expr (bs.map (substAtoms σ)), substAtoms σ body]
-  | .expr xs => .expr (xs.map (substAtoms σ))
+/-- The key of the type of the `i`-th argument of a function. -/
+def argKey (f : String) (i : Nat) : String := s!"{f} {i}"
+
+/-- The types of the arguments of `f`, of sorts `args`, if one is `Real`. -/
+def argEnv (f : String) (args : List Sexp) : List (String × NumTy) :=
+  if args.any (· == .atom "Real") then args.zipIdx.map fun (T, i) => (argKey f i, NumTy.ofSort T) else []
 
 /-- `s` with its numerals in positions of type `Real` written as real
 literals (SMT-LIB reads a numeral there as a real; CPC as an integer); `real`
@@ -359,6 +483,9 @@ partial def cvc5Numerals (env : List (String × NumTy)) (fold real : Bool) (s : 
         Sexp.expr (Sexp.atom h :: args.map (cvc5Numerals env fold realArgs))
       else if h == "/" then Sexp.expr (Sexp.atom h :: args.map (cvc5Numerals env fold true))
       else if h == "to_real" then Sexp.expr (Sexp.atom h :: args.map (cvc5Numerals env fold false))
+      else if (env.lookup (argKey h 0)).isSome then
+        Sexp.expr (Sexp.atom h :: args.zipIdx.map fun (t, i) =>
+          cvc5Numerals env fold (env.lookup (argKey h i) == some .real) t)
       else if h == "ite" then match args with
         | [c, t, e] =>
           let r := real || numTy env t == .real || numTy env e == .real
@@ -539,6 +666,8 @@ partial def readAttrs : List Sexp → Except String (List AnnotElem)
   | .atom ":no-pattern" :: t :: rest => return .noPattern t :: (← readAttrs rest)
   | .atom ":qid" :: .atom n :: rest => return .qid n :: (← readAttrs rest)
   | .atom ":named" :: .atom _ :: rest => readAttrs rest
+  -- (cvc5 ignores these)
+  | .atom ":skolemid" :: _ :: rest | .atom ":weight" :: _ :: rest => readAttrs rest
   | a :: _ => throw s!"unsupported attribute: {a.serialize}"
 
 /-- `s` without its annotations, and the annotated quantifiers in it. -/
@@ -626,6 +755,13 @@ partial def annotate (σ : Std.HashMap Key Node) (n : Node) : Node :=
     | .app op cs => .app op (cs.map (annotate σ))
     | n => n
 
+/-- The term has a macro with arguments as a value (not applied), or an element
+`@S_i` of a sort. -/
+partial def hasFnValue (macros : List String) : Sexp → Bool
+  | .atom a => macros.contains a || a.startsWith "@"
+  | .expr (.atom _ :: args) => args.any (hasFnValue macros)
+  | .expr xs => xs.any (hasFnValue macros)
+
 /-- Read a script. Numerals in positions of type `Real` are reals
 (`cvc5Numerals`). With `cvc5Output`, the script is cvc5's output (its
 preprocessed assertions, a replayed trace), whose constants are read as cvc5
@@ -651,6 +787,9 @@ def readScript (input : String) (cvc5Output : Bool := false) : Except String Scr
   -- the arithmetic types of the symbols (of the return types of functions)
   let mut numEnv : List (String × NumTy) := []
   let mut annots : Array Annot := #[]
+  let macros := ss.filterMap fun
+    | .expr [.atom "define-fun", .atom f, .expr (_ :: _), _, _] => some f
+    | _ => none
   for s in ss do
     let s := unaryOps (bvNumerals s)
     let s : Sexp := match s with
@@ -659,7 +798,9 @@ def readScript (input : String) (cvc5Output : Bool := false) : Except String Scr
       | s => s
     match s with
     | .expr [.atom "declare-const", .atom x, ty] => numEnv := (x, NumTy.ofSort ty) :: numEnv
-    | .expr [.atom "declare-fun", .atom x, _, ret] => numEnv := (x, NumTy.ofSort ret) :: numEnv
+    | .expr [.atom "declare-fun", .atom x, args, ret] =>
+      let args := match args with | .expr as => as | _ => []
+      numEnv := argEnv x args ++ (x, NumTy.ofSort ret) :: numEnv
     | _ => pure ()
     match s with
     | .expr [.atom "set-option", .atom ":decision", .atom m] => decision := some m
@@ -679,6 +820,10 @@ def readScript (input : String) (cvc5Output : Bool := false) : Except String Scr
       | .expr [.atom "echo", .atom str] => cmds := cmds.push (.inl (.echo str))
       | .expr [.atom "get-info", .atom key] => cmds := cmds.push (.inl (.getInfo key))
       | .expr [.atom "get-value", .expr ts] =>
+        -- a function, or an element of a sort, as a value
+        if ts.any (hasFnValue macros) then
+          cmds := cmds.push (.inl (.unsupported s.serialize))
+          continue
         let mut is := []
         for t in ts do
           let src := t.serialize
@@ -753,7 +898,7 @@ def readScript (input : String) (cvc5Output : Bool := false) : Except String Scr
         if ["get-assertions", "get-assignment", "get-unsat-core", "get-unsat-assumptions",
             "get-option", "check-sat-assuming", "get-difficulty", "get-learned-literals",
             "get-timeout-core", "get-abduct", "get-interpolant", "get-qe", "block-model",
-            "get-instantiations"].contains c then
+            "get-instantiations", "get-proof", "get-unsat-core-lemmas"].contains c then
           cmds := cmds.push (.inl (.unsupported s.serialize))
         else throw s!"unsupported command: {s.serialize}"
       | _ => throw s!"unsupported command: {s.serialize}"

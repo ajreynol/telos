@@ -94,6 +94,68 @@ theorem inputNode_bool {as : List Node} (hb : ∀ a ∈ as, HasBoolType a.toEo) 
   intro i hi
   exact hall _ (by simp)
 
+/-- A model that is accepted is a model of the assertions: it satisfies them, or
+their preprocessing, which is equivalent to them. -/
+theorem accepts_sound {M : Solver.Model} {as : List Node} {opts : PPOptions} {pp : Bool} {o : NodeOrder}
+    (hb : ∀ a ∈ as, HasBoolType a.toEo) (h : accepts M as opts pp o = true) :
+    model_wf (Solver.toSmtModel M) ∧ TrueIn (Solver.toSmtModel M) (inputNode as).toEo := by
+  unfold accepts at h
+  rw [Bool.or_eq_true, Bool.and_eq_true] at h
+  rcases h with h | ⟨-, h⟩
+  · exact Solver.satisfies_sound h
+  · have hwf := (Solver.satisfies_sound h).1
+    refine ⟨hwf, ?_⟩
+    have hP := Solver.satisfies_mem h (preprocessCert as opts o).1 (by simp)
+    have hIb : HasBoolType (inputNode as).toEo := inputNode_bool hb
+    have heq := preprocess_correct_of_logos as (Solver.wellTyped_of_bool hIb) opts o
+    obtain ⟨-, -, hval⟩ := (Node.equiv_iff _ _).1 heq
+    have hrel := hval _ hwf
+    obtain ⟨c, hc⟩ := LogosFacts.eval_bool _ _ hwf hIb
+    have hc' : __smtx_model_eval (Solver.toSmtModel M) (inputNode as).toSmt = SmtValue.Boolean c := hc
+    rw [hc', hP] at hrel
+    have := valueRel_bool hrel
+    unfold TrueIn
+    show __smtx_model_eval _ (inputNode as).toSmt = _
+    rw [hc', this]
+
+/-- **`solveScript`'s `sat` answers are correct**: the assertions are
+satisfiable, in the Logos model of the model found. -/
+theorem solveScript_sat (sc : Script) (u : UserOptions) (ee pp wp co vs te ev : Bool)
+    {out : List Node} {r : Solver.Result} (h : solveScript sc u ee pp wp co vs te ev = .ok (out, r))
+    (hs : r.answer = .sat) {opts : PPOptions} {as : List Node}
+    (hin : ppInput sc u = .ok (opts, as)) (hb : ∀ a ∈ as, HasBoolType a.toEo) :
+    ∃ M, model_wf M ∧ TrueIn M (inputNode as).toEo := by
+  simp only [solveScript, hin, bind, Except.bind, pure, Except.pure] at h
+  split at h
+  · simp at h
+  · -- whichever solved it, the answer is `sat` only if the model satisfies the
+    -- input
+    have key : ∀ (o : NodeOrder) (r0 : Solver.Result) (w : Solver.Unknown), (if r0.answer != .sat then r0 else
+        if accepts (Solver.buildModel r0.ee (Solver.relevantTerms r0.asserted) (Solver.freeConsts as)
+            (engineDefs as opts pp o) as r0.arithModel r0.asserted) as opts pp o then
+          { r0 with model := some (Solver.buildModel r0.ee (Solver.relevantTerms r0.asserted)
+            (Solver.freeConsts as) (engineDefs as opts pp o) as r0.arithModel r0.asserted) }
+        else rejectModel r0 w).answer = .sat →
+        ∃ M, model_wf M ∧ TrueIn M (inputNode as).toEo := by
+      intro _ r0 _ hs
+      split at hs
+      · rename_i hne
+        simp [hs] at hne
+      · split at hs
+        · rename_i hsat
+          exact ⟨_, accepts_sound hb hsat⟩
+        · rw [rejectModel_answer] at hs
+          cases hs
+    split at h
+    · try simp only [Except.ok.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      exact key _ _ _ hs
+    · split at h
+      · simp at h
+      · try simp only [Except.ok.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        exact key _ _ _ hs
+
 /-- `solve` is `solveScript`'s answer, with no events. -/
 theorem solve_ok {sc : Script} {u : UserOptions} {vs : Bool} {a : Solver.Answer}
     (h : solve sc u vs = .ok a) :
@@ -142,7 +204,8 @@ theorem solve_sat {sc : Script} {u : UserOptions} {vs : Bool} (h : solve sc u vs
     sc.satisfiability true := by
   obtain ⟨out, r, hs, ha⟩ := solve_ok h
   obtain ⟨opts, as, hin⟩ := solveScript_ppInput hs
-  obtain ⟨M, hM, hv⟩ := solveScript_sat sc u false true false true vs false false hs ha hin
+  have hb := inputAssertions_bool (ppInput_assertions hin)
+  obtain ⟨M, hM, hv⟩ := solveScript_sat sc u false true false true vs false false hs ha hin hb
   exact ⟨as, ppInput_assertions hin, smt_satisfiability.intro_true _ ⟨M, hM, hv⟩⟩
 
 end Frontend

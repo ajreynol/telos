@@ -363,6 +363,11 @@ def negV : MVal → Option MVal
   | .rat a => some (.rat (-a))
   | _ => none
 
+def absV : MVal → Option MVal
+  | .int a => some (.int (if a < 0 then -a else a))
+  | .rat a => some (.rat (if a < 0 then -a else a))
+  | _ => none
+
 def ltV : MVal → MVal → Option MVal
   | .int a, .int b => some (.bool (decide (a < b)))
   | .rat a, .rat b => some (.bool (decide (a < b)))
@@ -526,6 +531,7 @@ def combine (k : Kind) (cs : Array Node) (vs : List MVal) : Option MVal :=
   | .SUB, [a, b] => subV a b
   | .DIVISION, [a, b] => divV a b
   | .NEG, [a] => negV a
+  | .ABS, [a] => absV a
   | .LT, [a, b] => ltV a b
   | .LEQ, [a, b] => leqV a b
   | .GT, [a, b] => ltV b a
@@ -629,6 +635,11 @@ mutual
     | .const (.emptySet T) => (if tyS T == .None then none else some (.sempty (tyS T)), S)
     | .var x T => (M.const x T, S)
     | .boundVar x T => (env.lookup (native_string_lit x) (tyS T), S)
+    -- the purification skolem of `t` is `t`
+    | .skolem .PURIFY cs =>
+      match cs.toList with
+      | [x] => ev M env n x S
+      | _ => (none, S)
     | .app (.kind .DISTINCT) cs =>
       if distinctTyped cs then
         match evList M env n cs.toList S with
@@ -780,14 +791,17 @@ def groundValue : Nat → SmtType → Option MVal
   | f + 1, T => groundMin f T
 
 /-- The type has infinitely many values (within `fuel`): a sort, or a datatype
-with a constructor that has a field of the datatype or of an infinite type. -/
-def infiniteType : Nat → SmtType → Bool
+with a constructor that has a field of the datatype (or, for mutually recursive
+datatypes, of one of `seen`, which it is in) or of an infinite type. -/
+def infiniteType (f : Nat) (T : SmtType) (seen : List SmtType := []) : Bool :=
+  match f, T with
   | 0, _ => false
   | _ + 1, .USort _ => true
   | _ + 1, .Int => true
   | _ + 1, .Real => true
+  | _ + 1, .Seq _ => true
   | f + 1, T@(.Datatype s dd) =>
-    (consesOf s dd).any fun fs => fs.any fun F => F == T || infiniteType f F
+    (consesOf s dd).any fun fs => fs.any fun F => F == T || seen.contains F || infiniteType f F (T :: seen)
   | _ + 1, _ => false
 
 /-- The `k`-th value of a type, distinct for distinct `k` (for an infinite
@@ -799,6 +813,7 @@ def valueAt : Nat → SmtType → Nat → Option MVal
   | _ + 1, .USort s, k => some (.uval s k)
   | _ + 1, .Int, k => some (.int k)
   | _ + 1, .Real, k => some (.rat k)
+  | _ + 1, .Seq .Char, k => some (.str (List.replicate k 97))
   | f + 1, T@(.Datatype s dd), k =>
     let cs := (consesOf s dd).zipIdx
     match cs.find? (fun (fs, _) => fs.contains T) with
@@ -807,10 +822,15 @@ def valueAt : Nat → SmtType → Nat → Option MVal
       -- the first field of the datatype is the value before
       (fieldValues f T fs (valueAt f T (k - 1))).map (MVal.mkDt s dd i)
     | none =>
-      match cs.find? (fun (fs, _) => fs.any (infiniteType f)) with
+      match cs.find? (fun (fs, _) => fs.any (infiniteType f ·)) with
       | some (fs, i) =>
-        let F := (fs.find? (infiniteType f)).getD .None
-        (fieldValues f F fs (valueAt f F k)).map (MVal.mkDt s dd i)
+        let F := (fs.find? (infiniteType f ·)).getD .None
+        -- a field of another datatype, which may be mutually recursive with it:
+        -- nested `k` deep, as above (the first value may occur twice)
+        if F matches .Datatype .. then
+          if k == 0 then groundValue (f + 1) T
+          else (fieldValues f F fs (valueAt f F (k - 1))).map (MVal.mkDt s dd i)
+        else (fieldValues f F fs (valueAt f F k)).map (MVal.mkDt s dd i)
       | none => if k == 0 then groundValue (f + 1) T else none
   | _ + 1, _, _ => none
 where
@@ -826,7 +846,7 @@ def consValueAt (f : Nat) (s : native_String) (dd : SmtDatatypeDecl) (i k : Nat)
   match (consesOf s dd)[i]? with
   | none => none
   | some fs =>
-    let vary := if fs.contains T then some T else fs.find? (infiniteType f)
+    let vary := if fs.contains T then some T else fs.find? (infiniteType f ·)
     match vary with
     | some F => (valueAt.fieldValues f F fs (valueAt f F k)).map (MVal.mkDt s dd i)
     | none => if k == 0 then (fs.mapM (groundValue f)).map (MVal.mkDt s dd i) else none
@@ -1062,9 +1082,11 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
     let mut found : Option (List Nat) := none
     for L in [start : start + 8] do
       if found.isSome then break
-      let count := 26 ^ L
-      for k in [0 : min count 4096] do
-        let w := (List.range L).map fun j => 97 + (k / 26 ^ (L - 1 - j)) % 26
+      -- (more letters, when those up to `z` do not suffice)
+      let base := if 26 ^ L > usedStr.size then 26 else 10000
+      let count := base ^ L
+      for k in [0 : min count 8192] do
+        let w := (List.range L).map fun j => 97 + (k / base ^ (L - 1 - j)) % base
         if !usedStr.contains w then
           found := some w
           break

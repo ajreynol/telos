@@ -188,9 +188,9 @@ well-formed model. -/
 theorem solveScript_sat_correct (sc : Frontend.Script) (u : Preprocess.UserOptions) (ee pp wp co vs te ev : Bool)
     {out : List Node} {r : Solver.Result} (h : Frontend.solveScript sc u ee pp wp co vs te ev = .ok (out, r))
     (hs : r.answer = .sat) {opts : Preprocess.PPOptions} {as : List Node}
-    (hin : Frontend.ppInput sc u = .ok (opts, as)) :
+    (hin : Frontend.ppInput sc u = .ok (opts, as)) (hb : ∀ a ∈ as, HasBoolType a.toEo) :
     ∃ M, model_wf M ∧ TrueIn M (Preprocess.inputNode as).toEo :=
-  Frontend.solveScript_sat sc u ee pp wp co vs te ev h hs hin
+  Frontend.solveScript_sat sc u ee pp wp co vs te ev h hs hin hb
 
 end Telos
 

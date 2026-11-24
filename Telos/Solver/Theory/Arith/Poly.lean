@@ -37,23 +37,31 @@ namespace Poly
 /-- The constant monomial's variable part. -/
 def one : Node := .const (.integer 1)
 
+/-- `rewriter::removeToReal`. cvc5's normal forms mix integers and reals in sums;
+telos's keep the `to_real` that Logos's typing needs, and the solver reads them
+without it, so that `(to_real n)` is the arith variable of `n`. -/
+def removeToReal : Node → Node
+  | .app (.kind .TO_REAL) #[a] => a
+  | n => n
+
 /-- A monomial (`(* c m)`, or `m`, or a constant). -/
 def monoOf (n : Node) : Rat × Node :=
+  let n := removeToReal n
   match constVal? n with
   | some c => (c, one)
   | none =>
     match n with
     | .app (.kind .MULT) cs =>
       match cs[0]?.bind constVal? with
-      | some c => (c, if cs.size == 2 then cs[1]! else .app (.kind .MULT) (cs.extract 1 cs.size))
+      | some c => (c, if cs.size == 2 then removeToReal cs[1]! else .app (.kind .MULT) (cs.extract 1 cs.size))
       | none => (1, n)
     | _ => (1, n)
 
 /-- `Polynomial::parsePolynomial`. -/
 def parse (n : Node) : Poly :=
-  match n with
+  match removeToReal n with
   | .app (.kind .ADD) cs => ⟨cs.map monoOf⟩
-  | _ => ⟨#[monoOf n]⟩
+  | n => ⟨#[monoOf n]⟩
 
 def isConstantMono (m : Rat × Node) : Bool := m.2 == one
 /-- `isConstant`: a single constant monomial (or none). -/
@@ -88,11 +96,17 @@ def sub (p q : Poly) (o : NodeOrder := {}) : Poly :=
 
 /-- The node of a polynomial with no constant, in cvc5's normal form: a
 monomial `m` with coefficient 1 is `m`, another is `(* c m)`; several are a
-sum. -/
+sum. An integer monomial of a real sum is cast, as in the rewriter's normal
+form (`Telos.Arith.Poly.toNodeAt`). -/
 def node (p : Poly) : Node :=
+  let real := p.terms.any fun (c, m) => !monoIsInt m || c.den != 1
   let mono := fun (cm : Rat × Node) =>
     let (c, m) := cm
-    if c == 1 then m else .app (.kind .MULT) #[Telos.Arith.constNode (!monoIsInt m || c.den != 1) c, m]
+    if real && monoIsInt m then
+      if c.den == 1 then
+        Node.mkNode .TO_REAL #[if c == 1 then m else .app (.kind .MULT) #[Telos.Arith.constNode false c, m]]
+      else .app (.kind .MULT) #[Telos.Arith.constNode true c, Node.mkNode .TO_REAL #[m]]
+    else if c == 1 then m else .app (.kind .MULT) #[Telos.Arith.constNode real c, m]
   if h : p.terms.size = 1 then mono p.terms[0] else .app (.kind .ADD) (p.terms.map mono)
 
 end Poly

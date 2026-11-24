@@ -67,14 +67,14 @@ theorem Telos.solveScript_unsat_correct (sc u) (ee pp wp co vs te ev : Bool)
     ∀ M, model_wf M → ¬ TrueIn M (Preprocess.inputNode as).toEo
 theorem Telos.solveScript_sat_correct (sc u) (ee pp wp co vs te ev : Bool)
     (h : Frontend.solveScript sc u ee pp wp co vs te ev = .ok (out, r)) (hs : r.answer = .sat)
-    (hin : Frontend.ppInput sc u = .ok (opts, as)) :
+    (hin : Frontend.ppInput sc u = .ok (opts, as)) (hb : ∀ a ∈ as, HasBoolType a.toEo) :
     ∃ M, model_wf M ∧ TrueIn M (Preprocess.inputNode as).toEo
 ```
 
 Both are about the input assertions as read, not the preprocessed ones. The
-`sat` theorem does not depend on preprocessing at all, since it checks the
-model against the input. The `unsat` theorem uses that preprocessing preserves
-models (a skolem is the term it purifies, in Logos's semantics).
+model of a `sat` is checked against the input, or, if it does not evaluate the
+input, against the preprocessed assertions, which are equivalent to it
+(`accepts_sound`). The `unsat` theorem uses that preprocessing preserves models (a skolem is the term it purifies, in Logos's semantics).
 
 ## How the proofs compose with Logos's
 

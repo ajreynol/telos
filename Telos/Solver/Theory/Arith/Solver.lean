@@ -51,7 +51,8 @@ def setupVariableList (m : Node) : ArithM Unit := do
   match m with
   | .app (.kind .MULT) cs =>
     for v in cs do
-      if !(← isSetup v) then setupVariable v
+      let v := Poly.removeToReal v
+      if !(← isSetup v) && (constVal? v).isNone then setupVariable v
     if (← get).opts.nonlinear then
       let _ ← requestArithVar m false (Telos.Arith.isInt m)
       markSetup m
@@ -1113,6 +1114,22 @@ partial def deltaValue (s : State) (n : Node) : Option DeltaRational :=
         | _, some c => (deltaValue s a).map (· * c)
         | _, _ => none
       | .app (.kind .TO_REAL) #[a] => deltaValue s a
+      | _ => none
+
+/-- The value of a term under the values of leaves (`isExpressionZero`, not
+below nonlinear products); none if it has another leaf. -/
+partial def valueIn (vals : Std.HashMap Key Rat) (n : Node) : Option Rat :=
+  match constVal? n with
+  | some c => some c
+  | none =>
+    match vals.get? ⟨n⟩ with
+    | some q => some q
+    | none =>
+      match n with
+      | .app (.kind .ADD) cs => cs.foldlM (fun acc c => (valueIn vals c).map (acc + ·)) 0
+      | .app (.kind .MULT) #[a, b] =>
+        if (constVal? a).isSome || (constVal? b).isSome then return (← valueIn vals a) * (← valueIn vals b) else none
+      | .app (.kind .TO_REAL) #[a] => valueIn vals a
       | _ => none
 
 /-- An equality status of two terms (`EqualityStatus`), for theory

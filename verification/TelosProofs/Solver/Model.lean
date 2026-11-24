@@ -1018,6 +1018,17 @@ theorem negV_sound {a r : MVal} (h : Model.negV a = some r) :
     simp [toVal, __smtx_model_eval_uneg, native_zneg, native_rneg]
 
 omit [LogosFacts] in
+theorem absV_sound {a r : MVal} (h : Model.absV a = some r) :
+    __smtx_model_eval_abs (toVal a) = toVal r := by
+  cases a <;> simp only [Model.absV, reduceCtorEq, Option.some.injEq] at h <;> subst h
+  · simp [toVal, __smtx_model_eval_abs, native_zabs]
+  · rename_i q
+    simp only [toVal, __smtx_model_eval_abs, native_rabs, SmtValue.Real.injEq]
+    split
+    · rename_i hq; rw [abs_of_neg (by exact_mod_cast hq)]; push_cast; rfl
+    · rename_i hq; rw [abs_of_nonneg (by exact_mod_cast not_lt.1 hq)]
+
+omit [LogosFacts] in
 theorem ltV_sound {a b r : MVal} (h : Model.ltV a b = some r) :
     __smtx_model_eval_lt (toVal a) (toVal b) = toVal r := by
   cases a <;> cases b <;> simp only [Model.ltV, reduceCtorEq, Option.some.injEq] at h <;> subst h <;>
@@ -1657,6 +1668,9 @@ theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List 
        | (rw [toSmt_un (op := UserOp.__eoo_neg_2) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.__eoo_neg_2) x)
             = SmtTerm.uneg (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
           simp only; rw [← Node.toSmt, h0]; exact negV_sound h)
+       | (rw [toSmt_un (op := UserOp.abs) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.abs) x)
+            = SmtTerm.abs (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, h0]; exact absV_sound h)
        | (rw [toSmt_un (op := UserOp.to_real) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.to_real) x)
             = SmtTerm.to_real (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
           simp only; rw [← Node.toSmt, h0]
@@ -2391,6 +2405,19 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
       rfl
   · exact ⟨hS, fun v h => eval_var h⟩
   · exact ⟨hS, fun v h => eval_boundVar h⟩
+  · -- a purification skolem
+    rename_i cs
+    split
+    · rename_i x hcs
+      have hc : cs = #[x] := by rcases cs with ⟨l⟩; simp only at hcs; subst hcs; rfl
+      subst hc
+      obtain ⟨hS1, hv1⟩ := IH env x S hS
+      refine ⟨hS1, fun v h => ?_⟩
+      have e : (Node.skolem .PURIFY #[x]).toSmt = SmtTerm._at_purify x.toSmt := by
+        unfold Node.toSmt; rw [Node.toEo]; rfl
+      rw [e, __smtx_model_eval.eq_def]
+      exact hv1 v h
+    · exact ⟨hS, fun v h => by cases h⟩
   · rename_i cs
     split
     · rename_i hty
@@ -2598,6 +2625,21 @@ theorem vals_true {M : Model} : ∀ {l : List Node} {vs : List MVal}, Vals M [] 
       rw [← toSmtModelE_nil, h, hb]; rfl
     · exact vals_true hr (fun v hv' => hv v (by simp [hv'])) a ha
 
+/-- The assertions that a model satisfies are true in it. -/
+theorem satisfies_mem {M : Model} {as : List Node} (h : M.satisfies as = true) :
+    ∀ a ∈ as, __smtx_model_eval (toSmtModel M) a.toSmt = SmtValue.Boolean true := by
+  unfold Model.satisfies at h
+  simp only [Bool.and_eq_true] at h
+  obtain ⟨-, he⟩ := h
+  obtain ⟨-, hv⟩ := evList_sound M Model.fuel (ev_sound M _) as {} (memoOk_empty M [])
+  rcases e : M.evList [] Model.fuel as {} with ⟨r, S⟩
+  rw [e] at he hv
+  cases r with
+  | none => simp at he
+  | some vs =>
+    simp only [List.all_eq_true, beq_iff_eq] at he
+    exact vals_true (hv vs rfl) he
+
 /-- **A model that satisfies the assertions shows that they are
 satisfiable**: its Logos model is well formed, and their conjunction is true
 in it. -/
@@ -2625,49 +2667,3 @@ theorem satisfies_sound {M : Model} {as : List Node} (h : M.satisfies as = true)
     · exact evalsTo_const _ true
 
 end Telos.Solver
-
-namespace Telos.Frontend
-
-open Preprocess
-
-variable [LogosFacts]
-
-/-- **`solveScript`'s `sat` answers are correct**: the assertions are
-satisfiable, in the Logos model of the model found. -/
-theorem solveScript_sat (sc : Script) (u : UserOptions) (ee pp wp co vs te ev : Bool)
-    {out : List Node} {r : Solver.Result} (h : solveScript sc u ee pp wp co vs te ev = .ok (out, r))
-    (hs : r.answer = .sat) {opts : PPOptions} {as : List Node}
-    (hin : ppInput sc u = .ok (opts, as)) :
-    ∃ M, model_wf M ∧ TrueIn M (inputNode as).toEo := by
-  simp only [solveScript, hin, bind, Except.bind, pure, Except.pure] at h
-  split at h
-  · simp at h
-  · -- whichever solved it, the answer is `sat` only if the model satisfies the
-    -- input
-    have key : ∀ (o : NodeOrder) (r0 : Solver.Result) (w : Solver.Unknown), (if r0.answer != .sat then r0 else
-        if (Solver.buildModel r0.ee (Solver.relevantTerms r0.asserted) (Solver.freeConsts as)
-            (engineDefs as opts pp o) as r0.arithModel r0.asserted).satisfies as then
-          { r0 with model := some (Solver.buildModel r0.ee (Solver.relevantTerms r0.asserted)
-            (Solver.freeConsts as) (engineDefs as opts pp o) as r0.arithModel r0.asserted) }
-        else rejectModel r0 w).answer = .sat →
-        ∃ M, model_wf M ∧ TrueIn M (inputNode as).toEo := by
-      intro _ r0 _ hs
-      split at hs
-      · rename_i hne
-        simp [hs] at hne
-      · split at hs
-        · rename_i hsat
-          exact ⟨_, Solver.satisfies_sound hsat⟩
-        · rw [rejectModel_answer] at hs
-          cases hs
-    split at h
-    · try simp only [Except.ok.injEq, Prod.mk.injEq] at h
-      obtain ⟨rfl, rfl⟩ := h
-      exact key _ _ _ hs
-    · split at h
-      · simp at h
-      · try simp only [Except.ok.injEq, Prod.mk.injEq] at h
-        obtain ⟨rfl, rfl⟩ := h
-        exact key _ _ _ hs
-
-end Telos.Frontend

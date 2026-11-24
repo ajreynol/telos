@@ -395,9 +395,10 @@ def indexedEoShape : Kind → List Int → AppShape
   | .BITVECTOR_ROTATE_RIGHT, [i] => .spine (Term.UOp1 UserOp1.rotate_right (Term.Numeral i)) (.exactly 1)
   | _, _ => .none
 
-/-- The term is a function skolem of the theory of strings, applied to its cache
+/-- The term is a function skolem (of a division by zero, or of the theory of strings), applied to its cache
 values: Logos gives a meaning to its applications to one argument. -/
 def isFnSkolemTerm : Term → Bool
+  | .UOp ._at_int_div_by_zero | .UOp ._at_mod_by_zero | .UOp ._at_div_by_zero => true
   | .Apply (.UOp ._at_strings_stoi_result) _ | .Apply (.UOp ._at_strings_itos_result) _ => true
   | .Apply (.Apply (.UOp ._at_strings_occur_index) _) _
   | .Apply (.Apply (.UOp ._at_strings_occur_index_re) _) _ => true

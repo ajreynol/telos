@@ -5,8 +5,8 @@ regress0/arith/arith-eq.smt2	solved	0.0	unsat
 regress0/arith/arith-min-max-static-learn-real.smt2	solved	0.0	unsat
 regress0/arith/arith-min-max-static-learn.smt2	solved	0.0	unsat
 regress0/arith/arith-missing-dsl-rew.smt2	solved	0.0	unsat
-regress0/arith/arith-mixed-types-no-tighten.smt2	cert-sat/model-false	0.0	telos: unknown [cert-sat/model-false] the model does not satisfy the input: (>= (+ x (to_real n)) 1/1) is false (with x=0, n=0)
-regress0/arith/arith-mixed-types-tighten.smt2	cert-sat/model-false	0.0	telos: unknown [cert-sat/model-false] the model does not satisfy the input: (>= (+ x_45 (/ (* -1/1 (to_real termITE_30)) 1/1)) 0/1) is false (with x_45=-1/2, termITE_30=2)
+regress0/arith/arith-mixed-types-no-tighten.smt2	solved	0.0	unsat
+regress0/arith/arith-mixed-types-tighten.smt2	solved	0.0	unsat
 regress0/arith/arith-rewrite-with-ran.smt2	timeout	20.0	
 regress0/arith/arith-strict-relaxed.smt2	solved	0.0	unsat
 regress0/arith/arith-strict.smt2	solved	0.0	unsat
@@ -17,7 +17,7 @@ regress0/arith/bug569.smt2	solved	0.0	unsat
 regress0/arith/dd_59_static_learn.smt2	solved	0.0	unsat
 regress0/arith/dd_cs_dekker.smt2	solved	0.0	unsat
 regress0/arith/div-chainable.smt2	solved	0.0	sat
-regress0/arith/div.01.smt2	cert-unsat/bad-justification	0.0	telos: unknown [cert-unsat/bad-justification] the justification (theory, assumptions [(= (@int_div_by_zero (@int_div_by_zero 0)) (@int_div_by_zero (@int_div_by_zero (@int_div_by_zero 0)))), (not (= (@int_div_by_zero (@int_div_by_zero 0)) (@int_div_by_zero (@int_div_by_zero (@int_div_by_zero (@int_di
+regress0/arith/div.01.smt2	solved	0.0	unsat
 regress0/arith/div.02.smt2	solved	0.0	sat
 regress0/arith/div.04.smt2	solved	0.0	unsat
 regress0/arith/div.05.smt2	solved	0.0	sat
@@ -48,7 +48,7 @@ regress0/arith/issue8159-rewrite-intreal.smt2	solved	0.0	sat
 regress0/arith/issue8805-mixed-var-elim.smt2	solved	0.0	sat
 regress0/arith/issue8872-2-msum-types.smt2	solved	0.0	sat
 regress0/arith/issue8872-msum-types.smt2	solved	0.0	sat
-regress0/arith/issue9427-cdiv-neg.smt2	unsupported/other	0.0	telos: unsupported: the logic AUFBVFPDTNIRA has theories outside safe mode
+regress0/arith/issue9427-cdiv-neg.smt2	cert-unsat/missing-proof	2.1	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_INFER_BOUNDS_NT, THEORY_ARITH ARITH_NL_FACTOR
 regress0/arith/issue9643.smt2	solved	0.0	sat
 regress0/arith/ite-lift.smt2	solved	0.0	unsat
 regress0/arith/miplib.cvc.smt2	solved	0.0	sat
@@ -59,10 +59,10 @@ regress0/arith/mod-simp.smt2	solved	0.0	unsat
 regress0/arith/mod.01.smt2	solved	0.0	sat
 regress0/arith/mult.01.smt2	solved	0.0	unsat
 regress0/arith/non-normal.smt2	solved	0.0	sat
-regress0/arith/proj-issue301-is-int-abs.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (is_int (- (- (- (- 0/1 0/1) 0/1) r2) (to_real (abs i1)))) is not evaluated (with r2=1/6, i1=-1)
+regress0/arith/proj-issue301-is-int-abs.smt2	timeout	20.0	
 regress0/arith/proj-issue780-arith-mult-pf.smt2	unsupported/operator	0.0	telos: the term uses an operator telos does not support yet: <unprintable>: (let ((?v_2 (<= 0/1 skoY)) (?v_0 (* skoX -1/1))) (let ((?v_4 (<= (* skoZ (+ 0/1 (* skoY skoX))) 0/1))) (let ((?v_1 (not ?v_4))) (let ((?v_6 (* skoY (* skoX (+ -3/1 0/1))))) (and (<= 0 0) (and ?v_1 (and (or ?v_1 ?v_2) (and (<
 regress0/arrays/issue5836-2.smt2	solved	0.0	sat
-regress0/arrays/proj-issue545-array-nconst.smt2	unsupported/parse	0.0	Error: failed to parse command (assume @s1 (= f f))
+regress0/arrays/proj-issue545-array-nconst.smt2	solved	0.0	sat
 regress0/bool/issue6717-ite-rewrite.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (or T (and (str.prefixof v "") (exists ((x Int)) (= "t" (str.substr v 0 x))))) is not evaluated (with T=true, v=…, v=…)
 regress0/boolean-terms.cvc.smt2	solved	0.0	sat
 regress0/bt-test-00.smt2	solved	0.0	unsat
@@ -71,10 +71,10 @@ regress0/bug187.smt2	solved	0.0	sat
 regress0/bug217.smt2	solved	0.0	unsat
 regress0/bug303.smt2	solved	0.0	unsat
 regress0/bug339.smt2	solved	0.0	sat
-regress0/bug365.smt2	unsupported/parse	0.0	Error: failed to parse command (assume @s0 (= 2 a))
+regress0/bug365.smt2	solved	0.0	unsat
 regress0/bug382.smt2	solved	0.0	sat
 regress0/bug383.smt2	solved	0.0	sat
-regress0/bug480.smt2	unsupported/parse	0.0	Error: failed to parse command (define baz () (or (! (= x (+ y 5)) :named foo) (! (= x (- y 5)) :named bar)))
+regress0/bug480.smt2	solved	0.0	sat
 regress0/bug512.minimized.smt2	intentional	0.0	telos: unknown [intentional] THEORY_QUANTIFIERS declared the model incomplete (QUANTIFIERS), as cvc5 does
 regress0/bug541.smt2	solved	0.0	unsat
 regress0/bug548a.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
@@ -96,7 +96,7 @@ regress0/chained-equality.smt2	solved	0.0	unsat
 regress0/cores/dd.uc-min-wrong.smt2	solved	0.0	unsat
 regress0/cores/issue8705-bool-ppassert.smt2	solved	0.0	unsat
 regress0/cores/issue8822-arith-static-learn.smt2	solved	0.0	unsat
-regress0/cores/unsat-core-lemmas.smt2	unsupported/command	0.0	telos: unsupported command: (get-unsat-core-lemmas)
+regress0/cores/unsat-core-lemmas.smt2	solved	0.0	unsat
 regress0/datatypes/4482-unc-simp-one.smt2	not-ported	0.0	telos: unknown [not-ported] the engine treats tuple.unit as uninterpreted (not ported)
 regress0/datatypes/Test1-tup-mp.cvc.smt2	not-ported	0.0	telos: unknown [not-ported] the engine treats (test 7) as uninterpreted (not ported)
 regress0/datatypes/boolean-equality.cvc.smt2	solved	0.0	sat
@@ -131,10 +131,10 @@ regress0/datatypes/issue1433.smt2	solved	0.0	sat
 regress0/datatypes/issue8883-sort-inf.smt2	solved	0.0	unsat
 regress0/datatypes/jsat-2.6.smt2	solved	0.0	sat
 regress0/datatypes/list-bool.smt2	solved	0.0	unsat
-regress0/datatypes/list-update-sat.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (= ((_ update head) a 3) (cons 3 nil)) is not evaluated (with a=((cons 0) nil))
+regress0/datatypes/list-update-sat.smt2	solved	0.0	sat
 regress0/datatypes/list-update.smt2	solved	0.0	unsat
 regress0/datatypes/model-semi-eval.smt2	solved	0.0	sat
-regress0/datatypes/model-subterms-min.smt2	cert-sat/model-false	0.0	telos: unknown [cert-sat/model-false] the model does not satisfy the input: (distinct x1 (a x2)) is false (with x1=(a e1), x2=e1)
+regress0/datatypes/model-subterms-min.smt2	solved	0.0	sat
 regress0/datatypes/mutual-rec-param-dt.smt2	solved	0.0	sat
 regress0/datatypes/pair-bool-bool.cvc.smt2	solved	0.0	sat
 regress0/datatypes/pair-real-bool.smt2	solved	0.0	sat
@@ -153,11 +153,11 @@ regress0/datatypes/tuple_update.smt2	not-ported	0.0	telos: unknown [not-ported] 
 regress0/datatypes/tuples-empty.smt2	not-ported	0.0	telos: unknown [not-ported] the engine treats tuple.unit as uninterpreted (not ported)
 regress0/datatypes/tuples-multitype.smt2	not-ported	0.0	telos: unknown [not-ported] the engine treats ((_ tuple.select 1) t) as uninterpreted (not ported)
 regress0/datatypes/yoni-cyclic.smt2	solved	0.0	unsat
-regress0/decision/quant-ex1.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (forall ((x U)) (let ((_let_1 (f x))) (=> (and (= _let_1 a) (not (= _let_1 b))) p))) is not evaluated (with f=@table0, a=@u1_0, f=@table0, b=@u1_0, p=false)
+regress0/decision/quant-ex1.smt2	solved	0.0	sat
 regress0/deep-restart/dd.266.smt2	solved	0.0	sat
 regress0/deep-restart/dd.issue4735.smt2	solved	0.0	sat
 regress0/deep-restart/dd.wrong-sat-020322.smt2	unsupported/operator	0.0	telos: the term uses an operator telos does not support yet: (seq.nth s 0): (distinct s (str.update s 0 (seq.unit (seq.nth s 0))))
-regress0/define-fun-model.smt2	unsupported/parse	0.0	Error: failed to parse command (assume @s4 (= f f))
+regress0/define-fun-model.smt2	solved	0.0	sat
 regress0/difficulty-model-ex.smt2	solved	0.1	unsat
 regress0/difficulty-simple.smt2	solved	0.0	sat
 regress0/dump-unsat-core-full.smt2	solved	0.0	unsat
@@ -214,17 +214,17 @@ regress0/models-print-2.smt2	solved	0.0	sat
 regress0/named-expr-use.smt2	solved	0.0	unsat
 regress0/nl/all-logic.smt2	solved	0.0	unsat
 regress0/nl/coeff-sat.smt2	solved	0.0	sat
-regress0/nl/combined-uf.smt2	solved	0.1	unsat
+regress0/nl/combined-uf.smt2	solved	0.0	unsat
 regress0/nl/dd.polypaver-bench-exp-3d-chunk-0067.smt2	solved	0.0	unsat
 regress0/nl/dd.sin-cos-346-b-chunk-0210.smt2	solved	0.4	sat
 regress0/nl/dd.sin-cos-346-b-chunk-0210_unsat.smt2	cert-unsat/missing-proof	3.1	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_FACTOR
-regress0/nl/dd_aprove496_nl_ext.smt2	solved	0.3	sat
+regress0/nl/dd_aprove496_nl_ext.smt2	solved	0.4	sat
 regress0/nl/issue10990-subst-model.smt2	solved	0.0	sat
 regress0/nl/issue11080-uf-div-perf.smt2	unsupported/parse	0.0	Error: failed to parse command (assume @s4 (> x 3/1 (g x y) 2/1 (/ 4444/1 (g x y) 444/1 z x) (+ x 4z)))
-regress0/nl/issue11535-mod-mult-factor.smt2	cert-unsat/missing-proof	0.2	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_FACTOR
-regress0/nl/issue12239-subtype-elim.smt2	timeout	20.0	
+regress0/nl/issue11535-mod-mult-factor.smt2	cert-unsat/missing-proof	2.2	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_FACTOR
+regress0/nl/issue12239-subtype-elim.smt2	solved	0.0	unsat
 regress0/nl/issue12296.smt2	solved	0.0	sat
-regress0/nl/issue12408-nl-fm.smt2	intentional	1.3	telos: unknown [intentional] THEORY_ARITH declared the model incomplete (ARITH_NL), as cvc5 does
+regress0/nl/issue12408-nl-fm.smt2	cert-sat/not-evaluated	2.4	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (let ((_let_1 (m p 0))) (let ((_let_2 (to_real _let_1))) (let ((_let_3 (m 0 0))) (= 1 (mod (+ (* _let_3 _let_3) (ite (and ((_ divisible 3) (+ 1 _let_1)) (is_int (/ 0/1 (* _let_2 _let_2)))) 1 0)) 0))))) is not evaluated (wi
 regress0/nl/issue12499-learned-rewrite-mod-range.smt2	solved	0.0	sat
 regress0/nl/issue12926-nl-cov-zero-coeff.smt2	timeout	20.0	
 regress0/nl/issue12927-nl-cov-nullified.smt2	timeout	20.0	
@@ -237,7 +237,7 @@ regress0/nl/issue4007-rint-uf.smt2	solved	0.0	sat
 regress0/nl/issue5726-downpolys.smt2	solved	0.0	unsat
 regress0/nl/issue5726-sqfactor.smt2	solved	0.0	sat
 regress0/nl/issue5737-div00.smt2	solved	0.0	sat
-regress0/nl/issue5740-2-mod00.smt2	unsupported/parse	0.0	Error: failed to parse command (assume @s1 (exists ((e Int)) (distinct (d e) (= (ite (= e 0) (mod 0 e) 0) 0))))
+regress0/nl/issue5740-2-mod00.smt2	solved	0.0	sat
 regress0/nl/issue5740-mod00.smt2	solved	0.0	sat
 regress0/nl/issue6547-ran-model.smt2	timeout	20.0	
 regress0/nl/issue6619-ran-model.smt2	solved	0.0	sat
@@ -246,28 +246,28 @@ regress0/nl/issue8161-var-elim.smt2	solved	0.0	sat
 regress0/nl/issue8226-ran-refinement.smt2	timeout	20.0	
 regress0/nl/issue8414-ran-rational.smt2	solved	0.1	sat
 regress0/nl/issue8638-cov-resultants.smt2	timeout	20.0	
-regress0/nl/issue8691-3-msum-subtypes.smt2	timeout	20.0	
+regress0/nl/issue8691-3-msum-subtypes.smt2	solved	0.1	sat
 regress0/nl/issue8691-msum-subtypes.smt2	solved	0.0	sat
 regress0/nl/issue8692-idem-flatten.smt2	solved	0.0	sat
 regress0/nl/issue8712-div-toreal-rew.smt2	solved	0.0	sat
-regress0/nl/issue8744-int.smt2	intentional	0.0	telos: unknown [intentional] THEORY_ARITH declared the model incomplete (ARITH_NL), as cvc5 does
+regress0/nl/issue8744-int.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (forall ((a Int)) (= (< v r) (= (= 0/1 (/ (to_real r) (to_real v))) (distinct x (> (- r) 1))))) is not evaluated (with v=-4, r=-2, r=-2, v=-4, x=true, r=-2)
 regress0/nl/issue8744-real-cov.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (forall ((a Real)) (= (< v r) (= (= 0/1 (/ r v)) (distinct x (> (- r) 1/1))))) is not evaluated (with v=-3, r=-3/2, r=-3/2, v=-3, x=true, r=-3/2)
 regress0/nl/issue8744-real.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (forall ((a Real)) (= (< v r) (= (= 0/1 (/ r v)) (distinct x (> (- r) 1/1))))) is not evaluated (with v=-3, r=-3/2, r=-3/2, v=-3, x=true, r=-3/2)
 regress0/nl/issue8934-lr-int-mod-range.smt2	solved	0.0	unsat
-regress0/nl/issue9420-mod-abs.smt2	unsupported/other	0.0	telos: unsupported: the logic AUFBVFPDTNIRA has theories outside safe mode
-regress0/nl/issue9661.smt2	intentional	0.1	telos: unknown [intentional] THEORY_ARITH declared the model incomplete (ARITH_NL), as cvc5 does
+regress0/nl/issue9420-mod-abs.smt2	cert-unsat/missing-proof	0.7	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_FACTOR
+regress0/nl/issue9661.smt2	cert-sat/not-evaluated	0.1	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (let ((_let_1 (* b b))) (= (+ 75/1 (- (- (- (- a) (* (ite (= (* a (- a (- (ite (= (* a a) 0/1) 0/1 -1/1)))) (- 75/1 (* c c))) (* a 0/1) _let_1) (to_real (- (to_int _let_1))))) a))) 1/1)) is not evaluated (with a=-37, a=-37
 regress0/nl/lazard-spurious-root.smt2	timeout	20.0	
 regress0/nl/magnitude-wrong-1020-m.smt2	unsupported/operator	0.0	telos: the term uses an operator telos does not support yet: <unprintable>: (let ((?v_0 (+ x0 (* x2 x3))) (?v_2 (* x2 x4)) (?v_1 (+ x5 (* x6 x7))) (?v_4 (* x12 x3))) (let ((?v_3 (+ (+ x10 (* x11 x3)) ?v_4)) (?v_6 (* x11 x4)) (?v_7 (* x12 x4)) (?v_5 (+ (+ x10 (* x11 x7)) ?v_4))) (let ((?v_17 (and (an
 regress0/nl/mult-po.smt2	solved	0.0	sat
 regress0/nl/nia-wrong-tl.smt2	solved	0.0	sat
 regress0/nl/nlExtPurify-test.smt2	solved	1.3	sat
 regress0/nl/proj-issue-425.smt2	solved	0.0	sat
-regress0/nl/proj-issue-444-memout-eqelim.smt2	unsupported/other	0.0	telos: an assertion is not a formula in Logos's typing
+regress0/nl/proj-issue-444-memout-eqelim.smt2	solved	0.0	sat
 regress0/nl/proj-issue-451-ran-combination-2.smt2	solved	0.0	sat
-regress0/nl/proj-issue238-nra-div.smt2	solved	0.0	sat
-regress0/nl/proj-issue637-rr-type.smt2	solved	0.4	sat
-regress0/nl/proj-issue767-subtype-nl-abs.smt2	intentional	0.0	telos: unknown [intentional] THEORY_ARITH declared the model incomplete (ARITH_NL), as cvc5 does
-regress0/nl/proj-issue769-nl-compare-rcons.smt2	intentional	0.0	telos: unknown [intentional] THEORY_ARITH declared the model incomplete (ARITH_NL), as cvc5 does
+regress0/nl/proj-issue238-nra-div.smt2	solved	0.1	sat
+regress0/nl/proj-issue637-rr-type.smt2	solved	0.2	sat
+regress0/nl/proj-issue767-subtype-nl-abs.smt2	cert-unsat/missing-proof	0.1	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_EQUIV_ATOM, THEORY_ARITH ARITH_NL_COMPARISON
+regress0/nl/proj-issue769-nl-compare-rcons.smt2	cert-unsat/missing-proof	0.1	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_COMPARISON, THEORY_ARITH ARITH_EQUIV_ATOM
 regress0/nl/proj-issue779-arith-distro-nidem.smt2	solved	0.0	unsat
 regress0/nl/real-as-int.smt2	solved	0.0	sat
 regress0/nl/real-div-ufnra.smt2	solved	0.0	sat
@@ -282,7 +282,7 @@ regress0/options/safe-options2.smt2	solved	0.0	sat
 regress0/options/safe-options3.smt2	solved	0.0	sat
 regress0/options/safe-opts-warn.smt2	solved	0.0	sat
 regress0/parallel-let.smt2	solved	0.0	unsat
-regress0/parser/as.smt2	unsupported/parse	0.0	Error: failed to parse command (assume @s1 (= (as e0 I) (as e0 I)))
+regress0/parser/as.smt2	solved	0.0	sat
 regress0/parser/bang-lex.smt2	solved	0.0	unsat
 regress0/parser/constraint.smt2	solved	0.0	sat
 regress0/parser/datatype-tester-user-symbol.smt2	solved	0.0	sat
@@ -294,9 +294,9 @@ regress0/parser/fresh-declarations.smt2	solved	0.0	sat
 regress0/parser/get-model-after-declare.smt2	solved	0.0	sat
 regress0/parser/get-model-sort-constructor.smt2	solved	0.0	sat
 regress0/parser/issue11763-quoted-dt-cons.smt2	solved	0.0	sat
-regress0/parser/issue13073-overloaded-true-as.smt2	unsupported/parse	0.0	Error: failed to parse command (assume @s2 (> (as true Int) 0))
-regress0/parser/issue6908-get-value-uc.smt2	unsupported/parse	0.0	Error: failed to parse command (assume @s2 (= (f @Foo_0) (f @Foo_0)))
-regress0/parser/issue7274.smt2	unsupported/parse	0.0	Error: failed to parse command (assume @s3 (= ((as f Int) x) (g1 x)))
+regress0/parser/issue13073-overloaded-true-as.smt2	unsupported/other	0.0	telos: an assertion is not a formula in Logos's typing
+regress0/parser/issue6908-get-value-uc.smt2	solved	0.0	sat
+regress0/parser/issue7274.smt2	solved	0.0	sat
 regress0/parser/issue9350-ishell-scope-reset.smt2	solved	0.0	unsat
 regress0/parser/issue9568-dt-multi-line.smt2	solved	0.0	sat
 regress0/parser/issue9663-2.smt2	solved	0.0	unsat
@@ -304,8 +304,8 @@ regress0/parser/keyword-one-char.smt2	solved	0.0	sat
 regress0/parser/legacy-datatype-tester-lenient.smt2	solved	0.0	unsat
 regress0/parser/legacy-datatype-tester-strict.smt2	solved	0.0	sat
 regress0/parser/legacy-datatype-tester.smt2	solved	0.0	unsat
-regress0/parser/named-attr.smt2	unsupported/parse	0.0	Error: failed to parse command (define f () (! x :named foo))
-regress0/parser/non-std-char.smt2	unsupported/other	0.0	telos: unsupported: the logic ABVFP has theories outside safe mode
+regress0/parser/named-attr.smt2	solved	0.0	sat
+regress0/parser/non-std-char.smt2	solved	0.0	sat
 regress0/parser/non-strict-real-vs-int.smt2	solved	0.0	sat
 regress0/parser/quoted-define-fun.smt2	solved	0.0	sat
 regress0/parser/rational-tok.smt2	solved	0.0	sat
@@ -318,8 +318,8 @@ regress0/parser/strict-parsing-mixed-arith-3b.smt2	solved	0.0	sat
 regress0/parser/strings20.smt2	solved	0.0	sat
 regress0/parser/strings25.smt2	solved	0.0	sat
 regress0/parser/term-sort-overload.smt2	solved	0.0	sat
-regress0/parser/use-name-in-same-command-minimal.smt2	unsupported/parse	0.0	Error: failed to parse command (assume @s1 (= a n))
-regress0/parser/use-name-in-same-command.smt2	unsupported/parse	0.0	Error: failed to parse command (define p_0 () (not (! (<= fmt0 arg1) :named p_1)))
+regress0/parser/use-name-in-same-command-minimal.smt2	solved	0.0	sat
+regress0/parser/use-name-in-same-command.smt2	solved	0.0	unsat
 regress0/parser/version2.7.smt2	solved	0.0	sat
 regress0/preprocess/issue10148.smt2	solved	0.0	unsat
 regress0/preprocess/issue5943-non-clausal-simp.smt2	solved	0.0	unsat
@@ -344,7 +344,7 @@ regress0/preprocess/proj-issue305-circuit-prop-ite-d.smt2	solved	0.0	sat
 regress0/preprocess/proj-issue309-circuit-prop-ite.smt2	solved	0.0	sat
 regress0/preprocess/proj-issue332-circuit-prop-xor.smt2	solved	0.0	sat
 regress0/preprocess/proj-issue684.smt2	solved	0.0	unsat
-regress0/preprocess/proj-issue749-ensureRew.smt2	unsupported/other	0.0	telos: unsupported: the logic QF_ABVFFLIA has theories outside safe mode
+regress0/preprocess/proj-issue749-ensureRew.smt2	solved	0.0	sat
 regress0/preprocess/real-as-int-unk.smt2	solved	0.0	sat
 regress0/print_define_fun_internal.smt2	solved	0.0	sat (no answer to compare with)
 regress0/print_lambda.cvc.smt2	solved	0.0	sat
@@ -367,7 +367,7 @@ regress0/printer/print_sat_lemmas.smt2	solved	0.0	unsat
 regress0/printer/print_subs.smt2	solved	0.0	sat
 regress0/printer/print_trusted_proof_steps.smt2	solved	0.0	unsat
 regress0/printer/print_unsat_core.smt2	solved	0.0	unsat
-regress0/printer/print_unsat_core_lemmas.smt2	unsupported/command	0.0	telos: unsupported command: (get-unsat-core-lemmas)
+regress0/printer/print_unsat_core_lemmas.smt2	solved	0.0	unsat
 regress0/printer/unsat-core-dagify.smt2	solved	0.0	unsat
 regress0/proj-issue750-real-to-int-safe.smt2	solved	0.0	sat
 regress0/proofs/RF-11-aci-norm-ndet.smt2	solved	0.0	unsat
@@ -418,16 +418,16 @@ regress0/proofs/from_code_oob_eval.smt2	solved	0.0	unsat
 regress0/proofs/indexof-eval-rw_155.smt2	solved	0.0	unsat
 regress0/proofs/issue10278-pf-clone.smt2	solved	0.0	unsat
 regress0/proofs/issue11750.smt2	solved	0.0	unsat
-regress0/proofs/issue12240-cyclic-proof.smt2	solved	2.2	sat
+regress0/proofs/issue12240-cyclic-proof.smt2	solved	1.7	sat
 regress0/proofs/issue12254-pf-arith-cm.smt2	solved	0.0	sat
 regress0/proofs/issue12255-cyclic-arith-rcons.smt2	solved	0.0	sat
-regress0/proofs/issue12355-cm-mixed-arith.smt2	intentional	0.0	telos: unknown [intentional] THEORY_ARITH declared the model incomplete (ARITH_NL), as cvc5 does
+regress0/proofs/issue12355-cm-mixed-arith.smt2	cert-unsat/missing-proof	0.1	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_COMPARISON
 regress0/proofs/issue12631-check-proofs-arith.smt2	solved	0.1	sat
 regress0/proofs/issue12632-datatypes-check-proofs.smt2	solved	0.0	unsat
 regress0/proofs/issue12670-dt-ite-check-proofs.smt2	solved	0.1	unsat
 regress0/proofs/issue12683-check-proofs-arith-mixed.smt2	unsupported/operator	0.0	telos: the term uses an operator telos does not support yet: <unprintable>: (forall ((x Int) (y Int) (a Real) (z Int)) (or (> 0.0 (* (/ x y) (/ (* y 2/1) 0.0))) (< 0.0 (/ a 2/1 y (/ (* z z) (to_real x))))))
-regress0/proofs/issue12697-check-proofs-arith.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (= 0 (- (ite (d 6 3) 3 6) (to_int (ite (d 0 0) 0/1 1/1)))) is not evaluated (with d=@table1, d=@table1)
-regress0/proofs/issue12708-check-proofs-arith-cm.smt2	cert-sat/model-false	0.0	telos: unknown [cert-sat/model-false] the model does not satisfy the input: (not (f (to_real p))) is false (with f=@table0, p=0)
+regress0/proofs/issue12697-check-proofs-arith.smt2	solved	0.0	unsat
+regress0/proofs/issue12708-check-proofs-arith-cm.smt2	solved	0.0	unsat
 regress0/proofs/issue12709-open-sat-proof.smt2	solved	0.0	unsat
 regress0/proofs/issue12942-cpc-alpha-eq.smt2	cert-unsat/missing-proof	0.0	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_QUANTIFIERS QUANTIFIERS_REDUCE_ALPHA_EQ
 regress0/proofs/issue13068-proof-log-lemma-order.smt2	solved	0.0	unsat
@@ -447,7 +447,7 @@ regress0/proofs/macro-eq-const-eq.smt2	solved	0.0	unsat
 regress0/proofs/macro-quant-prenex-simple.smt2	solved	0.0	unsat
 regress0/proofs/mod-total-256.smt2	solved	0.0	unsat
 regress0/proofs/mod-total-mult.smt2	solved	0.0	unsat
-regress0/proofs/no-proof-uc.smt2	unsupported/command	0.0	telos: unsupported command: (get-proof :sat)
+regress0/proofs/no-proof-uc.smt2	solved	0.0	unsat
 regress0/proofs/nomerge-alethe-pf.smt2	solved	0.0	unsat
 regress0/proofs/open-pf-datatypes.smt2	solved	0.1	unsat
 regress0/proofs/other-optResRecons-corner-case.smt2	solved	0.0	unsat
@@ -460,13 +460,13 @@ regress0/proofs/proj-issue771-brc-dup.smt2	solved	0.1	unsat
 regress0/proofs/proj-issue773-nnf-double-neg.smt2	solved	0.0	unsat
 regress0/proofs/proj-issue774-mult-sign.smt2	solved	0.0	unsat
 regress0/proofs/proj-issue775-mult-sign.smt2	solved	0.0	unsat
-regress0/proofs/proj-issue777-open-eqproof.smt2	solved	0.7	unsat
+regress0/proofs/proj-issue777-open-eqproof.smt2	solved	0.6	unsat
 regress0/proofs/proj-issue777-open-sat-proof.smt2	solved	0.0	unsat
 regress0/proofs/proj-issue778-subtype-div.smt2	solved	0.0	unsat
 regress0/proofs/proj-issue781-cyclic-pppg-2.smt2	solved	0.0	unsat
 regress0/proofs/proj-issue781-cyclic-pppg.smt2	solved	0.0	unsat
 regress0/proofs/proj-issue784-benchmark2.smt2	timeout	20.0	
-regress0/proofs/proof-components.smt2	unsupported/command	0.0	telos: unsupported command: (get-proof :raw_preprocess)
+regress0/proofs/proof-components.smt2	solved	0.0	unsat
 regress0/proofs/qgu-fuzz-1-bool-sat.smt2	solved	0.0	unsat
 regress0/proofs/qgu-fuzz-2-bool-chainres-checking.smt2	solved	0.0	unsat
 regress0/proofs/qgu-fuzz-3-chainres-checking.smt2	solved	0.0	unsat
@@ -524,10 +524,10 @@ regress0/quantifiers/inst-when-last-call-delay.smt2	solved	0.0	unsat
 regress0/quantifiers/is-int.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress0/quantifiers/issue10067-cegqi-inf-int.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress0/quantifiers/issue10104-gcd-exists-2.smt2	solved	0.0	unsat
-regress0/quantifiers/issue10104-gcd-exists.smt2	solved	0.0	unsat
+regress0/quantifiers/issue10104-gcd-exists.smt2	solved	0.1	unsat
 regress0/quantifiers/issue10675-prenex-none.smt2	solved	0.3	unsat
-regress0/quantifiers/issue11066-fresh-binders-err.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (exists ((x Real)) (and (<= 0/1 x) (exists ((x Real)) (forall ((v Real)) (> 0/1 x))))) is not evaluated (with )
-regress0/quantifiers/issue11066-fresh-binders.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (exists ((x Real)) (and (<= 0/1 x) (exists ((x Real)) (forall ((v Real)) (> 0/1 x))))) is not evaluated (with )
+regress0/quantifiers/issue11066-fresh-binders-err.smt2	solved	0.0	unsat
+regress0/quantifiers/issue11066-fresh-binders.smt2	solved	0.0	unsat
 regress0/quantifiers/issue11751-prenex-norm.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress0/quantifiers/issue11968-rd-typed.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress0/quantifiers/issue12252-var-elim-shadow-min.smt2	intentional	0.0	telos: unknown [intentional] THEORY_QUANTIFIERS declared the model incomplete (QUANTIFIERS), as cvc5 does
@@ -562,8 +562,8 @@ regress0/quantifiers/miniscope-ite.smt2	solved	0.0	unsat
 regress0/quantifiers/mix-complete-strat.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress0/quantifiers/mix-match.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress0/quantifiers/mix-simp.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
-regress0/quantifiers/nested-delta.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (forall ((x Real)) (or (exists ((y Real)) (and (< y 0/1) (< y x))) (<= x 0/1))) is not evaluated (with )
-regress0/quantifiers/nested-inf.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (forall ((x Real)) (exists ((y Real)) (> y x))) is not evaluated (with )
+regress0/quantifiers/nested-delta.smt2	solved	0.0	sat
+regress0/quantifiers/nested-inf.smt2	solved	0.0	sat
 regress0/quantifiers/nl-sqrt2-q.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress0/quantifiers/partial-trigger.smt2	solved	0.0	unsat
 regress0/quantifiers/pre-skolem-pattern.smt2	solved	0.0	unsat
@@ -671,14 +671,14 @@ regress0/sets/eqtest.smt2	solved	0.0	unsat
 regress0/sets/error1.smt2	solved	0.0	sat
 regress0/sets/error2.smt2	solved	0.0	unsat
 regress0/sets/eval-test.smt2	solved	0.0	unsat
-regress0/sets/insert.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (= X (set.insert 1 (set.insert 2 (set.singleton 3)))) is not evaluated (with X=…)
+regress0/sets/insert.smt2	solved	0.0	sat
 regress0/sets/int-real-univ-unsat.smt2	unsupported/parse	0.0	Error: failed to parse command (assume @s2 (= (as set.universe (Set Real)) (as set.universe (Set Real))))
 regress0/sets/int-real-univ.smt2	unsupported/parse	0.0	Error: failed to parse command (assume @s2 (= (as set.universe (Set Real)) (as set.universe (Set Real))))
-regress0/sets/issue13092-model-relevant-rep.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (set.subset (roleAncUsers role) (userAncUsers principal)) is not evaluated (with roleAncUsers=@table2, role=@u1_3, userAncUsers=@table1, principal=@u2_9)
+regress0/sets/issue13092-model-relevant-rep.smt2	solved	0.0	sat
 regress0/sets/jan24/deepmeas0.hs.fqout.cvc4.47.smt2	solved	0.0	unsat
 regress0/sets/jan24/deepmeas0.hs.fqout.small.smt2	solved	0.0	unsat
 regress0/sets/jan27/ListConcat.hs.fqout.177minimized.smt2	solved	0.0	unsat
-regress0/sets/jan27/ListConcat.hs.fqout.cvc4.177.smt2	solved	0.0	unsat
+regress0/sets/jan27/ListConcat.hs.fqout.cvc4.177.smt2	solved	0.1	unsat
 regress0/sets/jan28/TalkingAboutSets.hs.fqout.3577minimized.smt2	solved	0.0	sat
 regress0/sets/jan30/UniqueZipper.hs.fqout.minimized10.smt2	solved	0.0	unsat
 regress0/sets/jan30/UniqueZipper.hs.fqout.minimized1832.smt2	solved	0.0	unsat
@@ -687,7 +687,7 @@ regress0/sets/mar2014/small.smt2	solved	0.0	unsat
 regress0/sets/mar2014/smaller.smt2	solved	0.0	sat
 regress0/sets/proj-issue177.smt2	solved	0.0	sat
 regress0/sets/proj-issue720.smt2	not-ported	0.0	telos: unknown [not-ported] the engine treats (set.choose (set.union (set.singleton _x13) (set.singleton _x24))) as uninterpreted (not ported)
-regress0/sets/rec_copy_loop_check_heap_access_43_4.smt2	unsupported/parse	0.0	Error: failed to parse command (declare-fun lseg_struct$0 (SetLoc FldLoc Loc Loc) Bool)
+regress0/sets/rec_copy_loop_check_heap_access_43_4.smt2	solved	0.0	unsat
 regress0/sets/set-eval-dup.smt2	solved	0.0	unsat
 regress0/sets/set_is_empty.smt2	solved	0.0	unsat
 regress0/sets/setel-eq.smt2	solved	0.0	unsat
@@ -713,7 +713,7 @@ regress0/simple-uf.smt2	solved	0.0	unsat
 regress0/smallcnf.cvc.smt2	solved	0.0	sat
 regress0/smt2output.smt2	solved	0.0	sat
 regress0/solver/issue8854-get-model-after-unknown.smt2	timeout	20.0	
-regress0/strings/652-substr-len-norm.smt2	solved	0.1	unsat
+regress0/strings/652-substr-len-norm.smt2	solved	0.0	unsat
 regress0/strings/bug001.smt2	solved	0.0	sat
 regress0/strings/bug002.smt2	solved	0.0	sat
 regress0/strings/bug612.smt2	solved	0.0	unsat
@@ -734,7 +734,7 @@ regress0/strings/dd.instance12194.smt2	solved	0.0	unsat
 regress0/strings/dd.instance46612.smt2	solved	0.0	unsat
 regress0/strings/dd.instance51542.smt2	solved	0.0	unsat
 regress0/strings/dd.norn-benchmark-235.smt2	solved	0.0	unsat
-regress0/strings/dd.str-term-small-rw_1023.smt2	solved	0.1	unsat
+regress0/strings/dd.str-term-small-rw_1023.smt2	solved	0.2	unsat
 regress0/strings/dd_1302_str_rewrite.smt2	solved	0.0	unsat
 regress0/strings/dd_67_str_at_eval.smt2	solved	0.0	unsat
 regress0/strings/dd_a1d_static_rewrite.smt2	solved	0.0	unsat
@@ -744,12 +744,12 @@ regress0/strings/dd_issue6913-str-inf.smt2	solved	0.1	unsat
 regress0/strings/dd_norn_235_extf_d.smt2	cert-unsat/missing-proof	0.1	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: a propagation's explanation
 regress0/strings/dd_norn_675.smt2	solved	0.0	unsat
 regress0/strings/dd_rw_91.smt2	solved	0.1	unsat
-regress0/strings/dd_rw_984.smt2	timeout	20.0	
+regress0/strings/dd_rw_984.smt2	cert-unsat/missing-proof	16.5	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_DEQ_DISL_STRINGS_SPLIT, THEORY_STRINGS STRINGS_SSPLIT_CST, a propagation's explanation, THEORY_STRINGS STRINGS_EXTF_N
 regress0/strings/dd_slog_2087_ctn_split.smt2	solved	0.0	unsat
 regress0/strings/dd_slog_stranger_2020.smt2	solved	0.0	unsat
 regress0/strings/dd_str_term_208.smt2	solved	0.3	unsat
-regress0/strings/dd_str_term_529.smt2	cert-unsat/missing-proof	1.8	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_N_ENDPOINT_EQ, a propagation's explanation
-regress0/strings/delta-trust-subs.smt2	cert-unsat/missing-proof	14.5	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_SSPLIT_CST
+regress0/strings/dd_str_term_529.smt2	cert-unsat/missing-proof	1.9	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_N_ENDPOINT_EQ, a propagation's explanation
+regress0/strings/delta-trust-subs.smt2	cert-unsat/missing-proof	13.2	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_SSPLIT_CST
 regress0/strings/denghan-instance56567.smt2	solved	0.0	unsat
 regress0/strings/digit-mem-dsl-rew.smt2	solved	0.0	unsat
 regress0/strings/distinct-witness-id.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] (str.len x) is 999999999999999999999999: a string too long to write down
@@ -772,19 +772,19 @@ regress0/strings/indexof-prefix-concat.smt2	solved	0.0	unsat
 regress0/strings/indexof-sym-simp.smt2	solved	0.0	unsat
 regress0/strings/indexof_re-start-index.smt2	solved	0.0	unsat
 regress0/strings/indexof_re.smt2	solved	0.0	unsat
-regress0/strings/instance13131.smt2	solved	0.3	unsat
+regress0/strings/instance13131.smt2	solved	0.2	unsat
 regress0/strings/instance15449.smt2	solved	0.0	unsat
 regress0/strings/is_digit_simple.smt2	solved	0.0	sat
 regress0/strings/issue11164-double-purify.smt2	timeout	20.0	
 regress0/strings/issue11197-str-ipc.smt2	timeout	20.0	
 regress0/strings/issue1189.smt2	solved	0.0	unsat
-regress0/strings/issue11890-eec-model.smt2	solved	2.3	sat
-regress0/strings/issue12027-str-ae.smt2	cert-sat/not-evaluated	0.1	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (let ((_let_1 (str.++ t t))) (distinct 0 (str.indexof (str.++ r r) _let_1 (* (abs i) (str.len _let_1))))) is not evaluated (with r=…, r=…, t=…, t=…, i=1, t=…, t=…)
+regress0/strings/issue11890-eec-model.smt2	solved	2.2	sat
+regress0/strings/issue12027-str-ae.smt2	solved	0.1	sat
 regress0/strings/issue12241-aci.smt2	solved	0.0	unsat
 regress0/strings/issue12322-pf-eager-len-re.smt2	solved	0.0	unsat
 regress0/strings/issue12797-re-unfold-proof.smt2	timeout	20.0	
 regress0/strings/issue12863-re-inc-neg.smt2	solved	0.0	unsat
-regress0/strings/issue12905-arith-cm-alias.smt2	cert-sat/not-evaluated	0.5	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (exists ((s String) (t Int)) (and (= 1 (str.len (str.++ (str.substr s 0 1) (str.at s t)))) (not (str.suffixof (ite (str.in_re "/" (str.to_re s)) (str.substr s 0 x) (str.replace "/" s "")) s)))) is not evaluated (with x=0)
+regress0/strings/issue12905-arith-cm-alias.smt2	cert-sat/not-evaluated	0.4	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (exists ((s String) (t Int)) (and (= 1 (str.len (str.++ (str.substr s 0 1) (str.at s t)))) (not (str.suffixof (ite (str.in_re "/" (str.to_re s)) (str.substr s 0 x) (str.replace "/" s "")) s)))) is not evaluated (with x=0)
 regress0/strings/issue2958.smt2	solved	0.0	unsat
 regress0/strings/issue3440.smt2	solved	0.0	sat
 regress0/strings/issue3497.smt2	solved	0.0	sat
@@ -836,7 +836,7 @@ regress0/strings/more-eval-tests.smt2	solved	0.0	unsat
 regress0/strings/ncontrib-rewrites.smt2	solved	0.0	unsat
 regress0/strings/nctn-concat-eq.smt2	cert-unsat/missing-proof	0.0	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_F_NCTN (conflict)
 regress0/strings/nctn-concat.smt2	cert-unsat/missing-proof	0.1	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_F_NCTN (conflict)
-regress0/strings/norn-31.smt2	cert-unsat/missing-proof	2.9	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_EXTF_EQ_REW (conflict), THEORY_STRINGS STRINGS_SSPLIT_CST
+regress0/strings/norn-31.smt2	cert-unsat/missing-proof	3.2	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_EXTF_EQ_REW (conflict), THEORY_STRINGS STRINGS_SSPLIT_CST
 regress0/strings/norn-benchmark-489.smt2	solved	0.0	unsat
 regress0/strings/norn-simp-rew.smt2	solved	0.0	unsat
 regress0/strings/nterm-pc-zalig.smt2	solved	0.0	unsat
@@ -849,7 +849,7 @@ regress0/strings/prefix-suffix-eval.smt2	solved	0.0	unsat
 regress0/strings/proj-issue37-re-loop-perf.smt2	timeout	20.0	
 regress0/strings/proj-issue409-re-loop-none.smt2	solved	0.0	unsat
 regress0/strings/proj-issue768-nctn-pf-rcons.smt2	solved	0.0	unsat
-regress0/strings/proj-issue776-core-subs-pf-cyclic.smt2	solved	0.2	unsat
+regress0/strings/proj-issue776-core-subs-pf-cyclic.smt2	solved	0.3	unsat
 regress0/strings/proj-issue784-3.smt2	solved	0.1	unsat
 regress0/strings/quad-028-2-2-unsat.smt2	timeout	20.0	
 regress0/strings/quad-138-4-2-unsat.smt2	timeout	20.0	
@@ -894,10 +894,10 @@ regress0/strings/replace-find-base.smt2	solved	0.0	unsat
 regress0/strings/replace-prefix-concat.smt2	solved	0.0	unsat
 regress0/strings/replaceall-eval.smt2	solved	0.0	sat
 regress0/strings/rewrites-re-concat.smt2	solved	0.0	unsat
-regress0/strings/rewrites-v2.smt2	cert-unsat/missing-proof	3.3	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_SSPLIT_CST_PROP, THEORY_STRINGS STRINGS_SSPLIT_CST
+regress0/strings/rewrites-v2.smt2	cert-unsat/missing-proof	3.2	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_SSPLIT_CST_PROP, THEORY_STRINGS STRINGS_SSPLIT_CST
 regress0/strings/rw_508_suffixof.smt2	solved	0.0	unsat
-regress0/strings/rw_545.smt2	solved	0.1	unsat
-regress0/strings/rw_555.smt2	solved	0.1	unsat
+regress0/strings/rw_545.smt2	solved	0.2	unsat
+regress0/strings/rw_555.smt2	solved	0.0	unsat
 regress0/strings/rw_65.smt2	solved	0.0	unsat
 regress0/strings/sigma-star-mod-3.smt2	solved	0.0	unsat
 regress0/strings/simple-include-mem.smt2	solved	0.0	unsat
@@ -916,13 +916,13 @@ regress0/strings/str-pred-small-rw_593.smt2	solved	0.0	unsat
 regress0/strings/str-pred-small-rw_831.smt2	solved	0.0	unsat
 regress0/strings/str-repl-find-pre.smt2	solved	0.0	unsat
 regress0/strings/str-rev-simple.smt2	solved	0.0	sat
-regress0/strings/str-term-small-rw_1005.smt2	cert-unsat/missing-proof	16.1	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_DEQ_DISL_STRINGS_SPLIT, THEORY_STRINGS STRINGS_SSPLIT_CST, a propagation's explanation, THEORY_STRINGS STRINGS_EXTF_N
+regress0/strings/str-term-small-rw_1005.smt2	cert-unsat/missing-proof	15.5	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_DEQ_DISL_STRINGS_SPLIT, THEORY_STRINGS STRINGS_SSPLIT_CST, a propagation's explanation, THEORY_STRINGS STRINGS_EXTF_N
 regress0/strings/str-term-small-rw_593.smt2	solved	0.5	unsat
 regress0/strings/str003.smt2	solved	0.0	unsat
 regress0/strings/str004.smt2	solved	0.0	unsat
 regress0/strings/str005.smt2	solved	0.0	unsat
 regress0/strings/str_unsound_ext_rew_eq.smt2	solved	0.0	unsat
-regress0/strings/string-endpoint-rewrite-test.smt2	cert-unsat/missing-proof	0.7	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_SSPLIT_CST_PROP
+regress0/strings/string-endpoint-rewrite-test.smt2	cert-unsat/missing-proof	0.5	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_SSPLIT_CST_PROP
 regress0/strings/strings-charat.cvc.smt2	solved	0.0	unsat
 regress0/strings/strings-ext.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress0/strings/strings-native-simple.cvc.smt2	solved	0.0	sat
@@ -1011,31 +1011,31 @@ regress1/arith/arith-brab-test.smt2	unsupported/operator	0.0	telos: the term use
 regress1/arith/bug547.1.smt2	solved	0.0	sat
 regress1/arith/div.03.smt2	solved	0.0	unsat
 regress1/arith/div.06.smt2	solved	0.0	sat
-regress1/arith/div.08.smt2	cert-unsat/bad-justification	0.0	telos: unknown [cert-unsat/bad-justification] the justification (theory, assumptions [(= (@purify (ite (= n 0) (@int_div_by_zero (@purify (ite (= n 0) (@int_div_by_zero (@purify (ite (= n 0) (@int_div_by_zero n) (div_total n n)))) (div_total (@purify (ite (= n 0) (@int_div_by_zero n) (div_total n n)
-regress1/arith/issue3480.smt2	solved	0.3	unsat
+regress1/arith/div.08.smt2	solved	0.0	unsat
+regress1/arith/issue3480.smt2	solved	0.2	unsat
 regress1/arith/issue7252-arith-sanity.smt2	solved	0.0	sat
 regress1/arith/issue789.smt2	solved	0.0	sat
 regress1/arith/issue9126-nb-alloc.smt2	solved	0.0	sat
-regress1/arith/issue9427-cdiv-def.smt2	unsupported/other	0.0	telos: unsupported: the logic AUFBVFPDTNIRA has theories outside safe mode
+regress1/arith/issue9427-cdiv-def.smt2	cert-unsat/missing-proof	5.6	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_INFER_BOUNDS_NT
 regress1/arith/miplib3.cvc.smt2	solved	0.0	sat
-regress1/arith/mod.02.smt2	solved	0.1	unsat
+regress1/arith/mod.02.smt2	solved	0.0	unsat
 regress1/arith/mod.03.smt2	solved	0.0	sat
 regress1/arith/pbrewrites-test.smt2	solved	0.1	sat
-regress1/arith/problem__003.smt2	solved	1.2	sat
-regress1/bug296.smt2	cert-unsat/missing-proof	0.7	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: a propagation's explanation
-regress1/bug425.cvc.smt2	solved	3.0	sat
-regress1/bug507.smt2	solved	0.6	sat
-regress1/bv/bv_to_int_10084_forall.smt2	unsupported/other	0.0	telos: unsupported: the logic AUFBVFPDTNIRA has theories outside safe mode
+regress1/arith/problem__003.smt2	solved	0.9	sat
+regress1/bug296.smt2	cert-unsat/missing-proof	0.6	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: a propagation's explanation
+regress1/bug425.cvc.smt2	solved	1.9	sat
+regress1/bug507.smt2	solved	0.4	sat
+regress1/bv/bv_to_int_10084_forall.smt2	solved	0.0	unsat
 regress1/cores/issue5604.smt2	solved	0.1	unsat
-regress1/datatypes/acyclicity-sr-ground096.smt2	solved	0.4	unsat
+regress1/datatypes/acyclicity-sr-ground096.smt2	solved	0.3	unsat
 regress1/datatypes/dt-param-card4-unsat.smt2	solved	0.1	unsat
-regress1/datatypes/issue13155-cycle-pf.smt2	cert-unsat/missing-proof	0.2	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_QUANTIFIERS QUANTIFIERS_TDB_DEQ_CONG
-regress1/datatypes/issue8124-real-int-cg.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (not (set.member (ir (to_int (first_rr x)) (second_rr x)) e)) is not evaluated (with x=((rr -1/4) 0), x=((rr -1/4) 0), e=…)
-regress1/datatypes/manos-model.smt2	cert-unsat/missing-proof	2.4	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_CONF_SIMPLEX (conflict), a propagation's explanation
+regress1/datatypes/issue13155-cycle-pf.smt2	cert-unsat/missing-proof	0.1	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_QUANTIFIERS QUANTIFIERS_TDB_DEQ_CONG
+regress1/datatypes/issue8124-real-int-cg.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (not (set.member (ir (to_int (first_rr x)) (second_rr x)) e)) is not evaluated (with x=((rr -1) 0), x=((rr -1) 0), e=…)
+regress1/datatypes/manos-model.smt2	cert-unsat/missing-proof	2.2	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_CONF_SIMPLEX (conflict), a propagation's explanation
 regress1/datatypes/tuple_projection.smt2	unsupported/parse	0.0	Error: failed to parse command (assume @s6 (= u ((_ tuple.project 2 3) t)))
 regress1/decision/jh-test1.smt2	solved	0.0	sat
 regress1/decision/quant-Arrays_Q1-noinfer.smt2	solved	0.1	unsat
-regress1/fmf/ALG008-1.smt2	intentional	0.5	telos: unknown [intentional] THEORY_QUANTIFIERS declared the model incomplete (QUANTIFIERS), as cvc5 does
+regress1/fmf/ALG008-1.smt2	intentional	0.6	telos: unknown [intentional] THEORY_QUANTIFIERS declared the model incomplete (QUANTIFIERS), as cvc5 does
 regress1/fmf/PUZ001+1.smt2	intentional	0.0	telos: unknown [intentional] THEORY_QUANTIFIERS declared the model incomplete (QUANTIFIERS), as cvc5 does
 regress1/fmf/alg202+1.smt2	solved	0.0	unsat
 regress1/fmf/bound-int-alt.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
@@ -1045,7 +1045,7 @@ regress1/fmf/datatypes-ufinite-nested.smt2	not-ported	0.0	telos: unknown [not-po
 regress1/fmf/datatypes-ufinite.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress1/fmf/dd_nun-0208-to-nmc.smt2	unsupported/operator	0.0	telos: the term uses an operator telos does not support yet: (r (@var "x" @sort1)): (forall ((x r)) (and (exists ((a r)) (= (p a) (s (p x)))) (= (B (p x) (r x)) (ite ((_ is S) (p x)) (C (r x) (B (s (p x)) (r x))) N))))
 regress1/fmf/dt-proper-model.smt2	intentional	0.0	telos: unknown [intentional] THEORY_QUANTIFIERS declared the model incomplete (QUANTIFIERS), as cvc5 does
-regress1/fmf/fib-core.smt2	solved	4.5	unsat
+regress1/fmf/fib-core.smt2	solved	3.8	unsat
 regress1/fmf/fmf-bound-2dim.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress1/fmf/fmf-bound-int.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress1/fmf/fmf-strange-bounds.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
@@ -1060,7 +1060,7 @@ regress1/fmf/issue6690-re-enum.smt2	intentional	0.0	telos: unknown [intentional]
 regress1/fmf/issue8096-non-const-rep.smt2	solved	0.1	unsat
 regress1/fmf/lst-no-self-rev-exp.smt2	timeout	20.0	
 regress1/fmf/memory_model-R_cpp-dd.cvc.smt2	unsupported/parse	0.0	Error: failed to parse command (declare-datatypes ((|__cvc5_record_E_(Set ___cvc5_record_O_MOPERATION_T_TEAR_TYPE_R_ORDER_A_ATOM_B_SDBLOCK_TYPE_M_(Set BINT)_V_VALUE_TYPE_)_PO_(Relation ___cvc5_record_O_MOPERATION_T_TEAR_TYPE_R_ORDER_A_ATOM_B_SDBLOCK_TYPE_M_(Set BINT)_V_VALUE_TYPE_ ___cvc5_record_O_M
-regress1/fmf/nlp042+1.smt2	intentional	0.2	telos: unknown [intentional] THEORY_QUANTIFIERS declared the model incomplete (QUANTIFIERS), as cvc5 does
+regress1/fmf/nlp042+1.smt2	intentional	0.1	telos: unknown [intentional] THEORY_QUANTIFIERS declared the model incomplete (QUANTIFIERS), as cvc5 does
 regress1/fmf/nun-0208-to.smt2	timeout	20.0	
 regress1/fmf/sc-crash-052316.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress1/fmf/sort-inf-int-real.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
@@ -1069,30 +1069,30 @@ regress1/fmf/with-ind-104-core.smt2	timeout	20.0
 regress1/gensys_brn001.smt2	solved	0.2	sat
 regress1/get-learned-literals-types.smt2	solved	0.0	sat
 regress1/get-learned-literals.smt2	solved	0.0	sat
-regress1/hole6.cvc.smt2	solved	0.4	unsat
+regress1/hole6.cvc.smt2	solved	0.3	unsat
 regress1/issue11966-get-value-ss.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (= b (forall ((X1 Int)) (let ((_let_1 (_select_1 A X1))) (or (not (and (<= 0 X1) (< X1 4))) (and (<= 0 _let_1) (<= _let_1 3)))))) is not evaluated (with b=false, _select_1=@table1, A=@u2_4, _select_1=@table1, A=@u2_4)
 regress1/issue7902-abd-subsolver-uc.smt2	solved	0.0	sat
 regress1/issue7937-difficulty-irr.smt2	solved	0.0	sat
 regress1/issue9057-block-m-lit.smt2	solved	0.0	sat
-regress1/issue9544-difficulty-refcount.smt2	solved	0.2	unsat
-regress1/minimal_unsat_core.smt2	cert-unsat/bad-justification	0.0	telos: unknown [cert-unsat/bad-justification] the justification (theory, assumptions [(= (@int_div_by_zero (@int_div_by_zero 0)) (@int_div_by_zero (@int_div_by_zero (@int_div_by_zero 0)))), (not (= (@int_div_by_zero (@int_div_by_zero 0)) (@int_div_by_zero (@int_div_by_zero (@int_div_by_zero (@int_di
+regress1/issue9544-difficulty-refcount.smt2	solved	0.1	unsat
+regress1/minimal_unsat_core.smt2	solved	0.0	unsat
 regress1/nl/approx-sqrt-unsat.smt2	solved	0.0	unsat
 regress1/nl/approx-sqrt.smt2	timeout	20.0	
 regress1/nl/coeff-unsat-base.smt2	solved	0.0	unsat
 regress1/nl/coeff-unsat.smt2	solved	0.0	unsat
-regress1/nl/combine.smt2	solved	0.1	unsat
+regress1/nl/combine.smt2	solved	0.0	unsat
 regress1/nl/cov-coprime-basis.smt2	timeout	20.0	
-regress1/nl/disj-eval.smt2	solved	0.1	sat
+regress1/nl/disj-eval.smt2	solved	0.0	sat
 regress1/nl/dist-big.smt2	timeout	20.0	
 regress1/nl/div-mod-partial.smt2	solved	0.1	sat
-regress1/nl/ext-rew-aggr-test.smt2	solved	2.0	sat
+regress1/nl/ext-rew-aggr-test.smt2	solved	1.9	sat
 regress1/nl/factor_agg_s.smt2	solved	0.0	sat
 regress1/nl/iand-big-gran.smt2	solved	0.0	sat
 regress1/nl/issue10000.smt2	solved	0.0	sat
 regress1/nl/issue11386-1-nl-cov-cyclic.smt2	cert-sat/model-false	1.8	telos: unknown [cert-sat/model-false] the model does not satisfy the input: (or (= x2 (* (generated_0 false (generated_0 (=> (or (distinct x4 x2) (not true) (and false true) true (=> false false)) (distinct x2 x4)) (ite (= (ite false x6 x6) x5) (generated_0 (ite false false true) (ite true x4 x2) (i
 regress1/nl/issue11386-2-nl-cov-cyclic.smt2	cert-sat/model-false	0.1	telos: unknown [cert-sat/model-false] the model does not satisfy the input: (let ((_let_1 (e false 0/1 0/1))) (or (= x3 (* x (e false (e false x2 _let_1) (ite (= 0/1 x5) _let_1 0/1)))) x27)) is false (with x3=-5/4, x=1, e=@table2, e=@table2, x2=25/16, e=@table2, x5=-5/4, e=@table2, x27=false)
 regress1/nl/issue11386-3-nl-cov-cyclic.smt2	solved	0.0	sat
-regress1/nl/issue12376-nl-comp-pf.smt2	intentional	0.0	telos: unknown [intentional] THEORY_ARITH declared the model incomplete (ARITH_NL), as cvc5 does
+regress1/nl/issue12376-nl-comp-pf.smt2	cert-unsat/missing-proof	0.7	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_COMPARISON
 regress1/nl/issue3300-approx-sqrt-witness.smt2	timeout	20.0	
 regress1/nl/issue3441.smt2	solved	0.0	sat
 regress1/nl/issue3617.smt2	solved	0.0	sat
@@ -1100,73 +1100,73 @@ regress1/nl/issue3656.smt2	solved	0.0	sat
 regress1/nl/issue3803-nl-check-model.smt2	solved	0.0	sat
 regress1/nl/issue3955-ee-double-notify.smt2	solved	0.0	sat
 regress1/nl/issue4791-llr.smt2	timeout	20.0	
-regress1/nl/issue5662-nl-tc-min.smt2	cert-sat/model-false	0.1	telos: unknown [cert-sat/model-false] the model does not satisfy the input: (distinct a h) is false (with a=0, h=0)
-regress1/nl/issue5662-nl-tc.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (forall ((i Real)) (let ((_let_1 (>= 0/1 k))) (let ((_let_2 (* a e))) (xor (or (and (and (or (and (and (> 0/1 _let_2) (> _let_2 (* c e))) _let_1) (<= g 0/1)) (= (* b j) 2/1)) (> f k)) _let_1) _let_1)))) is not evaluated (w
-regress1/nl/issue8960-lr-to-real-model.smt2	intentional	0.0	telos: unknown [intentional] THEORY_ARITH declared the model incomplete (ARITH_NL), as cvc5 does
-regress1/nl/issue8963-to-real-model.smt2	intentional	7.3	telos: unknown [intentional] THEORY_ARITH declared the model incomplete (ARITH_NL), as cvc5 does
+regress1/nl/issue5662-nl-tc-min.smt2	solved	0.0	sat
+regress1/nl/issue5662-nl-tc.smt2	solved	0.0	sat
+regress1/nl/issue8960-lr-to-real-model.smt2	solved	0.1	sat
+regress1/nl/issue8963-to-real-model.smt2	timeout	20.0	
 regress1/nl/issue9054-ran-rewriter.smt2	timeout	20.0	
-regress1/nl/issue9164-2.smt2	solved	0.2	sat
+regress1/nl/issue9164-2.smt2	solved	0.1	sat
 regress1/nl/issue9164.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (forall ((a Real)) (= 0/1 (/ 0/1 0/1))) is not evaluated (with )
 regress1/nl/issue9167-ran-rewriter.smt2	timeout	20.0	
 regress1/nl/issue9183-1.smt2	solved	0.2	sat
 regress1/nl/issue9183-3.smt2	solved	0.1	sat
 regress1/nl/issue9183-4.smt2	solved	0.0	sat
-regress1/nl/issue9183-5.smt2	solved	0.1	sat
-regress1/nl/issue9420-ll.smt2	unsupported/other	0.0	telos: unsupported: the logic AUFBVFPDTNIRA has theories outside safe mode
-regress1/nl/issue9472-2-cmv.smt2	solved	3.3	sat
+regress1/nl/issue9183-5.smt2	solved	0.0	sat
+regress1/nl/issue9420-ll.smt2	cert-unsat/missing-proof	0.9	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_FACTOR
+regress1/nl/issue9472-2-cmv.smt2	solved	3.0	sat
 regress1/nl/issue9611-lrew.smt2	solved	0.0	sat
 regress1/nl/issue9621-lrew.smt2	solved	0.0	sat
-regress1/nl/issue9999.smt2	cert-sat/not-evaluated	7.2	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (= 1/1 (abs (* (- s4 s5) (- s5 (abs s5))))) is not evaluated (with s4=-5643574329441107673600087435141902991511699195896421191245783916938090082631988052287105234529273670898279021724197204136453728075084958672326682167477
-regress1/nl/learned-rewrite-int-mod-range.smt2	cert-unsat/missing-proof	0.6	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_FACTOR
+regress1/nl/issue9999.smt2	solved	8.0	sat
+regress1/nl/learned-rewrite-int-mod-range.smt2	cert-unsat/missing-proof	0.5	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_FACTOR
 regress1/nl/metitarski-1025.smt2	timeout	20.0	
 regress1/nl/metitarski_3_4_2e.smt2	timeout	20.0	
 regress1/nl/nl-eq-infer.smt2	cert-unsat/missing-proof	0.1	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_INFER_BOUNDS_NT
 regress1/nl/nl-ext-flatten-simp.smt2	solved	0.0	unsat
 regress1/nl/nl-help-unsat-quant.smt2	timeout	20.0	
 regress1/nl/nl-unk-quant.smt2	solved	0.0	unsat
-regress1/nl/nl_uf_lalt.smt2	cert-unsat/missing-proof	0.6	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_FACTOR
-regress1/nl/nra-cad-performance.smt2	solved	0.1	unsat
+regress1/nl/nl_uf_lalt.smt2	cert-unsat/missing-proof	0.4	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_FACTOR
+regress1/nl/nra-cad-performance.smt2	solved	0.0	unsat
 regress1/nl/ones.smt2	solved	0.1	unsat
-regress1/nl/pinto-model-core-ni.smt2	intentional	0.0	telos: unknown [intentional] THEORY_ARITH declared the model incomplete (ARITH_NL), as cvc5 does
-regress1/nl/poly-1025.smt2	solved	0.6	sat
+regress1/nl/pinto-model-core-ni.smt2	solved	0.1	sat
+regress1/nl/poly-1025.smt2	solved	0.4	sat
 regress1/nl/proj-issue215.smt2	solved	0.1	sat
-regress1/nl/proj-issue232.smt2	intentional	2.3	telos: unknown [intentional] THEORY_ARITH declared the model incomplete (ARITH_NL), as cvc5 does
-regress1/nl/proj-issue251.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (let ((_let_1 (* (abs i19) i13 (- i8 i0)))) (or (and (>= 0 0) (>= 0 _let_1) (>= _let_1 591)) _substvar_231_ v55)) is not evaluated (with i19=0, i13=-1, i8=-1, i0=-1, i19=0, i13=-1, i8=-1, i0=-1, _substvar_231_=true, v55=fa
+regress1/nl/proj-issue232.smt2	cert-sat/not-evaluated	5.1	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (< (* a (/ 1/1 (/ (/ (- 2/1) a) (- a (* a (to_real (mod (to_int a) (to_int (/ a (* a (to_real (div (to_int (/ -9/1 800/1)) (to_int (/ a a)))))))))))))) (- a)) is not evaluated (with a=32/17, a=32/17, a=32/17, a=32/17, a=32
+regress1/nl/proj-issue251.smt2	solved	0.0	sat
 regress1/nl/proj-issue253.smt2	solved	0.1	sat
 regress1/nl/proj-issue279.smt2	solved	0.1	sat
-regress1/nl/proj-issue280.smt2	solved	0.1	sat
+regress1/nl/proj-issue280.smt2	solved	0.0	sat
 regress1/nl/proj-issue282.smt2	solved	0.0	sat
 regress1/nl/proj-issue286.smt2	solved	0.0	sat
 regress1/nl/proj-issue290.smt2	timeout	20.0	
-regress1/nl/proj-issue292.smt2	solved	0.3	sat
+regress1/nl/proj-issue292.smt2	solved	0.2	sat
 regress1/nl/proj-issue294.smt2	solved	0.0	sat
 regress1/nl/proj-issue297.smt2	solved	0.0	sat
 regress1/nl/proj-issue302.smt2	solved	0.0	sat
 regress1/nl/quant-nl.smt2	timeout	20.0	
 regress1/nl/red-exp.smt2	solved	0.0	unsat
 regress1/nl/rewriting-sums.smt2	cert-unsat/missing-proof	0.1	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_INFER_BOUNDS_NT
-regress1/nl/shifting.smt2	timeout	20.0	
-regress1/nl/shifting2.smt2	timeout	20.0	
+regress1/nl/shifting.smt2	solved	0.0	sat
+regress1/nl/shifting2.smt2	cert-unsat/missing-proof	0.0	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_COMPARISON
 regress1/nl/simple-mono-unsat.smt2	solved	0.0	unsat
 regress1/nl/simple-mono.smt2	solved	0.1	unsat
 regress1/nl/solve-eq-small-qf-nra.smt2	timeout	20.0	
-regress1/nl/sqrt-problem-1.smt2	solved	0.3	unsat
-regress1/nl/zero-subset.smt2	solved	0.1	unsat
+regress1/nl/sqrt-problem-1.smt2	solved	0.2	unsat
+regress1/nl/zero-subset.smt2	solved	0.0	unsat
 regress1/non-fatal-errors.smt2	solved	0.0	sat
 regress1/proj-issue764-block-model.smt2	solved	0.0	sat
 regress1/proj-issue772-nlc-unk.smt2	timeout	20.0	
 regress1/proof00.smt2	solved	0.0	unsat
 regress1/proofs/add_two_base.smt2	solved	0.0	unsat
 regress1/proofs/alpha-eq-var-shadow-name-only.smt2	cert-unsat/missing-proof	0.0	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_QUANTIFIERS QUANTIFIERS_REDUCE_ALPHA_EQ
-regress1/proofs/alpha-eq-var-shadow-name-only2.smt2	solved	0.1	unsat
-regress1/proofs/alpha-eq-var-shadow.smt2	unsupported/parse	0.0	Error: failed to parse command (define a0 () (forall ((?v0 Real$)) (! (= (fun_app$ uu$ ?v0) zero$) :pattern ((fun_app$ uu$ ?v0)))))
+regress1/proofs/alpha-eq-var-shadow-name-only2.smt2	solved	0.0	unsat
+regress1/proofs/alpha-eq-var-shadow.smt2	cert-unsat/missing-proof	0.1	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_QUANTIFIERS QUANTIFIERS_REDUCE_ALPHA_EQ
 regress1/proofs/base-lfsc-treesize.smt2	timeout	20.0	
-regress1/proofs/dd.SEQ035_size5.smt2	solved	4.7	unsat
+regress1/proofs/dd.SEQ035_size5.smt2	solved	4.2	unsat
 regress1/proofs/dd.verisec_sendmail__tTflag_arr_one_loop_false-unreach-call_true-termination.i_7.smt2	cert-unsat/missing-proof	0.0	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_QUANTIFIERS QUANTIFIERS_REDUCE_ALPHA_EQ
-regress1/proofs/eq-engine-corner-case-constants-disequal.smt2	solved	1.0	sat
+regress1/proofs/eq-engine-corner-case-constants-disequal.smt2	solved	0.7	sat
 regress1/proofs/issue-dt-tester-conflict-cons-eq-clash.smt2	cert-unsat/missing-proof	0.0	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_BUILTIN EQ_CONSTANT_MERGE (conflict)
-regress1/proofs/issue-dt-tester-merge-conflict-neg-order.smt2	solved	4.4	unsat
-regress1/proofs/macro-res-exp-crowding-lit-inside-unit.smt2	solved	0.4	unsat
+regress1/proofs/issue-dt-tester-merge-conflict-neg-order.smt2	solved	4.2	unsat
+regress1/proofs/macro-res-exp-crowding-lit-inside-unit.smt2	solved	0.5	unsat
 regress1/proofs/macro-res-exp-singleton-after-elimCrowd.smt2	unsupported/operator	0.0	telos: the term uses an operator telos does not support yet: <unprintable>: (let ((?v_0 (array T_java.lang.Object)) (?v_1 (= EC_285.1_285.1 ecReturn)) (?v_2 (select1 elementCount_285.1_173.17 this)) (?v_3 (= ecReturn ecReturn))) (let ((?v_4 (=> ?v_3 (= (select1 vectorCount_287.1 this) (+ (select1 ve
 regress1/proofs/open-pf-tr-conjoin.smt2	solved	0.0	unsat
 regress1/proofs/qgu-fuzz-1-strings-pp.smt2	solved	0.0	unsat
@@ -1175,7 +1175,7 @@ regress1/proofs/sat-trivial-cycle.smt2	solved	0.0	unsat
 regress1/proofs/str-ovf-dd.smt2	solved	0.0	unsat
 regress1/quantifiers/006-cbqi-ite.smt2	not-ported	0.4	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress1/quantifiers/015-psyco-pp.smt2	not-ported	3.1	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
-regress1/quantifiers/AdditiveMethods_OwnedResults.Mz.smt2	solved	2.6	unsat
+regress1/quantifiers/AdditiveMethods_OwnedResults.Mz.smt2	solved	2.0	unsat
 regress1/quantifiers/Arrays_Q1-noinfer.smt2	solved	0.1	unsat
 regress1/quantifiers/RND-small.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress1/quantifiers/RNDPRE_4_1-dd-nqe.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
@@ -1184,7 +1184,7 @@ regress1/quantifiers/RND_4_16.smt2	solved	0.0	unsat
 regress1/quantifiers/array-unsat-simp3.smt2	intentional	0.0	telos: unknown [intentional] THEORY_QUANTIFIERS declared the model incomplete (QUANTIFIERS), as cvc5 does
 regress1/quantifiers/bi-artm-s.smt2	solved	0.0	unsat
 regress1/quantifiers/bignum_quant.smt2	solved	0.1	unsat
-regress1/quantifiers/bug822.smt2	solved	8.5	unsat
+regress1/quantifiers/bug822.smt2	solved	6.8	unsat
 regress1/quantifiers/burns13.smt2	solved	0.1	unsat
 regress1/quantifiers/burns4.smt2	solved	0.0	unsat
 regress1/quantifiers/cbqi-sdlx-fixpoint-3-dd.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
@@ -1195,7 +1195,7 @@ regress1/quantifiers/dd.bug812-ieval.smt2	not-ported	0.0	telos: unknown [not-por
 regress1/quantifiers/dd.prob_00691_024339__38669730.smt2	cert-unsat/missing-proof	0.0	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_QUANTIFIERS QUANTIFIERS_REDUCE_ALPHA_EQ
 regress1/quantifiers/dd2.prob_00691_024339__38669730.smt2	cert-unsat/missing-proof	0.0	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_QUANTIFIERS QUANTIFIERS_REDUCE_ALPHA_EQ
 regress1/quantifiers/dd_RNDPRE_4_28-subtype-elim.smt2	solved	0.0	unsat
-regress1/quantifiers/dd_full_xor-rcons-open.smt2	cert-unsat/bad-justification	0.4	telos: unknown [cert-unsat/bad-justification] the justification (theory, assumptions [(not (>= (+ C (* -1 j) (* -2 (@purify (ite (= (p (+ -1 k)) 0) (@mod_by_zero C) (mod_total C (p (+ -1 k)))))) (* 2 (@purify (ite (= (p (+ -1 k)) 0) (@mod_by_zero j) (mod_total j (p (+ -1 k))))))) 0)), (>= (+ C (* -1
+regress1/quantifiers/dd_full_xor-rcons-open.smt2	cert-unsat/missing-proof	0.5	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_FACTOR
 regress1/quantifiers/dd_ghc_macro_quant_prenex.smt2	solved	0.0	unsat
 regress1/quantifiers/ddatv-delta2.smt2	solved	0.1	unsat
 regress1/quantifiers/dt-tc-opt-small.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
@@ -1205,8 +1205,8 @@ regress1/quantifiers/example10714-core-no-miniscope-user.smt2	solved	1.3	unsat
 regress1/quantifiers/ext-ex-deq-trigger.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress1/quantifiers/f993-loss-easy.smt2	solved	0.0	unsat
 regress1/quantifiers/horn-simple.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
-regress1/quantifiers/inst-ground-term.smt2	unsupported/parse	0.0	Error: failed to parse command (define a0 () (forall ((?v0 A_set$)) (! (= (fun_app$ uu$ ?v0) (exists ((?v1 A$)) (and (= ?v0 (collect$ (eqv$ ?v1))) true))) :pattern ((fun_app$ uu$ ?v0)))))
-regress1/quantifiers/inst-max-level-segf.smt2	solved	0.8	unsat
+regress1/quantifiers/inst-ground-term.smt2	intentional	0.0	telos: unknown [intentional] THEORY_QUANTIFIERS declared the model incomplete (QUANTIFIERS), as cvc5 does
+regress1/quantifiers/inst-max-level-segf.smt2	solved	0.6	unsat
 regress1/quantifiers/inst-prop-simp.smt2	solved	0.0	unsat
 regress1/quantifiers/isaplanner-goal20.smt2	timeout	20.0	
 regress1/quantifiers/issue10373-cegqi-abs.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
@@ -1214,11 +1214,11 @@ regress1/quantifiers/issue12323-quant-rewrite-body-min.smt2	not-ported	0.0	telos
 regress1/quantifiers/issue12323-quant-rewrite-body.smt2	solved	0.0	unsat
 regress1/quantifiers/issue2970-string-var-elim.smt2	intentional	0.0	telos: unknown [intentional] THEORY_QUANTIFIERS declared the model incomplete (QUANTIFIERS), as cvc5 does
 regress1/quantifiers/issue3250-syg-inf-q.smt2	solved	0.0	unsat
-regress1/quantifiers/issue3628.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (not (exists ((g Real)) (= (< 0/1 (* b d)) (distinct (* (to_real 1) a c) 1/1)))) is not evaluated (with b=-5/4, d=-5/4, a=-4/5, c=-5/4)
+regress1/quantifiers/issue3628.smt2	solved	0.0	sat
 regress1/quantifiers/issue3664.smt2	solved	0.0	sat
 regress1/quantifiers/issue3765-quant-dd.smt2	intentional	0.0	telos: unknown [intentional] THEORY_QUANTIFIERS declared the model incomplete (QUANTIFIERS), as cvc5 does
 regress1/quantifiers/issue4412-cegqi-type.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
-regress1/quantifiers/issue4420-order-sensitive.smt2	unsupported/other	0.0	telos: unsupported: the logic AUFBVFPDTNIRA has theories outside safe mode
+regress1/quantifiers/issue4420-order-sensitive.smt2	timeout	20.0	
 regress1/quantifiers/issue4620-erq-witness-unsound.smt2	solved	0.0	sat
 regress1/quantifiers/issue4685-wrewrite.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress1/quantifiers/issue5288-vts-real-int.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
@@ -1238,7 +1238,7 @@ regress1/quantifiers/issue8497-syqi-str-fmf.smt2	solved	0.1	sat
 regress1/quantifiers/issue8520-cegqi-nl-cov.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress1/quantifiers/issue8572-sygus-inst-ic-purify.smt2	intentional	0.0	telos: unknown [intentional] THEORY_QUANTIFIERS declared the model incomplete (QUANTIFIERS), as cvc5 does
 regress1/quantifiers/issue8881-rd-types.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
-regress1/quantifiers/issue9427-cdiv-axiom.smt2	unsupported/other	0.0	telos: unsupported: the logic AUFBVFPDTNIRA has theories outside safe mode
+regress1/quantifiers/issue9427-cdiv-axiom.smt2	cert-unsat/missing-proof	4.6	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_NL_INFER_BOUNDS_NT
 regress1/quantifiers/issue993.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress1/quantifiers/issue9949.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress1/quantifiers/issue9989-syqi-nwf.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
@@ -1251,31 +1251,31 @@ regress1/quantifiers/min-ppgt-em-incomplete2.smt2	solved	0.0	unsat
 regress1/quantifiers/mix-coeff.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress1/quantifiers/nl-pow-trick.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress1/quantifiers/nra-interleave-inst.smt2	timeout	20.0	
-regress1/quantifiers/opisavailable-12.smt2	solved	0.4	unsat
+regress1/quantifiers/opisavailable-12.smt2	solved	0.3	unsat
 regress1/quantifiers/parametric-lists.smt2	solved	0.1	unsat
 regress1/quantifiers/prenex-scholl-smt08_RNDPRE_RNDPRE_4_6.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress1/quantifiers/proj-issue214-nia-div-zero-ite.smt2	intentional	0.0	telos: unknown [intentional] THEORY_QUANTIFIERS declared the model incomplete (QUANTIFIERS), as cvc5 does
-regress1/quantifiers/proj-issue295.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (forall ((x Int)) (not (= (str.++ "V" "s") (str.++ "V" (str.substr (str.substr "VZ" 0 x) 0 1))))) is not evaluated (with )
+regress1/quantifiers/proj-issue295.smt2	solved	0.0	sat
 regress1/quantifiers/proj-issue597.smt2	not-ported	0.0	telos: unknown [not-ported] the engine treats (set.choose (set.minus x (set.singleton (* -1/1 x5)))) as uninterpreted (not ported)
-regress1/quantifiers/psyco-196.smt2	not-ported	3.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
-regress1/quantifiers/qcft-javafe.filespace.TreeWalker.006.smt2	solved	4.8	unsat
+regress1/quantifiers/psyco-196.smt2	not-ported	2.8	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
+regress1/quantifiers/qcft-javafe.filespace.TreeWalker.006.smt2	solved	4.1	unsat
 regress1/quantifiers/qcft-smtlib3dbc51.smt2	timeout	20.0	
 regress1/quantifiers/qid-debug-inst.smt2	solved	0.0	unsat
 regress1/quantifiers/qid.smt2	solved	0.0	unsat
 regress1/quantifiers/quant-wf-int-ind.smt2	timeout	20.0	
-regress1/quantifiers/rel-trigger-unusable.smt2	solved	2.7	unsat
+regress1/quantifiers/rel-trigger-unusable.smt2	solved	1.9	unsat
 regress1/quantifiers/repair-const-nterm.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
-regress1/quantifiers/rew-to-0211-dd.smt2	solved	2.6	unsat
-regress1/quantifiers/ricart-agrawala6.smt2	cert-unsat/missing-proof	0.6	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_QUANTIFIERS QUANTIFIERS_REDUCE_ALPHA_EQ
+regress1/quantifiers/rew-to-0211-dd.smt2	solved	1.7	unsat
+regress1/quantifiers/ricart-agrawala6.smt2	cert-unsat/missing-proof	0.5	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_QUANTIFIERS QUANTIFIERS_REDUCE_ALPHA_EQ
 regress1/quantifiers/seq-solved-enum.smt2	unsupported/operator	0.0	telos: the term uses an operator telos does not support yet: (seq.nth s (@var "i" Int)): (forall ((i Int) (j Int)) (=> (and (<= 0 i) (<= i j) (< j (seq.len s))) (<= (seq.nth s i) (seq.nth s j))))
 regress1/quantifiers/seq-unsolved-ematch.smt2	unsupported/operator	0.0	telos: the term uses an operator telos does not support yet: (seq.nth s (@var "i" Int)): (forall ((i Int)) (=> (and (<= 0 i) (< i (seq.len s))) (= (seq.nth s i) 0)))
 regress1/quantifiers/seqa-unsat-unknown-110921.smt2	unsupported/operator	0.0	telos: the term uses an operator telos does not support yet: (seq.unit _$): (not (=> (= (|#| $) (p (S (o |1|) 1))) (= i (M (l i) (p i) (seq.unit _$))) (= $ ($Mc (l $) (p $) ($1 (v i)))) (forall ((h T)) (forall ((v T@$)) (= 0 (S (|#| (S (s e) h)) Tc)))) (= _$ (seq.nth (c (p (S (o |1|) 1))) (- 1 (seq.
 regress1/quantifiers/set8.smt2	solved	0.1	unsat
 regress1/quantifiers/seu169+1.smt2	timeout	20.0	
-regress1/quantifiers/smtlib384a03.smt2	solved	1.8	unsat
+regress1/quantifiers/smtlib384a03.smt2	solved	1.9	unsat
 regress1/quantifiers/smtlib46f14a.smt2	solved	1.7	unsat
 regress1/quantifiers/smtlibe99bbe.smt2	timeout	20.0	
-regress1/quantifiers/smtlibf957ea.smt2	solved	0.6	unsat
+regress1/quantifiers/smtlibf957ea.smt2	solved	0.7	unsat
 regress1/quantifiers/sygus-infer-nested.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress1/quantifiers/sygus-inst-nia-psyco-060.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress1/quantifiers/t3_rw1063_cg_nl.smt2	timeout	20.0	
@@ -1289,29 +1289,29 @@ regress1/seq/issue8148-2-const-mv.smt2	unsupported/operator	0.0	telos: the term 
 regress1/seq/issue8936-nth-eager-red.smt2	unsupported/operator	0.0	telos: the term uses an operator telos does not support yet: (seq.nth a c): (not (= (seq.nth a c) (seq.nth b c)))
 regress1/seq/proj-issue733-mbqi-w.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] (str.len x) is 9510905: a string too long to write down
 regress1/sets/ListElem.hs.fqout.cvc4.38.smt2	solved	0.0	unsat
-regress1/sets/ListElts.hs.fqout.cvc4.317.smt2	cert-sat/not-evaluated	0.1	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (set.subset (z3f69 z3v151) (z3f69 z3v140)) is not evaluated (with z3f69=@table0, z3v151=0, z3f69=@table0, z3v140=0)
-regress1/sets/TalkingAboutSets.hs.fqout.cvc4.3577.smt2	cert-sat/not-evaluated	0.1	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (set.subset (z3f97 z3v375) (z3f97 z3v331)) is not evaluated (with z3f97=@table3, z3v375=0, z3f97=@table3, z3v331=0)
-regress1/sets/UniqueZipper.hs.1030minimized.cvc4.smt2	cert-sat/not-evaluated	0.1	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (set.subset (z3f70 z3v242) (z3f70 z3v244)) is not evaluated (with z3f70=@table1, z3v242=3, z3f70=@table1, z3v244=0)
-regress1/sets/UniqueZipper.hs.1030minimized2.cvc4.smt2	cert-sat/not-evaluated	0.1	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (set.subset (z3f70 z3v242) (z3f70 z3v244)) is not evaluated (with z3f70=@table1, z3v242=3, z3f70=@table1, z3v244=0)
-regress1/sets/UniqueZipper.hs.fqout.cvc4.10.smt2	solved	0.1	unsat
-regress1/sets/UniqueZipper.hs.fqout.cvc4.1832.smt2	solved	0.1	unsat
+regress1/sets/ListElts.hs.fqout.cvc4.317.smt2	solved	0.1	sat
+regress1/sets/TalkingAboutSets.hs.fqout.cvc4.3577.smt2	solved	0.1	sat
+regress1/sets/UniqueZipper.hs.1030minimized.cvc4.smt2	solved	0.1	sat
+regress1/sets/UniqueZipper.hs.1030minimized2.cvc4.smt2	solved	0.1	sat
+regress1/sets/UniqueZipper.hs.fqout.cvc4.10.smt2	solved	0.0	unsat
+regress1/sets/UniqueZipper.hs.fqout.cvc4.1832.smt2	solved	0.0	unsat
 regress1/sets/choose.cvc.smt2	not-ported	0.0	telos: unknown [not-ported] the engine treats (set.choose A) as uninterpreted (not ported)
 regress1/sets/choose1.smt2	not-ported	0.0	telos: unknown [not-ported] the engine treats (set.choose A) as uninterpreted (not ported)
 regress1/sets/choose2.smt2	solved	0.0	unsat
 regress1/sets/choose3.smt2	not-ported	0.0	telos: unknown [not-ported] the engine treats (set.choose (as set.empty (Set Int))) as uninterpreted (not ported)
 regress1/sets/choose4.smt2	not-ported	0.0	telos: unknown [not-ported] the engine treats (set.choose A) as uninterpreted (not ported)
-regress1/sets/copy_check_heap_access_33_4.smt2	unsupported/parse	0.0	Error: failed to parse command (declare-fun slseg_struct$0 (SetLoc FldInt FldLoc Loc Loc) Bool)
+regress1/sets/copy_check_heap_access_33_4.smt2	solved	0.1	unsat
 regress1/sets/deepmeas0.hs.fqout.cvc4.41.smt2	solved	0.0	sat
 regress1/sets/fuzz14418.smt2	cert-sat/model-false	0.0	telos: unknown [cert-sat/model-false] the model does not satisfy the input: (let ((_let_1 (set.union v3 v4))) (let ((_let_2 (f0 v0))) (let ((_let_3 (* 7 v0))) (let ((_let_4 (* v0 7))) (let ((_let_5 (ite (p0 _let_4 _let_3) 1 0))) (let ((_let_6 (set.minus v2 v2))) (let ((_let_7 (- 7))) (let ((_let_8 (
 regress1/sets/fuzz15201.smt2	solved	0.1	sat
 regress1/sets/fuzz31811.smt2	solved	0.0	sat
-regress1/sets/insert_invariant_37_2.smt2	unsupported/parse	0.0	Error: failed to parse command (declare-fun sorted_set_struct$0 (SetLoc FldInt FldLoc Loc Loc (Set Int)) Bool)
-regress1/sets/is_singleton1.smt2	not-ported	0.0	telos: unknown [not-ported] the engine treats (set.choose (set.singleton x)) as uninterpreted (not ported)
+regress1/sets/insert_invariant_37_2.smt2	solved	0.6	unsat
+regress1/sets/is_singleton1.smt2	solved	0.0	sat
 regress1/sets/issue5309.smt2	solved	0.0	sat
 regress1/sets/issue5705-cg-subtyping.smt2	solved	0.0	sat
 regress1/sets/issue5942-witness.smt2	not-ported	0.0	telos: unknown [not-ported] the engine treats (set.choose (@purify (ite (= str2 (str.substr str2 0 (to_int r1))) st9 (as set.empty (Set String))))) as uninterpreted (not ported)
 regress1/sets/lemmabug-ListElts317minimized.smt2	solved	0.0	sat
-regress1/sets/remove_check_free_31_6.smt2	unsupported/parse	0.0	Error: failed to parse command (declare-fun Frame$0 (SetLoc (Set Loc) FldLoc FldLoc) Bool)
+regress1/sets/remove_check_free_31_6.smt2	solved	1.1	unsat
 regress1/sets/sharingbug.smt2	solved	0.1	sat
 regress1/sets/univ-set-uf-elim.smt2	unsupported/parse	0.0	Error: failed to parse command (assume @s5 (= a (f (as set.universe (Set Bool)))))
 regress1/sqrt2-sort-inf-unk.smt2	timeout	20.0	
@@ -1319,52 +1319,52 @@ regress1/strings/artemis-0512-nonterm.smt2	solved	0.0	unsat
 regress1/strings/at001.smt2	solved	0.0	sat
 regress1/strings/bug615.smt2	timeout	20.0	
 regress1/strings/bug686dd.smt2	solved	0.1	sat
-regress1/strings/bug768.smt2	solved	0.4	sat
+regress1/strings/bug768.smt2	solved	0.3	sat
 regress1/strings/cee-norn-aes-trivially.smt2	solved	0.0	unsat
 regress1/strings/chapman150408.smt2	solved	0.0	sat
 regress1/strings/cmu-2db2-extf-reg.smt2	solved	0.0	sat
-regress1/strings/cmu-5042-0707-2.smt2	solved	0.4	sat
+regress1/strings/cmu-5042-0707-2.smt2	solved	0.2	sat
 regress1/strings/cmu-inc-nlpp-071516.smt2	solved	0.1	unsat
 regress1/strings/cmu-substr-rw.smt2	solved	0.1	sat
 regress1/strings/complement-test.smt2	solved	0.0	sat
-regress1/strings/crash-1019.smt2	solved	0.7	unsat
+regress1/strings/crash-1019.smt2	solved	0.6	unsat
 regress1/strings/csp-prefix-exp-bug.smt2	solved	0.0	sat
-regress1/strings/double-replace.smt2	solved	0.2	sat
+regress1/strings/double-replace.smt2	solved	0.1	sat
 regress1/strings/fmf001.smt2	timeout	20.0	
 regress1/strings/fmf002.smt2	solved	0.1	sat
-regress1/strings/gm-inc-071516-2.smt2	solved	0.1	unsat
+regress1/strings/gm-inc-071516-2.smt2	solved	0.0	unsat
 regress1/strings/goodAI.smt2	solved	0.1	sat
-regress1/strings/idof-handg.smt2	solved	0.1	sat
+regress1/strings/idof-handg.smt2	solved	0.0	sat
 regress1/strings/idof-nconst-index.smt2	solved	0.1	sat
 regress1/strings/idof-neg-index.smt2	solved	0.0	unsat
 regress1/strings/idof-triv.smt2	solved	0.0	sat
 regress1/strings/ilc-l-nt.smt2	solved	0.0	unsat
 regress1/strings/instance1079-re-loop-cong.smt2	solved	0.0	unsat
 regress1/strings/instance2984-null-term.smt2	solved	0.0	unsat
-regress1/strings/instance3303-delta.smt2	cert-unsat/missing-proof	0.4	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_CONF_SIMPLEX (conflict)
+regress1/strings/instance3303-delta.smt2	cert-unsat/missing-proof	0.3	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_ARITH ARITH_CONF_SIMPLEX (conflict)
 regress1/strings/instance6561-dd-concat-unify-char.smt2	cert-unsat/missing-proof	0.2	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_N_CONST (conflict)
-regress1/strings/instance7075-delta.smt2	solved	0.6	sat
+regress1/strings/instance7075-delta.smt2	solved	0.5	sat
 regress1/strings/issue10058.smt2	solved	2.7	unsat
 regress1/strings/issue10195.smt2	solved	0.1	sat
 regress1/strings/issue10196.smt2	solved	0.0	unsat
 regress1/strings/issue1105.smt2	solved	0.0	sat
 regress1/strings/issue12147-idof-same.smt2	solved	0.1	unsat
 regress1/strings/issue1684-regex.smt2	solved	0.0	sat
-regress1/strings/issue2060.smt2	solved	0.1	sat
+regress1/strings/issue2060.smt2	solved	0.0	sat
 regress1/strings/issue2429-code.smt2	solved	0.1	sat
-regress1/strings/issue2981.smt2	solved	0.2	sat
+regress1/strings/issue2981.smt2	solved	0.1	sat
 regress1/strings/issue2982.smt2	solved	0.0	unsat
-regress1/strings/issue3090.smt2	cert-unsat/missing-proof	15.4	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_SSPLIT_CST
-regress1/strings/issue3217.smt2	solved	0.3	unsat
-regress1/strings/issue3272.smt2	solved	0.7	sat
-regress1/strings/issue3357.smt2	solved	0.3	unsat
-regress1/strings/issue4379.smt2	solved	0.5	sat
+regress1/strings/issue3090.smt2	cert-unsat/missing-proof	14.2	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_SSPLIT_CST
+regress1/strings/issue3217.smt2	solved	0.2	unsat
+regress1/strings/issue3272.smt2	solved	0.5	sat
+regress1/strings/issue3357.smt2	solved	0.2	unsat
+regress1/strings/issue4379.smt2	solved	0.6	sat
 regress1/strings/issue4608-re-derive.smt2	solved	0.0	sat
 regress1/strings/issue4701_substr_splice.smt2	solved	0.2	sat
 regress1/strings/issue4735.smt2	solved	0.0	sat
 regress1/strings/issue4735_2.smt2	solved	0.4	sat
 regress1/strings/issue4759-comp-delta.smt2	solved	0.0	unsat
-regress1/strings/issue5330.smt2	solved	0.1	sat
+regress1/strings/issue5330.smt2	solved	0.0	sat
 regress1/strings/issue5330_2.smt2	unsupported/operator	0.0	telos: the term uses an operator telos does not support yet: (seq.unit i5): (xor v17 v24 true true (seq.prefixof (seq.rev (seq.rev seq11)) (seq.unit i5)))
 regress1/strings/issue5510-re-consume.smt2	solved	0.1	sat
 regress1/strings/issue5520-re-consume.smt2	solved	0.0	sat
@@ -1373,15 +1373,15 @@ regress1/strings/issue5610-infer-proxy.smt2	solved	0.1	sat
 regress1/strings/issue5692-infer-proxy.smt2	solved	0.0	sat
 regress1/strings/issue5940-2-skc-len-conc.smt2	solved	0.0	sat
 regress1/strings/issue5940-skc-len-conc.smt2	solved	0.0	sat
-regress1/strings/issue6057-replace-re-all-jiwonparc.smt2	solved	0.2	unsat
-regress1/strings/issue6057-replace-re.smt2	solved	0.2	sat
-regress1/strings/issue6075-repl-len-one-rr.smt2	solved	0.2	unsat
-regress1/strings/issue6101-2.smt2	solved	1.9	unsat
-regress1/strings/issue6101.smt2	solved	2.2	unsat
+regress1/strings/issue6057-replace-re-all-jiwonparc.smt2	solved	0.1	unsat
+regress1/strings/issue6057-replace-re.smt2	solved	0.1	sat
+regress1/strings/issue6075-repl-len-one-rr.smt2	solved	0.1	unsat
+regress1/strings/issue6101-2.smt2	solved	1.7	unsat
+regress1/strings/issue6101.smt2	solved	1.7	unsat
 regress1/strings/issue6132-non-unique-skolem.smt2	solved	0.1	sat
 regress1/strings/issue6142-repl-inv-rew.smt2	solved	0.1	sat
 regress1/strings/issue6180-2-proxy-vars.smt2	cert-unsat/missing-proof	0.0	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_EXTF_EQ_REW (conflict)
-regress1/strings/issue6180-proxy-vars.smt2	solved	0.2	unsat
+regress1/strings/issue6180-proxy-vars.smt2	solved	0.1	unsat
 regress1/strings/issue6191-replace-all.smt2	solved	0.0	sat
 regress1/strings/issue6203-1-substr-ctn-strip.smt2	solved	0.0	sat
 regress1/strings/issue6203-2-re-ccache.smt2	solved	0.1	sat
@@ -1393,10 +1393,10 @@ regress1/strings/issue6270.smt2	solved	0.0	unsat
 regress1/strings/issue6271-2-rnf.smt2	solved	0.1	unsat
 regress1/strings/issue6271-rnf.smt2	solved	0.0	sat
 regress1/strings/issue6337-replace-re-all.smt2	timeout	20.0	
-regress1/strings/issue6337-replace-re.smt2	solved	0.8	sat
+regress1/strings/issue6337-replace-re.smt2	solved	0.7	sat
 regress1/strings/issue6567-empty-re-range.smt2	solved	0.0	sat
 regress1/strings/issue6604-2.smt2	cert-unsat/missing-proof	0.2	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: a propagation's explanation
-regress1/strings/issue6635-rre.smt2	cert-unsat/missing-proof	0.4	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_EXTF_EQ_REW (conflict)
+regress1/strings/issue6635-rre.smt2	cert-unsat/missing-proof	0.3	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_EXTF_EQ_REW (conflict)
 regress1/strings/issue6653-4-rre.smt2	timeout	20.0	
 regress1/strings/issue6653-rre-small.smt2	timeout	20.0	
 regress1/strings/issue6653-rre.smt2	timeout	20.0	
@@ -1404,30 +1404,30 @@ regress1/strings/issue6654-indexof_re_red.smt2	solved	0.1	sat
 regress1/strings/issue6766-re-elim-bv.smt2	solved	0.1	sat
 regress1/strings/issue6913.smt2	cert-unsat/missing-proof	1.5	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_SSPLIT_CST
 regress1/strings/issue6973-dup-lemma-conc.smt2	solved	0.0	unsat
-regress1/strings/issue7677-test-const-rv.smt2	solved	0.1	sat
+regress1/strings/issue7677-test-const-rv.smt2	solved	0.0	sat
 regress1/strings/issue7918-learned-rewrite.smt2	solved	0.0	sat
-regress1/strings/issue8094-witness-model.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (forall ((V String)) (or r (exists ((V String)) (str.in_re (str.++ "z" v) (re.* (str.to_re (str.from_code (str.len v)))))))) is not evaluated (with r=true, v=…, v=…)
-regress1/strings/issue8434-nterm-str-rw.smt2	solved	0.2	unsat
+regress1/strings/issue8094-witness-model.smt2	solved	0.0	sat
+regress1/strings/issue8434-nterm-str-rw.smt2	solved	0.1	unsat
 regress1/strings/issue8890-inj-oob.smt2	intentional	0.1	telos: unknown [intentional] THEORY_QUANTIFIERS declared the model incomplete (QUANTIFIERS), as cvc5 does
 regress1/strings/issue8906-oob-exp.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (forall ((e String)) (exists ((e String)) (or (ite (str.prefixof "-" (str.at e 0)) false (= 1 (str.to_int (str.at e (+ x (str.len e)))))) x1))) is not evaluated (with x=0, x1=true)
 regress1/strings/issue8915-str-unit-model.smt2	solved	0.0	sat
-regress1/strings/issue8916-str-unit-pairs.smt2	cert-sat/not-evaluated	0.1	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (forall ((E String)) (<= (str.to_int v) 0)) is not evaluated (with v=…)
-regress1/strings/issue8918-str-nth-crange-red.smt2	solved	0.3	unsat
-regress1/strings/issue8932-cmi-unit.smt2	solved	2.0	sat
-regress1/strings/issue8944-sygus-inst.smt2	solved	0.5	sat
+regress1/strings/issue8916-str-unit-pairs.smt2	solved	0.1	sat
+regress1/strings/issue8918-str-nth-crange-red.smt2	solved	0.2	unsat
+regress1/strings/issue8932-cmi-unit.smt2	solved	1.7	sat
+regress1/strings/issue8944-sygus-inst.smt2	solved	0.4	sat
 regress1/strings/issue8956-1.smt2	solved	0.0	sat
-regress1/strings/issue8970-strip-sym-len.smt2	solved	0.1	sat
+regress1/strings/issue8970-strip-sym-len.smt2	solved	0.0	sat
 regress1/strings/issue8975-1.smt2	solved	0.3	sat
 regress1/strings/issue8975-2.smt2	solved	0.2	sat
-regress1/strings/issue8975-3.smt2	solved	7.7	sat
-regress1/strings/issue8981-2-strings-deq-ext-nth.smt2	solved	9.9	sat
+regress1/strings/issue8975-3.smt2	solved	5.2	sat
+regress1/strings/issue8981-2-strings-deq-ext-nth.smt2	solved	10.2	sat
 regress1/strings/issue8981-strings-deq-ext-nth.smt2	solved	0.2	sat
-regress1/strings/issue9003-deq-split.smt2	solved	0.4	sat
+regress1/strings/issue9003-deq-split.smt2	solved	0.3	sat
 regress1/strings/issue9040-re-inter-comp.smt2	solved	0.0	sat
 regress1/strings/issue9269-rei-nconst.smt2	solved	0.1	sat
-regress1/strings/issue9287-trivial-deq-disl.smt2	solved	0.6	unsat
+regress1/strings/issue9287-trivial-deq-disl.smt2	solved	0.4	unsat
 regress1/strings/issue9988-3.smt2	solved	0.1	sat
-regress1/strings/kaluza-fl.smt2	solved	0.2	sat
+regress1/strings/kaluza-fl.smt2	solved	0.1	sat
 regress1/strings/loop002.smt2	solved	0.0	sat
 regress1/strings/loop003.smt2	solved	0.0	sat
 regress1/strings/loop004.smt2	solved	0.0	sat
@@ -1436,13 +1436,13 @@ regress1/strings/loop006.smt2	solved	0.0	sat
 regress1/strings/loop007.smt2	solved	0.0	sat
 regress1/strings/loop008.smt2	solved	0.0	sat
 regress1/strings/loop009.smt2	solved	0.0	sat
-regress1/strings/nf-ff-contains-abs.smt2	solved	0.2	unsat
+regress1/strings/nf-ff-contains-abs.smt2	solved	0.1	unsat
 regress1/strings/no-lazy-pp-quant.smt2	solved	0.0	sat
-regress1/strings/non-terminating-rewrite-aent.smt2	solved	0.3	sat
-regress1/strings/norn-13.smt2	solved	0.1	sat
-regress1/strings/norn-153-consume.smt2	cert-unsat/missing-proof	5.9	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_SSPLIT_CST
+regress1/strings/non-terminating-rewrite-aent.smt2	solved	0.2	sat
+regress1/strings/norn-13.smt2	solved	0.0	sat
+regress1/strings/norn-153-consume.smt2	cert-unsat/missing-proof	4.9	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_SSPLIT_CST
 regress1/strings/norn-360.smt2	solved	0.1	sat
-regress1/strings/norn-ab.smt2	cert-unsat/missing-proof	0.8	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_N_ENDPOINT_EQ
+regress1/strings/norn-ab.smt2	cert-unsat/missing-proof	0.7	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_N_ENDPOINT_EQ
 regress1/strings/norn-nel-bug-052116.smt2	solved	0.1	sat
 regress1/strings/norn-re-inter-none.smt2	solved	0.1	sat
 regress1/strings/norn-simp-rew-sat.smt2	solved	0.1	sat
@@ -1450,15 +1450,15 @@ regress1/strings/nt6-dd.smt2	solved	0.0	sat
 regress1/strings/nterm-re-inter-sigma.smt2	solved	0.0	sat
 regress1/strings/open-pf-merge.smt2	cert-unsat/missing-proof	0.2	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_SSPLIT_CST
 regress1/strings/pattern1.smt2	solved	2.1	sat
-regress1/strings/pierre150331.smt2	solved	0.2	sat
+regress1/strings/pierre150331.smt2	solved	0.1	sat
 regress1/strings/pre_ctn_no_skolem_share.smt2	solved	0.1	sat
 regress1/strings/prefix-min-conflict.smt2	solved	0.1	unsat
 regress1/strings/proj-issue281.smt2	solved	0.0	sat
 regress1/strings/proj-issue779-2-extr.smt2	timeout	20.0	
-regress1/strings/proj-issue779-2-icycle.smt2	cert-unsat/missing-proof	5.3	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: a propagation's explanation
+regress1/strings/proj-issue779-2-icycle.smt2	cert-unsat/missing-proof	4.8	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: a propagation's explanation
 regress1/strings/proj-issue783-inorm-cycle.smt2	timeout	20.0	
-regress1/strings/proj-issue784-cycle-best-content.smt2	solved	0.9	unsat
-regress1/strings/prop-engine-order.smt2	solved	3.2	sat
+regress1/strings/proj-issue784-cycle-best-content.smt2	solved	0.7	unsat
+regress1/strings/prop-engine-order.smt2	solved	3.6	sat
 regress1/strings/re-all-char-hard.smt2	timeout	20.0	
 regress1/strings/re-dt-sat.smt2	unsupported/other	0.0	telos: an assertion is not a formula in Logos's typing
 regress1/strings/re-inc-range.smt2	solved	0.0	sat
@@ -1477,7 +1477,7 @@ regress1/strings/repl-empty-sem.smt2	solved	0.0	sat
 regress1/strings/repl-soundness-sem.smt2	solved	0.0	unsat
 regress1/strings/replaceall-len.smt2	timeout	20.0	
 regress1/strings/replaceall-replace.smt2	timeout	20.0	
-regress1/strings/rev-conv1.smt2	solved	0.5	sat
+regress1/strings/rev-conv1.smt2	solved	0.4	sat
 regress1/strings/rev-ex1.smt2	solved	0.0	sat
 regress1/strings/rev-ex2.smt2	solved	0.0	unsat
 regress1/strings/rev-ex3.smt2	solved	0.0	unsat
@@ -1489,16 +1489,16 @@ regress1/strings/seq-quant-infinite-branch.smt2	unsupported/operator	0.0	telos: 
 regress1/strings/seq-skeleton-gap.smt2	unsupported/operator	0.0	telos: the term uses an operator telos does not support yet: (seq.unit 1): (< 1 (seq.len (seq.update a 0 (seq.unit 1))))
 regress1/strings/simple-re-consume.smt2	solved	0.0	sat
 regress1/strings/slent-re-pos-eager.smt2	timeout	20.0	
-regress1/strings/ss-combine-large-substr.smt2	crash	17.8	INTERNAL PANIC: out of memory
-regress1/strings/stoi-400million.smt2	solved	2.4	sat
-regress1/strings/stoi-solve.smt2	solved	0.4	sat
+regress1/strings/ss-combine-large-substr.smt2	crash	16.2	INTERNAL PANIC: out of memory
+regress1/strings/stoi-400million.smt2	solved	2.1	sat
+regress1/strings/stoi-solve.smt2	solved	0.2	sat
 regress1/strings/str-code-sat.smt2	solved	0.0	sat
 regress1/strings/str-code-unsat-2.smt2	solved	0.0	unsat
-regress1/strings/str-code-unsat-3.smt2	solved	0.1	unsat
+regress1/strings/str-code-unsat-3.smt2	solved	0.0	unsat
 regress1/strings/str-code-unsat.smt2	solved	0.0	unsat
 regress1/strings/str-pred-small-rw_392.smt2	solved	0.4	unsat
 regress1/strings/str-rev-simple-s.smt2	solved	0.0	sat
-regress1/strings/str-term-small-rw_529-arith-subs-ent.smt2	cert-unsat/missing-proof	1.7	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_N_ENDPOINT_EQ, a propagation's explanation
+regress1/strings/str-term-small-rw_529-arith-subs-ent.smt2	cert-unsat/missing-proof	1.6	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_N_ENDPOINT_EQ, a propagation's explanation
 regress1/strings/str-term-small-rw_545.smt2	solved	0.2	unsat
 regress1/strings/str001.smt2	solved	0.0	unsat
 regress1/strings/str002.smt2	solved	0.0	unsat
@@ -1507,15 +1507,15 @@ regress1/strings/str007.smt2	solved	0.0	unsat
 regress1/strings/string-unsound-sem.smt2	solved	1.5	sat
 regress1/strings/strings-code-elim-min.smt2	solved	0.2	sat
 regress1/strings/strings-index-empty.smt2	solved	0.0	sat
-regress1/strings/strings-leq-trans-unsat.smt2	cert-unsat/missing-proof	1.2	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_EXTF_EQ_REW (conflict)
-regress1/strings/strings-lt-len5.smt2	solved	1.1	sat
-regress1/strings/strings-lt-simple.smt2	solved	0.6	sat
+regress1/strings/strings-leq-trans-unsat.smt2	cert-unsat/missing-proof	1.3	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_EXTF_EQ_REW (conflict)
+regress1/strings/strings-lt-len5.smt2	solved	0.9	sat
+regress1/strings/strings-lt-simple.smt2	solved	0.5	sat
 regress1/strings/strip-endpt-sound.smt2	solved	0.1	sat
 regress1/strings/substr001.smt2	solved	0.0	sat
-regress1/strings/timeout-no-resp.smt2	solved	0.5	sat
+regress1/strings/timeout-no-resp.smt2	solved	0.4	sat
 regress1/strings/to_upper_12.smt2	timeout	20.0	
 regress1/strings/to_upper_over_concat.smt2	timeout	20.0	
-regress1/strings/tolower-find.smt2	solved	1.3	sat
+regress1/strings/tolower-find.smt2	solved	0.9	sat
 regress1/strings/type002.smt2	solved	0.1	sat
 regress1/strings/type003.smt2	solved	0.1	sat
 regress1/strings/update-ex1.smt2	solved	0.0	sat
@@ -1527,7 +1527,7 @@ regress1/sygus/issue3200.smt2	solved	0.0	sat
 regress1/sygus/issue3201.smt2	solved	0.0	unsat
 regress1/sygus/issue3205.smt2	solved	0.0	sat
 regress1/sygus/issue3247.smt2	solved	0.0	unsat
-regress1/sygus/issue3514.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (forall ((a Real)) (exists ((b Real)) (exists ((c Real)) (and (< (+ a c) 0/1) (or (distinct a 0/1) (= b 5/1)) (distinct (+ b c) 1/1) (< c 1/1))))) is not evaluated (with )
+regress1/sygus/issue3514.smt2	solved	0.0	sat
 regress1/sygus/issue3634.smt2	solved	0.0	sat
 regress1/sygus/issue3644.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress1/sygus/issue3839-cond-rewrite.smt2	solved	0.0	sat
@@ -1538,34 +1538,34 @@ regress1/sym/q-function.smt2	solved	0.0	unsat
 regress1/sym/qf-function.smt2	solved	0.0	sat
 regress1/sym/sb-wrong.smt2	solved	0.0	sat
 regress1/sym/sym-setAB.smt2	solved	0.0	sat
-regress1/sym/sym1.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (= F (set.insert x (set.insert y (set.singleton z)))) is not evaluated (with F=…, x=0, y=0, z=0)
+regress1/sym/sym1.smt2	solved	0.0	sat
 regress1/sym/sym2.smt2	solved	0.0	sat
-regress1/sym/sym3.smt2	cert-sat/not-evaluated	0.0	telos: unknown [cert-sat/not-evaluated] the model does not satisfy the input: (set.subset A (set.insert y (set.singleton z))) is not evaluated (with A=…, y=0, z=0)
+regress1/sym/sym3.smt2	solved	0.0	sat
 regress1/sym/sym4.smt2	solved	0.1	sat
 regress1/sym/sym5.smt2	solved	0.0	unsat
 regress1/sym/sym6.smt2	solved	0.0	sat
 regress1/sym/sym7-uf.smt2	solved	0.0	sat
-regress1/uflia/FIREFLY_luke_1b_e2_3049_e7_1173.ec.minimized.smt2	solved	0.4	sat
-regress1/uflia/microwave21.ec.minimized.smt2	solved	3.2	unsat
-regress1/uflia/simple_cyclic2.smt2	solved	0.6	sat
-regress2/DTP_k2_n35_c175_s15.smt2	solved	0.9	sat
+regress1/uflia/FIREFLY_luke_1b_e2_3049_e7_1173.ec.minimized.smt2	solved	0.3	sat
+regress1/uflia/microwave21.ec.minimized.smt2	solved	2.5	unsat
+regress1/uflia/simple_cyclic2.smt2	solved	0.4	sat
+regress2/DTP_k2_n35_c175_s15.smt2	solved	0.7	sat
 regress2/arith/real2int-test.smt2	timeout	20.0	
 regress2/bug812.smt2	unsupported/parse	0.0	Error: failed to parse command (assume @a453 (let ((?v_52 (forall ((?a Int)) (! (let ((?v_53 (Field ?a))) (= (HasType (select1 (select1 Mem_3 ?v_53) ?a) ?v_53) true_1)) :pattern ((select1 (select1 Mem_3 (Field ?a)) ?a))))) (?v_51 (= (HasType result_bar_24_4_1__0 INT4_name) true_1)) (?v_50 (not (or (
-regress2/hash_sat_06_19.smt2	solved	4.2	sat
+regress2/hash_sat_06_19.smt2	solved	3.7	sat
 regress2/hash_sat_07_17.smt2	timeout	20.0	
-regress2/hash_sat_09_09.smt2	solved	6.3	sat
+regress2/hash_sat_09_09.smt2	solved	9.3	sat
 regress2/hash_sat_10_09.smt2	timeout	20.0	
 regress2/hole7.cvc.smt2	solved	2.4	unsat
 regress2/javafe.ast.StandardPrettyPrint.319_no_forall.smt2	timeout	20.0	
-regress2/javafe.ast.WhileStmt.447_no_forall.smt2	solved	10.0	sat
+regress2/javafe.ast.WhileStmt.447_no_forall.smt2	solved	8.9	sat
 regress2/large-datatypes-cycle.smt2	unsupported/operator	0.0	telos: the term uses an operator telos does not support yet: x0: (= x0 (next x1))
 regress2/ooo.rf6.smt2	timeout	20.0	
 regress2/ooo.tag10.smt2	timeout	20.0	
-regress2/quantifiers/AdditiveMethods_AdditiveMethods..ctor.smt2	solved	9.5	unsat
-regress2/quantifiers/cee-event-wrong-sat.smt2	unsupported/other	0.0	telos: unsupported attribute: :skolemid
+regress2/quantifiers/AdditiveMethods_AdditiveMethods..ctor.smt2	solved	9.7	unsat
+regress2/quantifiers/cee-event-wrong-sat.smt2	cert-unsat/missing-proof	0.1	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_BUILTIN EQ_CONSTANT_MERGE (conflict)
 regress2/quantifiers/dd_net_policy.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
-regress2/quantifiers/issue3481-unsat1.smt2	solved	10.4	unsat
-regress2/quantifiers/javafe.ast.StandardPrettyPrint.319.smt2	solved	15.9	unsat
+regress2/quantifiers/issue3481-unsat1.smt2	solved	8.9	unsat
+regress2/quantifiers/javafe.ast.StandardPrettyPrint.319.smt2	solved	13.4	unsat
 regress2/quantifiers/javafe.ast.WhileStmt.447.smt2	solved	2.3	unsat
 regress2/quantifiers/javafe.tc.CheckCompilationUnit.001.smt2	unsupported/parse	0.1	telos: the term uses an operator telos does not support yet: <unprintable>: (let ((?v_0 (array T_int)) (?v_1 (array T_java.lang.String)) (?v_4 (arrayLength punctuationStrings_56.134.22)) (?v_3 (arrayLength keywordStrings_56.181.30)) (?v_5 (arrayLength otherStrings_56.193.30)) (?v_7 (not (= cu_48.60 
 regress2/quantifiers/javafe.tc.FlowInsensitiveChecks.682.smt2	timeout	20.0	
@@ -1573,35 +1573,35 @@ regress2/quantifiers/nunchaku2309663.nun.min.smt2	timeout	20.0
 regress2/quantifiers/small-bug1-fixpoint-3.smt2	intentional	0.2	telos: unknown [intentional] THEORY_QUANTIFIERS declared the model incomplete (QUANTIFIERS), as cvc5 does
 regress2/quantifiers/syn874-1.smt2	intentional	0.6	telos: unknown [intentional] THEORY_QUANTIFIERS declared the model incomplete (QUANTIFIERS), as cvc5 does
 regress2/seq/err-model-soundness.smt2	unsupported/operator	0.0	telos: the term uses an operator telos does not support yet: (seq.unit d): (= y (seq.update x09 0 (seq.unit d)))
-regress2/simplify.javafe.ast.ArrayInit.35_without_quantification2.smt2	solved	12.7	sat
-regress2/strings/bidir_star.smt2	solved	0.4	unsat
+regress2/simplify.javafe.ast.ArrayInit.35_without_quantification2.smt2	solved	9.4	sat
+regress2/strings/bidir_star.smt2	solved	0.2	unsat
 regress2/strings/cmi-split-cm-fail.smt2	timeout	20.0	
 regress2/strings/cmu-dis-0707-3.smt2	timeout	20.0	
-regress2/strings/cmu-disagree-0707-dd.smt2	solved	0.3	sat
-regress2/strings/cmu-prereg-fmf.smt2	solved	2.5	sat
+regress2/strings/cmu-disagree-0707-dd.smt2	solved	0.4	sat
+regress2/strings/cmu-prereg-fmf.smt2	solved	2.9	sat
 regress2/strings/cmu-repl-len-nterm.smt2	solved	0.8	sat
-regress2/strings/dd.trust-subs.smt2	cert-unsat/missing-proof	2.2	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_DEQ_DISL_STRINGS_SPLIT, THEORY_STRINGS STRINGS_EXTF_N
+regress2/strings/dd.trust-subs.smt2	cert-unsat/missing-proof	2.0	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_DEQ_DISL_STRINGS_SPLIT, THEORY_STRINGS STRINGS_EXTF_N
 regress2/strings/issue3203.smt2	solved	0.1	unsat
-regress2/strings/issue5381.smt2	solved	6.3	sat
+regress2/strings/issue5381.smt2	solved	5.3	sat
 regress2/strings/issue6057-replace-re-all-simplified.smt2	timeout	20.0	
 regress2/strings/issue6057-replace-re-all.smt2	timeout	20.0	
-regress2/strings/issue6483.smt2	solved	1.0	unsat
-regress2/strings/issue6636-replace-re-all.smt2	solved	0.5	unsat
-regress2/strings/issue6637-replace-re-all.smt2	solved	0.7	unsat
+regress2/strings/issue6483.smt2	solved	0.9	unsat
+regress2/strings/issue6636-replace-re-all.smt2	solved	0.4	unsat
+regress2/strings/issue6637-replace-re-all.smt2	solved	0.6	unsat
 regress2/strings/issue6639-replace-re-all.smt2	solved	0.0	unsat
-regress2/strings/issue918.smt2	solved	0.2	sat
+regress2/strings/issue918.smt2	solved	0.1	sat
 regress2/strings/non_termination_regular_expression6.smt2	solved	0.1	unsat
-regress2/strings/proj-439-cyclic-str-ipc.smt2	cert-unsat/missing-proof	8.0	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_SSPLIT_CST
+regress2/strings/proj-439-cyclic-str-ipc.smt2	cert-unsat/missing-proof	9.8	telos: unknown [cert-unsat/missing-proof] the refutation needs clauses with no certificate, of: THEORY_STRINGS STRINGS_SSPLIT_CST
 regress2/strings/proof-fail-083021-delta.smt2	timeout	20.0	
 regress2/strings/range-perf.smt2	timeout	20.0	
 regress2/strings/replace-re-all-unsat.smt2	solved	0.0	unsat
-regress2/strings/replaceall-diffrange.smt2	solved	1.4	sat
-regress2/strings/replaceall-len-c.smt2	solved	5.1	sat
+regress2/strings/replaceall-diffrange.smt2	solved	0.9	sat
+regress2/strings/replaceall-len-c.smt2	solved	4.6	sat
 regress2/strings/sred-cases.smt2	solved	0.2	unsat
 regress2/strings/str-contains-reduction.smt2	solved	0.0	unsat
-regress2/strings/strings-alpha-card-65.smt2	cert-sat/model-false	0.1	telos: unknown [cert-sat/model-false] the model does not satisfy the input: (= (str.len s27) 1) is false (with s27=…)
-regress2/strings/update-ex3.smt2	solved	1.0	sat
+regress2/strings/strings-alpha-card-65.smt2	solved	0.1	sat
+regress2/strings/update-ex3.smt2	solved	1.1	sat
 regress2/strings/update-ex4-seq.smt2	unsupported/operator	0.0	telos: the term uses an operator telos does not support yet: (seq.unit 0): (= s (seq.++ (seq.unit 0) (seq.unit 1) (seq.unit 7) (seq.unit 3) (seq.unit 4) (seq.unit 5)))
 regress2/ufdt/clam-goal48.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
 regress2/ufdt/isaplanner-goal60.smt2	not-ported	0.0	telos: unknown [not-ported] quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes
-regress2/uflia-error0.smt2	solved	6.3	unsat
+regress2/uflia-error0.smt2	solved	4.7	unsat

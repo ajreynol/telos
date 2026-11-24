@@ -52,7 +52,7 @@ def Op.childrenTypedOfParent : Op → Bool
     | _ => true
   | .indexed _ _ => true
   | .node .APPLY_UF (.var _ _) => true
-  | .node .APPLY_UF (.skolem id cs) => id.isStringsFn && cs.size == id.numCacheVals
+  | .node .APPLY_UF (.skolem id cs) => id.isFn && cs.size == id.numCacheVals
   | .node .APPLY_CONSTRUCTOR (.const (.dtCons (.datatype _ _) _)) => true
   | .node .APPLY_SELECTOR (.const (.dtSel (.datatype _ _) _ _)) => true
   | .node .APPLY_TESTER _ | .node .APPLY_UPDATER _ => true

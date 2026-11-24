@@ -66,16 +66,13 @@ namespace Telos.Solver
 (observed with `-o theory-events`: the theories whose `check` cvc5 calls),
 among those of safe mode. For `ALL`, cvc5 also enables finite fields, floating
 point, separation logic and bags, which telos does not model: their checks do
-nothing on inputs that do not use them, and `scripts/fuzz-solve.py` drops them
-from cvc5's traces. A logic that requires one of them is not supported. -/
+nothing on inputs that do not use them (an input that does is not read), and
+`scripts/fuzz-solve.py` drops them from cvc5's traces. -/
 def enabledTheories (logic : String) : Except String (List Theory) := do
   let l ← Preprocess.Logic.parse logic
   let l := l.widen
   -- strings enable `strings-exp`, which needs quantifiers, and UF
   let l := if l.strings then { l with quantified := true, uf := true } else l
-  let base := if logic.startsWith "QF_" then (logic.drop 3).toString else logic
-  if base != "ALL" && l.others > 0 then
-    throw s!"unsupported: the logic {logic} has theories outside safe mode"
   let on : Theory → Bool
     | .THEORY_BUILTIN | .THEORY_BOOL => true
     | .THEORY_UF => l.uf
@@ -2142,6 +2139,13 @@ def equalityStatus (a b : Node) : EngineM Arith.EqStatus := do
     if ← eeAreEqual a b then return .trueAndPropagated
     if ← eeAreDisequal a b then return .falseAndPropagated
   if (a.typeHint == some .real || a.typeHint == some .integer) && (← read).arithSolver then
+    -- `TheoryArith::getEqualityStatus`: in the model the nonlinear extension
+    -- repaired, if it decides the equality, else in the linear solver's
+    if let some m := s.nlModel then
+      if a != b then
+        let vals : Std.HashMap Key Rat := m.foldl (fun h (n, q) => h.insert ⟨n⟩ q) {}
+        if let (some x, some y) := (Arith.valueIn vals a, Arith.valueIn vals b) then
+          return if x == y then .trueInModel else .falseInModel
     return ← withArith (Arith.equalityStatus a b)
   if ← eeAreEqual a b then return .isTrue
   if ← eeAreDisequal a b then return .isFalse

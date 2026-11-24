@@ -96,7 +96,8 @@ def numCacheVals : SkolemId → Nat
   | .STRINGS_REPLACE_RE_ALL_RESULT => 3
 
 /-- The function skolems of the theory of strings, of one argument. -/
-def isStringsFn : SkolemId → Bool
+def isFn : SkolemId → Bool
+  | .INT_DIV_BY_ZERO | .MOD_BY_ZERO | .DIV_BY_ZERO => true
   | .STRINGS_STOI_RESULT | .STRINGS_ITOS_RESULT | .STRINGS_OCCUR_INDEX | .STRINGS_OCCUR_INDEX_RE
   | .STRINGS_REPLACE_ALL_RESULT | .STRINGS_REPLACE_RE_ALL_RESULT => true
   | _ => false
