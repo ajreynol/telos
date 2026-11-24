@@ -206,6 +206,38 @@ theorem indexed_children (k : Kind) (is : List Int) :
     | exact spine1 (fun x h => by typed1)
     | exact spine2 (fun x y h => LogosFacts.update_args _ _ x y (.inl rfl) h)
 
+/-- The argument of an application of a function skolem of strings. -/
+theorem fnSkolem_children {id : SkolemId} {ks : Array Node}
+    (hc : (Op.node .APPLY_UF (.skolem id ks)).childrenTypedOfParent = true) :
+    ∀ xs : List Term, Typed ((Op.node .APPLY_UF (.skolem id ks)).eoShape.toEo xs) → ∀ x ∈ xs, Typed x := by
+  simp only [Op.childrenTypedOfParent, Bool.and_eq_true, beq_iff_eq] at hc
+  obtain ⟨hf, hs⟩ := hc
+  have hlen : ks.toList.length = id.numCacheVals := by simpa using hs
+  have hto : (Node.skolem id ks).toEo = id.toEo (ks.toList.map Node.toEo) := by
+    rw [Node.toEo]
+    congr 1
+    simp
+  simp only [Op.eoShape, nodeEoShape, hto]
+  generalize ks.toList = l at hlen ⊢
+  cases id <;> simp only [SkolemId.isStringsFn, Bool.false_eq_true] at hf <;>
+    simp only [SkolemId.numCacheVals] at hlen
+  all_goals first
+    | (obtain ⟨a, rfl⟩ := List.length_eq_one_iff.1 hlen
+       simp only [SkolemId.toEo, SkolemId.eoShape, AppShape.toEo, Arity.accepts, List.map_cons, List.map_nil,
+         List.length_cons, List.length_nil, List.foldl_cons, List.foldl_nil, isFnSkolemTerm, ↓reduceIte,
+         show ((0 + 1 == 1) = true) from rfl]
+       exact spine1 (fun x h => by typed1))
+    | (obtain ⟨a, b, rfl⟩ := List.length_eq_two.1 hlen
+       simp only [SkolemId.toEo, SkolemId.eoShape, AppShape.toEo, Arity.accepts, List.map_cons, List.map_nil,
+         List.length_cons, List.length_nil, List.foldl_cons, List.foldl_nil, isFnSkolemTerm, ↓reduceIte,
+         show ((0 + 1 + 1 == 2) = true) from rfl]
+       exact spine1 (fun x h => by typed1))
+    | (obtain ⟨a, b, c, rfl⟩ := List.length_eq_three.1 hlen
+       simp only [SkolemId.toEo, SkolemId.eoShape, AppShape.toEo, Arity.accepts, List.map_cons, List.map_nil,
+         List.length_cons, List.length_nil, List.foldl_cons, List.foldl_nil, isFnSkolemTerm, ↓reduceIte,
+         show ((0 + 1 + 1 + 1 == 3) = true) from rfl]
+       exact spine1 (fun x h => by typed1))
+
 /-- **Children of a well-typed application are well typed**, for the operators
 of `Op.childrenTypedOfParent`. -/
 theorem children_wellTyped {op : Op} {cs : Array Node} (hc : op.childrenTypedOfParent = true)
@@ -219,8 +251,9 @@ theorem children_wellTyped {op : Op} {cs : Array Node} (hc : op.childrenTypedOfP
   | .kind k, hc => exact kind_children hc xs h'
   | .indexed k is, _ => exact indexed_children k is.toList xs h'
   | .node .APPLY_UF (.var _ _), _ =>
-    simp only [Op.eoShape, nodeEoShape, Node.toEo] at h'
+    simp only [Op.eoShape, nodeEoShape, Node.toEo, isFnSkolemTerm, Bool.false_eq_true, ↓reduceIte] at h'
     exact spineAtLeast (fun xs h => LogosFacts.uf_args _ _ xs h) xs h'
+  | .node .APPLY_UF (.skolem id ks), hc => exact fnSkolem_children hc xs h'
   | .node .APPLY_CONSTRUCTOR (.const (.dtCons (.datatype _ _) _)), _ =>
     simp only [Op.eoShape, nodeEoShape, Node.toEo, Const.toEo] at h'
     exact spineAtLeast (fun xs h => LogosFacts.dt_cons_args _ _ _ xs h) xs h'

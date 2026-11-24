@@ -1845,7 +1845,7 @@ theorem toSmt_apply_uf (f : String) (T : TypeNode) (cs : Array Node) (h : 1 ≤ 
   have h1 : decide (1 ≤ cs.size) = true := by simpa using h
   unfold Node.toSmt
   rw [Node.toEo_app]
-  simp only [Op.eoShape, nodeEoShape, AppShape.toEo, Arity.accepts, List.length_map, Array.length_toList,
+  simp only [Op.eoShape, nodeEoShape, isFnSkolemTerm, Bool.false_eq_true, ↓reduceIte, AppShape.toEo, Arity.accepts, List.length_map, Array.length_toList,
     h1, ↓reduceIte]
   rw [show (Node.var f T).toEo = Term.UConst (constId f) T.toEo by rw [Node.toEo],
     toSmt_foldl_uhead _ (UHead.uconst _ _), List.map_map]
@@ -1984,7 +1984,7 @@ theorem toSmt_cons (f : Node) (cs : Array Node) (hf : DHead f.toEo) :
     (Node.app (.node .APPLY_CONSTRUCTOR f) cs).toSmt = (cs.toList.map Node.toSmt).foldl SmtTerm.Apply f.toSmt := by
   unfold Node.toSmt
   rw [Node.toEo_app]
-  simp only [Op.eoShape, nodeEoShape, AppShape.toEo, Arity.accepts, List.length_map, Array.length_toList,
+  simp only [Op.eoShape, nodeEoShape, isFnSkolemTerm, Bool.false_eq_true, ↓reduceIte, AppShape.toEo, Arity.accepts, List.length_map, Array.length_toList,
     Nat.zero_le, decide_true, ↓reduceIte]
   rw [toSmt_foldl_dhead _ hf, List.map_map]
   rfl
@@ -1994,7 +1994,7 @@ theorem toSmt_tester (f x : Node) (cs : Array Node) (hcs : cs.toList = [x]) :
     (Node.app (.node .APPLY_TESTER f) cs).toSmt = SmtTerm.Apply (__eo_to_smt_tester f.toSmt) x.toSmt := by
   unfold Node.toSmt
   rw [Node.toEo_app]
-  simp only [Op.eoShape, nodeEoShape, AppShape.toEo, Arity.accepts, hcs,
+  simp only [Op.eoShape, nodeEoShape, isFnSkolemTerm, Bool.false_eq_true, ↓reduceIte, AppShape.toEo, Arity.accepts, hcs,
     List.map_cons, List.map_nil, List.length_cons, List.length_nil, beq_self_eq_true, ↓reduceIte, List.foldl]
   rfl
 
@@ -2004,7 +2004,7 @@ theorem toSmt_selector (f x : Node) (cs : Array Node) (hcs : cs.toList = [x]) {a
     (Node.app (.node .APPLY_SELECTOR f) cs).toSmt = SmtTerm.Apply f.toSmt x.toSmt := by
   unfold Node.toSmt
   rw [Node.toEo_app]
-  simp only [Op.eoShape, nodeEoShape, AppShape.toEo, Arity.accepts, hcs,
+  simp only [Op.eoShape, nodeEoShape, isFnSkolemTerm, Bool.false_eq_true, ↓reduceIte, AppShape.toEo, Arity.accepts, hcs,
     List.map_cons, List.map_nil, List.length_cons, List.length_nil, beq_self_eq_true, ↓reduceIte, List.foldl, hf]
   rfl
 

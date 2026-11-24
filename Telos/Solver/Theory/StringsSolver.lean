@@ -1706,12 +1706,6 @@ def solverSkolems : SkolemOps EEM := {
     note (.skolem k)
     return k }
 
-/-- The kinds whose reductions, at full effort, telos does not port (they have
-skolem functions, which telos does not have). -/
-def unportedReduction (k : Kind) : Bool :=
-  k == .STRING_ITOS || k == .STRING_STOI || k == .STRING_REPLACE_ALL ||
-    k == .STRING_REPLACE_RE || k == .STRING_REPLACE_RE_ALL
-
 /-- `ExtfSolver::shouldDoReduction` at effort 1 (eager) or 2, for a term not
 reduced yet, of polarity `pol` (1, -1, or 0 for none). A negative
 `str.contains` is reduced at last call (`checkNegContains`). -/
@@ -1721,9 +1715,6 @@ def shouldReduce (effort : Nat) (n : Node) (pol : Int) : EEM Bool := do
   if k == .STRING_SUBSTR || (k == .STRING_CONTAINS && pol == 1) then return effort == 1
   if k == .STRING_IN_REGEXP || k == .STRING_TO_CODE then return false
   if n.typeHint == some .boolean && pol == 0 then return false
-  if unportedReduction k then
-    modifyStrings fun s => { s with extfUnchecked := true }
-    return false
   return effort == 2
 
 /-- `ExtfSolver::doReduction`. -/

@@ -395,9 +395,19 @@ def indexedEoShape : Kind → List Int → AppShape
   | .BITVECTOR_ROTATE_RIGHT, [i] => .spine (Term.UOp1 UserOp1.rotate_right (Term.Numeral i)) (.exactly 1)
   | _, _ => .none
 
+/-- The term is a function skolem of the theory of strings, applied to its cache
+values: Logos gives a meaning to its applications to one argument. -/
+def isFnSkolemTerm : Term → Bool
+  | .Apply (.UOp ._at_strings_stoi_result) _ | .Apply (.UOp ._at_strings_itos_result) _ => true
+  | .Apply (.Apply (.UOp ._at_strings_occur_index) _) _
+  | .Apply (.Apply (.UOp ._at_strings_occur_index_re) _) _ => true
+  | .Apply (.Apply (.Apply (.UOp ._at_strings_replace_all_result) _) _) _
+  | .Apply (.Apply (.Apply (.UOp ._at_strings_replace_re_all_result) _) _) _ => true
+  | _ => false
+
 /-- The CPC form of an operator that is a term, given its translation `f`. -/
 def nodeEoShape : Kind → Term → AppShape
-  | .APPLY_UF, f => .spine f (.atLeast 1)
+  | .APPLY_UF, f => .spine f (if isFnSkolemTerm f then .exactly 1 else .atLeast 1)
   -- `f` is a constructor (`Term.DtCons`), applied to its fields; a nullary
   -- constructor is the constructor itself. Applications of the wrong arity
   -- are not well typed.
@@ -470,6 +480,15 @@ def _root_.Telos.SkolemId.eoShape : SkolemId → AppShape
   -- (a binary operator, `SkolemId.toEo`)
   | .QUANTIFIERS_SKOLEMIZE => .none
   | .RE_UNFOLD_POS_COMPONENT => .none
+  | .STRINGS_STOI_RESULT => .spine (Term.UOp UserOp._at_strings_stoi_result) (.exactly 1)
+  | .STRINGS_STOI_NON_DIGIT => .spine (Term.UOp UserOp._at_strings_stoi_non_digit) (.exactly 1)
+  | .STRINGS_ITOS_RESULT => .spine (Term.UOp UserOp._at_strings_itos_result) (.exactly 1)
+  | .STRINGS_NUM_OCCUR => .spine (Term.UOp UserOp._at_strings_num_occur) (.exactly 2)
+  | .STRINGS_NUM_OCCUR_RE => .spine (Term.UOp UserOp._at_strings_num_occur_re) (.exactly 2)
+  | .STRINGS_OCCUR_INDEX => .spine (Term.UOp UserOp._at_strings_occur_index) (.exactly 2)
+  | .STRINGS_OCCUR_INDEX_RE => .spine (Term.UOp UserOp._at_strings_occur_index_re) (.exactly 2)
+  | .STRINGS_REPLACE_ALL_RESULT => .spine (Term.UOp UserOp._at_strings_replace_all_result) (.exactly 3)
+  | .STRINGS_REPLACE_RE_ALL_RESULT => .spine (Term.UOp UserOp._at_strings_replace_re_all_result) (.exactly 3)
 
 /-- The CPC term of a skolem, from the CPC terms of its cache values: by its
 shape (`SkolemId.eoShape`), but `(@quantifiers_skolemize q i)`, Logos's binary

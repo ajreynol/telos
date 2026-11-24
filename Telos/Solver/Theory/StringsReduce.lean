@@ -150,6 +150,106 @@ def reduceExtf (t : Node) : m (Option Node) := do
       Node.eqNode (substr k i (intConst 1))
         (substr x (sub (mkLen x) (add i (intConst 1))) (intConst 1))]
     return conclude (Reduce.and #[Node.eqNode (mkLen x) (mkLen k), Node.mkBoundedForall #[i] body]) k
+  | .app (.kind .STRING_ITOS) #[n] =>
+    let k ← purifySkolem ops t
+    let u (a : Node) : Node := Node.applyUF (.skolem .STRINGS_ITOS_RESULT #[n]) #[a]
+    let one := intConst 1
+    let i := indexVar
+    let c := sub (Node.mkNode .STRING_TO_CODE #[substr k i one]) (intConst 48)
+    let u1 := u (add i one)
+    let digit := Reduce.and #[Node.mkNode .GEQ #[c,
+        ite (Reduce.and #[Node.eqNode i zero, Node.mkNode .GT #[mkLen k, one]]) one zero],
+      Node.mkNode .LT #[c, intConst 10]]
+    let body := Node.mkNode .OR #[Node.notNode (Node.mkNode .GEQ #[i, zero]),
+      Node.notNode (Node.mkNode .LT #[i, mkLen k]),
+      Reduce.and #[Node.eqNode u1 (add c (Node.mkNode .MULT #[intConst 10, u i])), digit,
+        Node.mkNode .GEQ #[n, u1]]]
+    return conclude (ite (Node.mkNode .GEQ #[n, zero])
+      (Reduce.and #[Node.mkNode .GEQ #[mkLen k, one], Node.eqNode n (u (mkLen k)), Node.eqNode zero (u zero),
+        Node.mkBoundedForall #[i] body])
+      (Node.eqNode k emptyWord)) k
+  | .app (.kind .STRING_STOI) #[s] =>
+    let k ← purifySkolem ops t
+    let u (a : Node) : Node := Node.applyUF (.skolem .STRINGS_STOI_RESULT #[s]) #[a]
+    let nd := Node.skolem .STRINGS_STOI_NON_DIGIT #[s]
+    let one := intConst 1
+    let ten := intConst 10
+    let i := indexVar
+    let code (j : Node) : Node := sub (Node.mkNode .STRING_TO_CODE #[substr s j one]) (intConst 48)
+    let ndc := code nd
+    let notDigits := Reduce.and #[Node.eqNode k (intConst (-1)),
+      Node.mkNode .OR #[Node.eqNode s emptyWord, Reduce.and #[Node.mkNode .GEQ #[nd, zero],
+        Node.mkNode .LT #[nd, mkLen s], Node.mkNode .OR #[Node.mkNode .LT #[ndc, zero], Node.mkNode .GEQ #[ndc, ten]]]]]
+    let c := code i
+    let u1 := u (add i one)
+    let body := Node.mkNode .OR #[Node.notNode (Node.mkNode .GEQ #[i, zero]),
+      Node.notNode (Node.mkNode .LT #[i, mkLen s]),
+      Reduce.and #[Node.eqNode u1 (add c (Node.mkNode .MULT #[ten, u i])),
+        Reduce.and #[Node.mkNode .GEQ #[c, zero], Node.mkNode .LT #[c, ten]], Node.mkNode .GEQ #[k, u1]]]
+    return conclude (ite (Node.mkNode .LT #[k, zero]) notDigits
+      (Reduce.and #[Node.eqNode k (u (mkLen s)), Node.eqNode zero (u zero), Node.mkNode .GT #[mkLen s, zero],
+        Node.mkBoundedForall #[i] body])) k
+  | .app (.kind .STRING_REPLACE_ALL) #[x, y, z] =>
+    let k ← purifySkolem ops t
+    let num := Node.skolem .STRINGS_NUM_OCCUR #[x, y]
+    let us (a : Node) : Node := Node.applyUF (.skolem .STRINGS_REPLACE_ALL_RESULT #[x, y, z]) #[a]
+    let uf (a : Node) : Node := Node.applyUF (.skolem .STRINGS_OCCUR_INDEX #[x, y]) #[a]
+    let idx (a : Node) : Node := Node.mkNode .STRING_INDEXOF #[x, y, a]
+    let i := indexVar
+    let i1 := add i (intConst 1)
+    let ii := idx (uf i)
+    let body := Node.mkNode .OR #[Node.notNode (Node.mkNode .GEQ #[i, zero]),
+      Node.notNode (Node.mkNode .LT #[i, num]),
+      Reduce.and #[Node.notNode (Node.eqNode ii (intConst (-1))),
+        Node.eqNode (us i) (concat #[substr x (uf i) (sub ii (uf i)), z, us i1]),
+        Node.eqNode (uf i1) (add ii (mkLen y))]]
+    return conclude (ite (Node.eqNode y emptyWord) (Node.eqNode k x)
+      (Reduce.and #[Node.mkNode .GEQ #[num, zero], Node.eqNode k (us zero),
+        Node.eqNode (us num) (substr x (uf num) (mkLen x)), Node.eqNode (uf zero) zero,
+        Node.eqNode (idx (uf num)) (intConst (-1)), Node.mkBoundedForall #[i] body])) k
+  | .app (.kind .STRING_REPLACE_RE) #[x, r, z] =>
+    let k ← purifySkolem ops t
+    let idx := Node.mkNode .STRING_INDEXOF_RE #[x, r, zero]
+    -- the first match (`RE_FIRST_MATCH_PRE`, `RE_FIRST_MATCH`, `RE_FIRST_MATCH_POST`)
+    let x' ← ops.rw x
+    let r' ← ops.rw r
+    let idx' := Node.mkNode .STRING_INDEXOF_RE #[x', r', zero]
+    let occ1 := Node.applyUF (.skolem .STRINGS_OCCUR_INDEX_RE #[x', r']) #[intConst 1]
+    let k1 ← skolem ops (substr x' zero idx')
+    let k2 ← skolem ops (substr x' idx' (sub occ1 idx'))
+    let k3 ← skolem ops (substr x' occ1 (sub (mkLen x') occ1))
+    let l := lengthVar
+    let shortest := Node.mkBoundedForall #[l] (Node.mkNode .OR #[Node.notNode (Node.mkNode .GEQ #[l, zero]),
+      Node.notNode (Node.mkNode .LT #[l, mkLen k2]),
+      Node.notNode (Node.mkNode .STRING_IN_REGEXP #[substr k2 zero l, r])])
+    return conclude (ite (Node.mkNode .STRING_IN_REGEXP #[emptyWord, r]) (Node.eqNode k (concat #[z, x]))
+      (ite (Node.eqNode idx (intConst (-1))) (Node.eqNode k x)
+        (Reduce.and #[Node.eqNode x (concat #[k1, k2, k3]), Node.eqNode (mkLen k1) idx, shortest,
+          Node.mkNode .STRING_IN_REGEXP #[k2, r], Node.eqNode k (concat #[k1, z, k3])]))) k
+  | .app (.kind .STRING_REPLACE_RE_ALL) #[x, r, z] =>
+    let k ← purifySkolem ops t
+    let num := Node.skolem .STRINGS_NUM_OCCUR_RE #[x, r]
+    let us (a : Node) : Node := Node.applyUF (.skolem .STRINGS_REPLACE_RE_ALL_RESULT #[x, r, z]) #[a]
+    let uf (a : Node) : Node := Node.applyUF (.skolem .STRINGS_OCCUR_INDEX_RE #[x, r]) #[a]
+    let rp := Node.mkNode .REGEXP_DIFF #[r, Node.mkNode .STRING_TO_REGEXP #[emptyWord]]
+    let idx (w a : Node) : Node := Node.mkNode .STRING_INDEXOF_RE #[w, rp, a]
+    let neg := intConst (-1)
+    let rest := substr x (uf num) (mkLen x)
+    let i := indexVar
+    let l := lengthVar
+    let i1 := add i (intConst 1)
+    let ii := idx x (uf i)
+    let len1 := sub (uf i1) ii
+    let shortest := Node.mkBoundedForall #[l] (Node.mkNode .OR #[Node.notNode (Node.mkNode .GT #[l, zero]),
+      Node.notNode (Node.mkNode .LT #[l, len1]),
+      Node.notNode (Node.mkNode .STRING_IN_REGEXP #[substr x ii l, r])])
+    let body := Node.mkNode .OR #[Node.notNode (Node.mkNode .GEQ #[i, zero]),
+      Node.notNode (Node.mkNode .LT #[i, num]),
+      Reduce.and #[Node.mkNode .GT #[len1, zero], Node.mkNode .STRING_IN_REGEXP #[substr x ii len1, rp], shortest,
+        Node.eqNode (us i) (concat #[substr x (uf i) (sub ii (uf i)), z, us i1])]]
+    return conclude (ite (Node.eqNode (idx x zero) neg) (Node.eqNode k x)
+      (Reduce.and #[Node.mkNode .GT #[num, zero], Node.eqNode k (us zero), Node.eqNode (us num) rest,
+        Node.eqNode (uf zero) zero, Node.eqNode (idx rest zero) neg, Node.mkBoundedForall #[i] body])) k
   | .app (.kind kd) #[x] =>
     if kd != .STRING_TO_LOWER && kd != .STRING_TO_UPPER then return none
     let k ← purifySkolem ops t

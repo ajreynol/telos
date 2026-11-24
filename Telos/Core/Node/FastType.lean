@@ -49,6 +49,10 @@ def skolemType? : SkolemId → Option TypeNode
   | .INT_DIV_BY_ZERO | .MOD_BY_ZERO => some (.function .integer .integer)
   | .DIV_BY_ZERO => some (.function .real .real)
   | .RE_UNFOLD_POS_COMPONENT => some .string
+  | .STRINGS_STOI_RESULT | .STRINGS_ITOS_RESULT | .STRINGS_OCCUR_INDEX | .STRINGS_OCCUR_INDEX_RE =>
+    some (.function .integer .integer)
+  | .STRINGS_REPLACE_ALL_RESULT | .STRINGS_REPLACE_RE_ALL_RESULT => some (.function .integer .string)
+  | .STRINGS_STOI_NON_DIGIT | .STRINGS_NUM_OCCUR | .STRINGS_NUM_OCCUR_RE => some .integer
   | .PURIFY | .SETS_DEQ_DIFF | .QUANTIFIERS_SKOLEMIZE => none
 
 /-- The type of `(@quantifiers_skolemize q i)`: that of the `i`-th variable of
