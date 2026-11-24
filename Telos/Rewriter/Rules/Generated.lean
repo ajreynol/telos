@@ -6,7 +6,7 @@ import Telos.Rewriter.Rules.Pattern
 namespace Telos
 
 /-- The rewrite rules of CPC whose left-hand sides telos can match:
-448 of the signature's 630 rules. -/
+449 of the signature's 630 rules. -/
 def generatedRules : List RuleSpec := [
   { name := "arith-div-total-zero-real", rule := .arith_div_total_zero_real, numVars := 1,
     args := [0],
@@ -163,6 +163,11 @@ def generatedRules : List RuleSpec := [
     lhs := .app .GEQ [.app .TO_REAL [.var 0], .var 1],
     premises := [{ expr := .app .EQUAL [.app .TO_REAL [.app .TO_INTEGER [.var 1]], .var 1], value := .const (.boolean false), symm := false }, { expr := .app .ADD [.app .TO_INTEGER [.var 1], .const (.integer (1))], value := .var 2, symm := true }],
     varTypes := [some .integer, some .real, some .integer] },
+  { name := "arith-divisible-elim", rule := .arith_divisible_elim, numVars := 2,
+    args := [0, 1],
+    lhs := .app .DIVISIBLE [.var 0, .var 1],
+    premises := [{ expr := .app .EQUAL [.var 0, .const (.integer (0))], value := .const (.boolean false), symm := false }],
+    varTypes := [some .integer, some .integer] },
   { name := "arith-abs-eq", rule := .arith_abs_eq, numVars := 2,
     args := [0, 1],
     lhs := .app .EQUAL [.app .ABS [.var 0], .app .ABS [.var 1]],

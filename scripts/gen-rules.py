@@ -55,6 +55,7 @@ KINDS = {
     "to_real": "TO_REAL",
     "to_int": "TO_INTEGER",
     "is_int": "IS_INTEGER",
+    "divisible": "DIVISIBLE",
     "int.pow2": "POW2",
     "int.log2": "INTS_LOG2",
     "int.ispow2": "INTS_ISPOW2",

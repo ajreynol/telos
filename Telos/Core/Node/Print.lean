@@ -150,6 +150,7 @@ def Kind.smtLibName : Kind → String
   | .INTS_MODULUS_TOTAL => "mod_total"
   | .LT => "<" | .LEQ => "<=" | .GT => ">" | .GEQ => ">="
   | .TO_REAL => "to_real" | .TO_INTEGER => "to_int" | .IS_INTEGER => "is_int"
+  | .DIVISIBLE => "divisible"
   | .TUPLE => "tuple" | .TUPLE_UNIT => "tuple.unit" | .TUPLE_SELECT => "tuple.select"
   | .TUPLE_UPDATE => "tuple.update"
   | k => toString (repr k)
@@ -281,6 +282,8 @@ def Node.toSmtLibTop (N : DtNames) (pc : Node → String) : Node → String
     let parts := es.map pc ++ (tl.map pc).toList
     "(" ++ String.intercalate " " ("tuple" :: parts) ++ ")"
   | .const (.dtSel T i j) => N.selName T i j
+  -- SMT-LIB's indexed `((_ divisible k) t)`
+  | .app (.kind .DIVISIBLE) #[.const (.integer k), t] => s!"((_ divisible {k}) {pc t})"
   | .const (.emptySet T) => s!"(as set.empty {(TypeNode.set T).toSmtLibWith N})"
   | .const c => c.toSmtLib
   | .var n _ | .boundVar n _ => n

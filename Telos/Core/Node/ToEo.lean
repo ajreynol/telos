@@ -271,6 +271,7 @@ def Kind.eoShape : Kind → AppShape
   | .TO_REAL => .spine (Term.UOp UserOp.to_real) (.exactly 1)
   | .TO_INTEGER => .spine (Term.UOp UserOp.to_int) (.exactly 1)
   | .IS_INTEGER => .spine (Term.UOp UserOp.is_int) (.exactly 1)
+  | .DIVISIBLE => .spine (Term.UOp UserOp.divisible) (.exactly 2)
   | .POW2 => .spine (Term.UOp UserOp.int_pow2) (.exactly 1)
   | .INTS_LOG2 => .spine (Term.UOp UserOp.int_log2) (.exactly 1)
   | .INTS_ISPOW2 => .spine (Term.UOp UserOp.int_ispow2) (.exactly 1)

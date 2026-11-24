@@ -167,7 +167,12 @@ assertions in the order cvc5's parser creates them. The nodes that
 preprocessing creates are added from its certificate (`certNodes`,
 `Frontend.preprocessed`). -/
 def inputOrder (sc : Script) (as : List Node) : NodeOrder :=
-  NodeOrder.ofInput (sc.symbols.flatMap (·.names)) as
+  NodeOrder.ofInput (sc.symbols.flatMap (·.names)) as fun
+    | .app (.node .APPLY_CONSTRUCTOR (.const (.dtCons T i))) #[] =>
+      match T with
+      | .datatype s _ => sc.dtNames.cons (DtNames.baseName s) i
+      | _ => none
+    | _ => none
 
 /-- Print the preprocessed assertions `out` and definitions `defs` as cvc5's
 `-o post-asserts` does. -/

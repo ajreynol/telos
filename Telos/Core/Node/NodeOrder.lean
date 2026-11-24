@@ -30,6 +30,9 @@ is `Node.lt`. -/
 structure NodeOrder where
   /-- The declared constants, by name, in order of declaration. -/
   decl : Std.HashMap String Nat := {}
+  /-- The nullary constructors, as terms, with the place of their names in the
+  declarations: cvc5's parser creates their terms with their datatypes. -/
+  declNodes : Std.HashMap Key Nat := {}
   /-- The other terms: of the input, in order of first occurrence, then those
   numbered after (`add`). -/
   ids : Std.HashMap Key Nat := {}
@@ -91,6 +94,7 @@ def id? (o : NodeOrder) (t : Node) : Option Nat :=
     | some i => some i
     | none => (o.ids.get? ⟨t⟩).map (· + o.decl.size)
   | _ =>
+    if let some i := o.declNodes.get? ⟨t⟩ then some i else
     let r := if hasIntegralRat t then
         (o.ids.get? ⟨cvx t⟩) <|> ((o.ids.get? ⟨t⟩).filter (· < o.inputSize))
       else o.ids.get? ⟨t⟩
@@ -182,12 +186,21 @@ def solverConstants : List Node := (List.range 9).map fun (i : Nat) => Node.cons
 /-- The order of an input: the declared constants `decls`, in order, and the
 assertions `as`, in order, with the solvers' constants (`solverConstants`)
 after the first. -/
-def ofInput (decls : List String) (as : List Node) : NodeOrder :=
+def ofInput (decls : List String) (as : List Node) (consName : Node → Option String := fun _ => none) :
+    NodeOrder :=
   let ids := match as with
     | [] => {}
     | a :: rest => rest.foldl visit (solverConstants.foldl visit (visit {} a))
-  { decl := decls.zipIdx.foldl (fun m (x, i) => if m.contains x then m else m.insert x i) {},
-    ids := ids, inputSize := ids.size }
+  let decl := decls.zipIdx.foldl (fun m (x, i) => if m.contains x then m else m.insert x i) {}
+  -- the nullary constructors of the input, at their names' places
+  let declNodes := ids.fold (init := {}) fun (m : Std.HashMap Key Nat) k _ =>
+    match k.node with
+    | .app (.node .APPLY_CONSTRUCTOR _) #[] =>
+      match (consName k.node).bind decl.get? with
+      | some i => m.insert k i
+      | none => m
+    | _ => m
+  { decl, declNodes, ids := ids, inputSize := ids.size }
 
 end NodeOrder
 

@@ -58,6 +58,9 @@ inductive Kind where
   | TO_REAL
   | TO_INTEGER
   | IS_INTEGER
+  /-- `(divisible k t)`: `t` is a multiple of `k` (cvc5's `((_ divisible k) t)`,
+  CPC's `divisible`, binary). -/
+  | DIVISIBLE
   | POW2
   | INTS_LOG2
   | INTS_ISPOW2
@@ -229,7 +232,7 @@ def Kind.theoryId : Kind → TheoryId
   | .NOT | .AND | .IMPLIES | .OR | .XOR | .ITE => .THEORY_BOOL
   | .ADD | .SUB | .NEG | .MULT | .DIVISION | .INTS_DIVISION | .INTS_MODULUS | .ABS
   | .DIVISION_TOTAL | .INTS_DIVISION_TOTAL | .INTS_MODULUS_TOTAL
-  | .LT | .LEQ | .GT | .GEQ | .TO_REAL | .TO_INTEGER | .IS_INTEGER
+  | .LT | .LEQ | .GT | .GEQ | .TO_REAL | .TO_INTEGER | .IS_INTEGER | .DIVISIBLE
   | .POW2 | .INTS_LOG2 | .INTS_ISPOW2 => .THEORY_ARITH
   | .BITVECTOR_EXTRACT => .THEORY_BV
   | .BITVECTOR_CONCAT => .THEORY_BV

@@ -126,6 +126,125 @@ partial def bvNumerals : Sexp → Sexp
   | .expr xs => .expr (xs.map bvNumerals)
   | a => a
 
+/-! ## Commands and notations read as others
+
+SMT-LIB notations that cvc5 reads, written as what Logos's parser reads, before
+the script is read (`desugar`): `define-sort` (a sort macro, expanded),
+`define-const` (a `define-fun`), a term named by `(! t :named n)` outside
+binders (`n` is then a `define-fun` after the command), a quoted symbol `|x|`
+of a simple symbol `x` (`x`), `(as true Bool)` (`true`), and cvc5's legacy
+tester `(is-C t)` of a constructor `C` (`((_ is C) t)`). -/
+
+/-- `s` with the sort macros of `defs` (name, parameters, body) expanded. -/
+partial def expandSorts (defs : List (String × List String × Sexp)) (s : Sexp) : Sexp :=
+  if defs.isEmpty then s else
+  match s with
+  | .atom a => match defs.find? (·.1 == a) with
+    | some (_, [], body) => expandSorts defs body
+    | _ => s
+  | .expr (.atom h :: args) =>
+    let args := args.map (expandSorts defs)
+    match defs.find? (·.1 == h) with
+    | some (_, ps, body) =>
+      if ps.length == args.length && !ps.isEmpty then
+        expandSorts defs (subst (ps.zip args) body)
+      else .expr (.atom h :: args)
+    | none => .expr (.atom h :: args)
+  | .expr xs => .expr (xs.map (expandSorts defs))
+where
+  subst (σ : List (String × Sexp)) : Sexp → Sexp
+    | .atom a => match σ.find? (·.1 == a) with
+      | some (_, t) => t
+      | none => .atom a
+    | .expr xs => .expr (xs.map (subst σ))
+
+/-- A quoted symbol `|x|` of a simple symbol `x`, as `x`. -/
+def unquote (a : String) : String :=
+  if 3 ≤ a.length && a.front == '|' && a.back == '|' then
+    let x := ((a.drop 1).dropEnd 1).toString
+    if !x.isEmpty && x.all Eunoia.isSimpleSymbolChar && !x.front.isDigit then x else a
+  else a
+
+/-- The terms named by `(! t :named n)` in `s`, outside binders. -/
+partial def namedTerms (s : Sexp) : List (String × Sexp) :=
+  match s with
+  | .expr [.atom "!", t, .atom ":named", .atom n] => namedTerms t ++ [(n, t)]
+  | .expr (.atom q :: _) => if ["forall", "exists", "let", "lambda"].contains q then [] else
+      match s with
+      | .expr xs => xs.flatMap namedTerms
+      | _ => []
+  | .expr xs => xs.flatMap namedTerms
+  | _ => []
+
+/-- The term notations above, in `s`, with the constructors `cons` (a legacy
+tester `is-C` is one only if `is-C` is not a declared symbol). -/
+partial def termNotations (cons : List String) : Sexp → Sexp
+  | .atom a => .atom (unquote a)
+  | .expr [.atom "as", .atom b, .atom "Bool"] => if b == "true" || b == "false" then .atom b
+      else .expr [.atom "as", .atom b, .atom "Bool"]
+  | .expr (.atom h :: args) =>
+    let args := args.map (termNotations cons)
+    let c := (h.drop 3).toString
+    if h.startsWith "is-" && cons.contains c then
+      .expr (.expr [.atom "_", .atom "is", .atom c] :: args)
+    else .expr (.atom (unquote h) :: args)
+  | .expr xs => .expr (xs.map (termNotations cons))
+
+/-- The constructors a datatype declaration declares. -/
+def declaredCons : Sexp → List String
+  | .expr [.atom "declare-datatypes", _, .expr bodies] => bodies.flatMap consOf
+  | .expr [.atom "declare-datatype", _, body] => consOf body
+  | _ => []
+where
+  consOf : Sexp → List String
+    | .expr [.atom "par", _, .expr cs] => cs.filterMap name
+    | .expr cs => cs.filterMap name
+    | _ => []
+  name : Sexp → Option String
+    | .expr (.atom c :: _) => some c
+    | .atom c => some c
+    | _ => none
+
+/-- **The commands, desugared** (see above). -/
+def desugar (ss : List Sexp) : List Sexp := Id.run do
+  let mut sorts : List (String × List String × Sexp) := []
+  let mut cons : List String := []
+  -- the symbols `is-C` the script declares (not legacy testers)
+  let mut userIs : List String := []
+  let mut out : Array Sexp := #[]
+  for s in ss do
+    match s with
+    | .expr [.atom "define-sort", .atom n, .expr ps, body] =>
+      let ps := ps.filterMap fun | .atom p => some p | _ => none
+      sorts := (n, ps, expandSorts sorts body) :: sorts
+      continue
+    | _ => pure ()
+    match s with
+    | .expr (.atom d :: .atom x :: _) =>
+      if (d == "declare-fun" || d == "declare-const" || d == "define-fun" || d == "define-const") &&
+          x.startsWith "is-" then
+        userIs := (x.drop 3).toString :: userIs
+    | _ => pure ()
+    let s := termNotations (cons.filter (!userIs.contains ·)) (expandSorts sorts s)
+    let s := match s with
+      | .expr [.atom "define-const", n, ty, t] => .expr [.atom "define-fun", n, .expr [], ty, t]
+      | s => s
+    cons := cons ++ declaredCons s
+    out := out.push s
+    -- the named terms of an assertion, as definitions after it
+    if let .expr [.atom "assert", t] := s then
+      for (n, t) in namedTerms t do
+        out := out.push (.expr [.atom "define-fun", .atom n, .expr [], .atom "Bool", t])
+  return out.toList
+
+/-- `(and t)`, `(or t)`, `(+ t)` and `(* t)` written as `t`, as cvc5's parser
+reads them (Logos's would read `(and t true)`, which telos does not). -/
+partial def unaryOps : Sexp → Sexp
+  | .expr [.atom op, t] =>
+    if ["and", "or", "+", "*"].contains op then unaryOps t else .expr [.atom op, unaryOps t]
+  | .expr xs => .expr (xs.map unaryOps)
+  | a => a
+
 /-! ## cvc5's numerals
 
 cvc5 prints a constant of type `Real` with an integral value as an integer
@@ -203,6 +322,23 @@ mutual
       | _ => e) env
 end
 
+/-- `s` with the atoms of `σ` replaced (under binders that do not rebind
+them). -/
+partial def substAtoms (σ : List (String × Sexp)) : Sexp → Sexp
+  | .atom a => match σ.find? (·.1 == a) with
+    | some (_, t) => t
+    | none => .atom a
+  | .expr [.atom q, .expr bs, body] =>
+    if ["forall", "exists", "let", "lambda"].contains q then
+      let bound := bs.filterMap fun b => match b with
+        | .expr (.atom x :: _) => some x
+        | _ => none
+      let σ' := σ.filter fun (x, _) => !bound.contains x
+      let bs := if q == "let" then bs.map (substAtoms σ) else bs
+      .expr [.atom q, .expr bs, substAtoms σ' body]
+    else .expr [.atom q, .expr (bs.map (substAtoms σ)), substAtoms σ body]
+  | .expr xs => .expr (xs.map (substAtoms σ))
+
 /-- `s` with its numerals in positions of type `Real` written as real
 literals (SMT-LIB reads a numeral there as a real; CPC as an integer); `real`
 when `s` is in such a position. With `fold` (cvc5's output), its integer
@@ -231,10 +367,28 @@ partial def cvc5Numerals (env : List (String × NumTy)) (fold real : Bool) (s : 
         | _ => Sexp.expr (Sexp.atom h :: args.map (cvc5Numerals env fold false))
       else if h == "let" then match args with
         | [Sexp.expr bs, body] =>
+          -- a numeral bound by the `let` is put in its places, where its type
+          -- (`Int` or `Real`) is that of the place
+          let nums := bs.filterMap fun b => match b with
+            | Sexp.expr [Sexp.atom x, t] => if (intLit? t).isSome then some (x, t) else none
+            | _ => none
+          let bs := bs.filter fun b => match b with
+            | Sexp.expr [Sexp.atom x, _] => !nums.any (·.1 == x)
+            | _ => true
+          let body := if nums.isEmpty then body else substAtoms nums body
+          if bs.isEmpty then cvc5Numerals env fold real body else
           let bs' := bs.map fun b => match b with
             | Sexp.expr [Sexp.atom x, t] => Sexp.expr [Sexp.atom x, cvc5Numerals env fold false t]
             | b => b
           Sexp.expr [Sexp.atom h, Sexp.expr bs', cvc5Numerals (letEnv env bs) fold real body]
+        | _ => Sexp.expr (Sexp.atom h :: args.map (cvc5Numerals env fold false))
+      else if h == "forall" || h == "exists" || h == "lambda" then match args with
+        | Sexp.expr vs :: rest =>
+          -- the bound variables, with their sorts
+          let env' := vs.foldl (fun e v => match v with
+            | Sexp.expr [Sexp.atom x, ty] => (x, NumTy.ofSort ty) :: e
+            | _ => e) env
+          Sexp.expr (Sexp.atom h :: Sexp.expr vs :: rest.map (cvc5Numerals env' fold false))
         | _ => Sexp.expr (Sexp.atom h :: args.map (cvc5Numerals env fold false))
       else Sexp.expr (Sexp.atom h :: args.map (cvc5Numerals env fold false))
     | Sexp.expr xs => Sexp.expr (xs.map (cvc5Numerals env fold false))
@@ -307,14 +461,35 @@ def eqLhs? : Term → Option Term
   | .Apply (.Apply (.UOp UserOp.eq) t) _ => some t
   | _ => none
 
+/-- The innermost subterm of `t` that `Node.ofEo` does not read (one whose
+arguments it reads), for the error: the operator telos does not support. -/
+partial def unreadable (t : Term) : Term :=
+  let (_, xs) := eoSpine t
+  -- the arguments, with the elements of lists (of `distinct`, of a binder's
+  -- variables) in place of the lists
+  let rec elems (x : Term) : List Term :=
+    match eoSpine x with
+    | (.__eo_List_cons, [y, rest]) | (.UOp UserOp._at__at_TypedList_cons, [y, rest]) => y :: elems rest
+    | (.__eo_List_cons, _) | (.UOp UserOp._at__at_TypedList_cons, _) => []
+    | _ => if x == .__eo_List_nil then [] else [x]
+  match (xs.flatMap elems).find? fun x => (Node.ofEo [] x).isNone with
+  | some x => unreadable x
+  | none => t
+
+/-- The error for a term that `Node.ofEo` does not read. -/
+def unsupportedTerm (t : Term) : String :=
+  let s := Eunoia.print {} (unreadable t)
+  s!"the term uses an operator telos does not support yet: {if s.length ≤ 160 then s else (s.take 160).toString ++ "…"}"
+
 /-- Read a node from a term of the script. -/
 def toNode (name : Nat → Option String) (t : Term) : Except String Node :=
   match eqLhs? t with
   | none => .error "internal error: unexpected assumption"
   | some t =>
-    match Node.ofEo [] (nameConsts name t) with
+    let t := nameConsts name t
+    match Node.ofEo [] t with
     | some n => .ok n
-    | none => .error "the term uses an operator telos does not support yet"
+    | none => .error (unsupportedTerm t)
 
 /-! ### Annotations of quantifiers
 
@@ -456,7 +631,7 @@ partial def annotate (σ : Std.HashMap Key Node) (n : Node) : Node :=
 preprocessed assertions, a replayed trace), whose constants are read as cvc5
 prints them. -/
 def readScript (input : String) (cvc5Output : Bool := false) : Except String Script := do
-  let ss ← Sexp.Parser.manySexps!.run input
+  let ss := desugar (← Sexp.Parser.manySexps!.run input)
   let mut decls := #[]
   let mut eunoia := #[]
   let mut consts : Array String := #[]
@@ -477,7 +652,7 @@ def readScript (input : String) (cvc5Output : Bool := false) : Except String Scr
   let mut numEnv : List (String × NumTy) := []
   let mut annots : Array Annot := #[]
   for s in ss do
-    let s := bvNumerals s
+    let s := unaryOps (bvNumerals s)
     let s : Sexp := match s with
       | .expr [.atom "assert", t] => .expr [.atom "assert", cvc5Numerals numEnv cvc5Output false t]
       | .expr [.atom "simplify", t] => .expr [.atom "simplify", cvc5Numerals numEnv cvc5Output false t]
@@ -611,9 +786,10 @@ def readScript (input : String) (cvc5Output : Bool := false) : Except String Scr
     if k == .simplify then some (queryOf i src t) else none
   let assertions := read.filterMap fun (((k, src), t), i) =>
     if k != .assert then none
-    else some ⟨src, match Node.ofEo [] (nameConsts constName t) with
+    else some ⟨src, let t := nameConsts constName t
+      match Node.ofEo [] t with
       | some n => .ok (annotate ((σs.get? i).getD {}) n)
-      | none => .error "the term uses an operator telos does not support yet"⟩
+      | none => .error (unsupportedTerm t)⟩
   let declared := read.filterMap fun (((k, src), t), _) =>
     if k != .decl then none else
     match toNode constName t with

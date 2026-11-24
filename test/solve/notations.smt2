@@ -1,0 +1,21 @@
+; SMT-LIB notations read as cvc5 reads them: define-sort, define-const, :named,
+; quoted symbols, (as true Bool), legacy testers, unary and, divisible, and
+; numerals bound by let in real positions
+(set-logic ALL)
+(set-option :produce-models true)
+(define-sort SetOf (X) (Set X))
+(define-sort I () Int)
+(declare-datatypes ((T 0)) (((C) (D))))
+(declare-const s (SetOf I))
+(declare-const |x| I)
+(declare-const r Real)
+(declare-const t T)
+(define-const two I 2)
+(assert (! (set.member x s) :named inS))
+(assert (=> inS (= x two)))
+(assert (and (as true Bool)))
+(assert (is-D t))
+(assert ((_ divisible 2) |x|))
+(assert (let ((z 0)) (> r z)))
+(check-sat)
+(get-value (x s t r))

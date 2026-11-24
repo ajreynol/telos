@@ -1341,6 +1341,12 @@ theorem combineIdx_sound_in (N : SmtModel) {k : Kind} {is : Array Int} {cs : Arr
     · simp [hij, loopRec_toS, native_zplus, native_zneg, native_int_to_nat]
   · cases h
 
+/-- `divisible` on integers, as the evaluator has it. -/
+theorem divisible_eval (k t : Int) :
+    __smtx_model_eval_divisible (toVal (.int k)) (toVal (.int t)) = toVal (.bool (native_mod_total t k == 0)) := by
+  simp only [toVal, __smtx_model_eval_divisible, __smtx_model_eval_mod_total, __smtx_model_eval_eq, native_veq]
+  by_cases hz : native_mod_total t k = 0 <;> simp [hz]
+
 /-- **A connective has its value.** -/
 theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List MVal} {r : MVal}
     (hv : ValsIn N cs.toList vs) (h : Model.combine k cs vs = some r) :
@@ -1488,7 +1494,12 @@ theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List 
           simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact minus_sound h)
        | (rw [toSmt_bin (op := UserOp.set_member) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.set_member) x) y)
             = SmtTerm.set_member (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
-          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact member_sound h))
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact member_sound h)
+       | (rw [toSmt_bin (op := UserOp.divisible) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.divisible) x) y)
+            = SmtTerm.divisible (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+          obtain rfl := Option.some.inj h
+          exact divisible_eval _ _))
     | (have hs : cs.size = 1 := by simpa using hlen
        rw [toList_one hs] at hv
        obtain ⟨h0, -⟩ := List.forall₂_cons.1 hv

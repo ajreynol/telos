@@ -497,6 +497,8 @@ def combine (k : Kind) (cs : Array Node) (vs : List MVal) : Option MVal :=
     match s.ty with
     | .Set _ => if s.isSet then some (.bool (s.elems.any (x.veq ·))) else none
     | _ => none
+  -- `(divisible k t)`: `(= (mod_total t k) 0)`, as Logos evaluates it
+  | .DIVISIBLE, [.int k, .int t] => some (.bool (native_mod_total t k == 0))
   | _, _ => none
 where
   /-- An operation on two well-typed sets of one type `T`. -/
@@ -1003,6 +1005,9 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
     if strOf.contains i then continue
     -- the first string, by length then in order, of letters from `a`
     let start := (lenOf i).getD 0
+    -- (a string too long to write down has no value: the model is then not
+    -- evaluated)
+    if start > 1000000 then continue
     let mut found : Option (List Nat) := none
     for L in [start : start + 8] do
       if found.isSome then break

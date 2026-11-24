@@ -205,6 +205,7 @@ partial def ofEo (env : List Node) (t : Term) : Option Node := do
   | .UOp UserOp.to_real, [_] => app .TO_REAL xs
   | .UOp UserOp.to_int, [_] => app .TO_INTEGER xs
   | .UOp UserOp.is_int, [_] => app .IS_INTEGER xs
+  | .UOp UserOp.divisible, [_, _] => app .DIVISIBLE xs
   | .UOp UserOp.eq, [_, _] => app .EQUAL xs
   | .UOp UserOp.not, [_] => app .NOT xs
   | .UOp UserOp.imp, [_, _] => app .IMPLIES xs

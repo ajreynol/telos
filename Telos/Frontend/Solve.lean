@@ -223,10 +223,14 @@ partial def unhandledTerm? (fs : List Node) : Option Node := Id.run do
 a theory does not port, on which the `sat` rested (`restsOnModel`), a term the
 engine does not reason about, or else a failure of the certificate. -/
 def rejectionWhy (N : DtNames) (r : Solver.Result) (M : Solver.Model) (as out : List Node) : Solver.Unknown :=
-  match r.restsOnModel, unhandledTerm? (as ++ out) with
-  | some w, _ => w
-  | none, some t => .notPorted s!"the engine treats {(t.toSmtLibLet N).take 120} as uninterpreted (not ported)"
-  | none, none => modelRejection N M as
+  -- a string longer than the model builder writes down (`classValues`)
+  let tooLong := r.arithModel.find? fun (n, q) => n.getKind == .STRING_LENGTH && q > 1000000
+  match r.restsOnModel, unhandledTerm? (as ++ out), tooLong with
+  | some w, _, _ => w
+  | none, some t, _ => .notPorted s!"the engine treats {(t.toSmtLibLet N).take 120} as uninterpreted (not ported)"
+  | none, none, some (n, q) =>
+    .modelNotEvaluated s!"{(n.toSmtLibLet N).take 80} is {q}: a string too long to write down"
+  | none, none, none => modelRejection N M as
 
 /-- A `sat` whose model was rejected, for the reason `w`: `unknown`. -/
 def rejectModel (r : Solver.Result) (w : Solver.Unknown) : Solver.Result :=
