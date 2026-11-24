@@ -437,6 +437,14 @@ mutual
     -- `((not x), true)` from `(x, false)`
     let notTrue (x : Node) (p : EqProof) : EqProof :=
       .trans (.congAt (Node.notNode x) #[some p]) (.rw (Node.notNode Node.mkFalse))
+    -- an assumption (in either orientation): the engine may know it otherwise
+    if let some i := C.index.get? ⟨l⟩ then
+      match l with
+      | .app (.kind .NOT) #[x] => return notTrue x (.assume i)
+      | .app (.kind .EQUAL) #[_, _] => return .eqTrue (.assume i)
+      | _ => return .assume i
+    if let .app (.kind .EQUAL) #[a, b] := l then
+      if let some i := C.index.get? ⟨Node.eqNode b a⟩ then return .eqTrue (.symm (.assume i))
     match l with
     | .app (.kind .NOT) #[e@(.app (.kind .EQUAL) #[a, b])] =>
       let p ← try proveDiseq C a b catch _ => do

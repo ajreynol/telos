@@ -12,6 +12,7 @@ import Cpc.Proofs.RuleSupport.Cong.TypeSpine
 import Cpc.Proofs.Closed.Support
 import Cpc.Proofs.RuleSupport.SetsEvalOpSupport
 import Cpc.Proofs.Canonical.Ops
+import Cpc.Proofs.Canonical.Eval
 import Cpc.Proofs.Canonical.Maps
 
 /-!
@@ -99,6 +100,8 @@ instance logosFacts : LogosFacts where
     · simp [__eo_to_smt_type, __smtx_type_wf, __smtx_type_wf_component, __smtx_type_wf_rec,
         SmtEval.native_and]
     · rw [h]; rfl
+  eval_typed M t hM h := type_preservation M hM t h
+  eval_canonical M t hM h := model_eval_canonical M hM t h
   eval_bool M t hM h := by
     have hP := type_preservation M hM t (by unfold term_has_non_none_type; rw [h]; simp)
     rw [h] at hP

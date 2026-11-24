@@ -129,6 +129,14 @@ class LogosFacts : Prop where
   type `Bool` has Eunoia type `Bool`. -/
   eo_typeof_bool : ∀ (t : Term),
     __smtx_typeof (__eo_to_smt t) = SmtType.Bool → __eo_typeof t = Term.Bool
+  /-- `type_preservation`: in a well-formed model, a well-typed term evaluates to
+  a value of its type. -/
+  eval_typed : ∀ (M : SmtModel) (t : SmtTerm), model_wf M →
+    __smtx_typeof t ≠ SmtType.None → __smtx_typeof_value (__smtx_model_eval M t) = __smtx_typeof t
+  /-- `Smtm.model_eval_canonical`: in a well-formed model, a well-typed term evaluates to a canonical
+  value. -/
+  eval_canonical : ∀ (M : SmtModel) (t : SmtTerm), model_wf M →
+    __smtx_typeof t ≠ SmtType.None → __smtx_value_canonical M.usortDom (__smtx_model_eval M t) = true
   /-- `type_preservation` and `bool_value_canonical`: in a well-formed model, a
   term of SMT type `Bool` evaluates to a Boolean. -/
   eval_bool : ∀ (M : SmtModel) (t : SmtTerm), model_wf M →

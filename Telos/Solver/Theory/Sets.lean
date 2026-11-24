@@ -406,13 +406,15 @@ def registerTerm (r n : Node) : EEM Unit := do
         let c := if pos then { c with posMems := c.posMems.insert ⟨s⟩ mems }
           else { c with negMems := c.negMems.insert ⟨s⟩ mems }
         let idx := c.membersIndex.getD ⟨s⟩ {}
-        pure (if idx.contains ⟨xr⟩ then c else { c with membersIndex := c.membersIndex.insert ⟨s⟩ (idx.insert ⟨xr⟩ n) })
+        pure (if idx.contains ⟨xr⟩ then c else
+          { c with membersIndex := c.membersIndex.insert ⟨s⟩ (idx.insert ⟨xr⟩ n), careTerms := c.careTerms.push n })
       else pure c
     | .app (.kind .SET_SINGLETON) #[e] =>
       let re ← rep e
       let c := match c.singletonIndex.get? ⟨re⟩ with
         | none => { c with singletonIndex := c.singletonIndex.insert ⟨re⟩ n,
-                           eqcSingleton := c.eqcSingleton.insert ⟨r⟩ n }
+                           eqcSingleton := c.eqcSingleton.insert ⟨r⟩ n,
+                           careTerms := c.careTerms.push n }
         | some o => { c with congruent := c.congruent.insert ⟨n⟩ o }
       pure (c.addNvar r n)
     | .app (.kind k) #[a, b] =>

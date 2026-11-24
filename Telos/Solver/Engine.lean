@@ -2173,8 +2173,8 @@ the pairs whose arguments may be equal (`considerPath`) give pairs of their
 trigger arguments that are not equal (`processCarePairArgs`,
 `addCarePairArgs`). The care graph is a set, so the order in which the pairs
 are found does not matter. -/
-def carePairsOf {κ : Type} [BEq κ] [Inhabited κ] (T : Theory) (terms : Array Node) (key : Node → Option κ) :
-    EngineM (Array (Node × Node)) := do
+def carePairsOf {κ : Type} [BEq κ] [Inhabited κ] (T : Theory) (terms : Array Node) (key : Node → Option κ)
+    (whenEqual : Node → Bool := fun _ => false) : EngineM (Array (Node × Node)) := do
   let tag := T.tag
   let ee := (← get).ee
   let mut groups : Array (κ × Array (Array Node × Node)) := #[]
@@ -2198,7 +2198,8 @@ def carePairsOf {κ : Type} [BEq κ] [Inhabited κ] (T : Theory) (terms : Array 
           if !(← considerPath T r1[k]! r2[k]!) then ok := false; break
         if !ok then continue
         -- `processCarePairArgs`
-        if ← eeAreEqual fa fb then continue
+        -- (equal terms give none, but memberships in sets)
+        if !whenEqual fa && (← eeAreEqual fa fb) then continue
         let ee := (← get).ee
         let (.app _ xs, .app _ ys) := (fa, fb) | continue
         for k in [0:xs.size] do
@@ -2236,6 +2237,19 @@ def dtCarePairs : EngineM (Array (Node × Node)) := do
 declarations). -/
 def idLt (c : Config) (ids : Std.HashMap Key Nat) (a b : Node) : Bool := EE.ageLt ids a b c.declOrder
 
+/-- `TheorySetsPrivate::computeCareGraph`: the memberships and singletons of
+the last full-effort check (`d_op_list`), by operator and element type. The
+splits on elements that are sets (`SETS_CG_SPLIT`) are not ported. -/
+def setsCarePairs : EngineM (Array (Node × Node)) := do
+  carePairsOf .THEORY_SETS (← get).ee.sets.check.careTerms (fun
+    | .app (.kind .SET_MEMBER) #[_, s] => some (Kind.SET_MEMBER, s.typeHint)
+    | t@(.app (.kind .SET_SINGLETON) _) => some (Kind.SET_SINGLETON, t.typeHint)
+    | _ => none) fun t => t.getKind == .SET_MEMBER
+
+/-- `TheoryStrings::computeCareGraph`: its function terms, by operator. -/
+def stringsCarePairs : EngineM (Array (Node × Node)) := do
+  carePairsOf .THEORY_STRINGS (← get).ee.strings.functionTerms fun t => some (t.getOperator?, t.getChildren.size)
+
 /-- `CombinationCareGraph::combineTheories`: the care pairs of the parametric
 theories (UF and datatypes: arithmetic is not parametric, its model only
 prunes their pairs), a set ordered by theory and node
@@ -2249,6 +2263,10 @@ def combineTheories : EngineM Unit := do
     for (a, b) in ← ufCarePairs do pairs := pairs.push (Theory.all.idxOf .THEORY_UF, a, b)
   if c.dtSolver then
     for (a, b) in ← dtCarePairs do pairs := pairs.push (Theory.all.idxOf .THEORY_DATATYPES, a, b)
+  if c.setsSolver then
+    for (a, b) in ← setsCarePairs do pairs := pairs.push (Theory.all.idxOf .THEORY_SETS, a, b)
+  if c.stringsSolver then
+    for (a, b) in ← stringsCarePairs do pairs := pairs.push (Theory.all.idxOf .THEORY_STRINGS, a, b)
   let ids := (← get).ee.nodeIds
   -- `CarePair`: the smaller node first; the set's order
   let normal := pairs.map fun (t, a, b) => if idLt c ids b a then (t, b, a) else (t, a, b)
