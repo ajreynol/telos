@@ -1747,10 +1747,12 @@ the equality engine is its own explanation there.
   formulas' instances that the model does not make true
   (`Quant.modelEngineCheck`, cvc5's `BoundedIntegers` and model engine, but for
   the decision strategy of the ranges).
-  Not ported: the reductions with skolem functions (`str.to_int`,
-  `str.from_int`, `str.replace_all`, `str.replace_re`, `str.replace_re_all`): a
-  relevant term of these leaves a `sat` answer to the model check
-  (`State.extfUnchecked`).
+- the reductions with skolem functions (`str.to_int`, `str.from_int`,
+  `str.replace_all`, `str.replace_re`, `str.replace_re_all`): the skolems
+  `@strings_stoi_result` and the others (`SkolemId`), whose applications take
+  one argument (`isFnSkolemTerm`). The match skolems of `str.replace_re` are
+  CPC's, of terms not rewritten (one is under the reduction's quantifier);
+- `STRINGS_ARITH_BOUND_CONFLICT` by `arith_string_pred_entail`;
 - the certificates of lemmas are made when a refutation uses them: `buildCert`
   keeps the clauses that a backward pass of unit propagation uses
   (`usedClauses`).

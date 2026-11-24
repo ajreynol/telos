@@ -405,6 +405,9 @@ inductive Kind where
   /-- `STRINGS_EXTF_EQ_REW`: the last premise, with the substitution of the
   others, by cvc5's extended rewriting of equalities. -/
   | eqRew
+  /-- `STRINGS_ARITH_BOUND_CONFLICT`: a length equal to a constant beyond its
+  bound. -/
+  | bound
   /-- `string_decompose`, from a premise `(>= (str.len x) n)`. -/
   | decompose
   | csplit | cprop | split | lprop | unify | const | eq
@@ -417,6 +420,7 @@ def kindOf (id : String) : Option Kind :=
   match id with
   | "STRINGS_CTN_POS" | "STRINGS_CTN_NEG_EQUAL" | "STRINGS_CTN_DECOMPOSE" => some .ctn
   | "STRINGS_EXTF_EQ_REW" => some .eqRew
+  | "STRINGS_ARITH_BOUND_CONFLICT" => some .bound
   | "STRINGS_DEQ_DISL_STRINGS_SPLIT" | "STRINGS_DEQ_DISL_FIRST_CHAR_STRING_SPLIT" => some .decompose
   | "STRINGS_SSPLIT_CST" => some .csplit
   | "STRINGS_SSPLIT_CST_PROP" => some .cprop
@@ -621,6 +625,36 @@ def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M
     let (F, i) ← litFact (.trans (.symm q) (atomProof C j))
     if F != conc then throw "a conclusion of another form"
     return i
+  if k == .bound then
+    for m in (List.range n).reverse do
+      let .app (.kind .EQUAL) #[a, b] := A[m]! | continue
+      let (x, c, p) : Node × Node × EqProof :=
+        if b.isConst then (a, b, .assume m) else (b, a, .symm (.assume m))
+      let .const (.integer v) := c | continue
+      -- the length, of the term its skolem purifies, rewritten: `(x, r)`
+      let (x', q₁) := match x with
+        | .app (.kind .STRING_LENGTH) #[y] => match purifyEq y with
+          | some (u, pk) => (Node.mkNode .STRING_LENGTH #[u], some (.congAt x #[some pk]))
+          | none => (x, none)
+        | _ => (x, none)
+      let (r, q₂) := rwProof x'
+      let toC : EqProof := match compose q₁ q₂ with
+        | some q => .trans (.symm q) p
+        | none => p
+      -- at least one more, or at most one less, by `arith_string_pred_entail`
+      for lower in [true, false] do
+        let d := if lower then Node.mkNode .SUB #[r, .const (.integer (v + 1))]
+          else Node.mkNode .SUB #[.const (.integer (v - 1)), r]
+        let P := Node.mkNode .GEQ #[d, zero]
+        let eP := Node.eqNode P Node.mkTrue
+        let pP : EqProof := .valid eP [DT.argStep .arith_string_pred_entail eP]
+        if (EqProof.check A pP).isNone then continue
+        let some qd := substOne r c toC P | continue
+        let some (_, P') := EqProof.check A qd | continue
+        if Telos.rewrite P' != Node.mkFalse then continue
+        let (_, i) ← litFact (.symm (.trans (.symm pP) (.trans qd (.rw P'))))
+        return i
+    throw "no length beyond its bound"
   if k == .eqRew then
     for m in (List.range n).reverse do
       let .app (.kind .EQUAL) _ := A[m]! | continue
@@ -769,7 +803,7 @@ def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M
     let li ← lengthFact R (Node.eqNode (len ht) (len hs))
     let (C, c) ← rule .concat_unify [.node (Node.mkBool rev)] [e, li]
     conclude C c conc R
-  | .eq | .sr | .ctn | .decompose | .eqRew => throw "unreachable"
+  | .eq | .sr | .ctn | .decompose | .eqRew | .bound => throw "unreachable"
 
 /-- The premises as a formula: their conjunction, or the one premise. -/
 def premiseFormula (P : Array Node) : Node :=
@@ -885,6 +919,7 @@ def prove (id : String) (P : Array Node) (conc : Node) : Option (Node × List CC
   -- (substitution and rewriting: for a conflict, each main equality; else once)
   let srTries := if conc == Node.mkFalse then mains.map fun m => (Kind.sr, m, false, false) else [(Kind.sr, 0, false, false)]
   let tries := if k == .sr then srTries
+    else if k == .bound then (k, 0, false, false) :: srTries
     else if k == .ctn || k == .decompose || k == .eqRew then [(k, 0, false, false)] else tries ++ srTries
   -- (the second order only for small inferences: an attempt can be costly)
   let orders := if P.size ≤ 8 then [false, true] else [false]

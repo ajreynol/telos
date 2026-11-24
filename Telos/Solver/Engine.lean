@@ -1352,9 +1352,13 @@ def explainAllSteps (lits : Array Node) (all : Bool) (record : Bool) :
       -- (the literal to explain, if arithmetic propagated it, is arithmetic's,
       -- though the equality engine shared it back after)
       let mine := forced && (← get).propagator.get? ⟨l⟩ == some .THEORY_ARITH
-      if c.arithSolver && byArith && (mine || !shared) then
+      let arithExp ← if c.arithSolver && byArith && (mine || !shared) then withArith (Arith.explain l)
+        else pure #[]
+      -- (a literal arithmetic has no explanation of, such as one it does not
+      -- know, is the equality engine's)
+      if !arithExp.isEmpty then
         -- `TheoryArith::explain`
-        let e ← withArith (Arith.explain l)
+        let e := arithExp
         if record && !forced then
           steps := steps.push { lit := l, exp := e, arith := true, cert := ← withArith (Arith.explainCert l) }
         todo := todo ++ e.map (·, true)
@@ -1365,6 +1369,15 @@ def explainAllSteps (lits : Array Node) (all : Bool) (record : Bool) :
         if shared && exp.contains l && fromSat l then
           if !out.contains l then out := out.push l
           continue
+        -- (one that arithmetic propagated to the equality engine, which shared
+        -- it back, is its own explanation there too: arithmetic's)
+        if exp.contains l && c.arithSolver then
+          let e ← withArith (Arith.explain l)
+          if !e.isEmpty && !e.contains l then
+            if record && !forced then
+              steps := steps.push { lit := l, exp := e, arith := true, cert := ← withArith (Arith.explainCert l) }
+            todo := todo ++ e.map (·, true)
+            continue
         if record && !forced && top then steps := steps.push { lit := l, exp, arith := false }
         todo := todo ++ exp.map (·, false)
   return (out, steps)

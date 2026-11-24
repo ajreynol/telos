@@ -3,10 +3,7 @@ import Telos.Solver.Theory.Strings
 /-!
 # The reductions of the extended string functions
 
-A port of cvc5's `StringsPreprocess::reduce`, for the functions whose reduction
-has no skolem function (`str.substr`, `str.update`, `str.indexof`,
-`str.replace`, a negative `str.contains`, `str.<=`, `str.rev`, case conversion,
-`str.indexof_re`), of `utils::eagerReduce` for `str.contains`, and of the
+A port of cvc5's `StringsPreprocess::reduce`, for every extended function, of `utils::eagerReduce` for `str.contains`, and of the
 unfolding of a negative membership (`RegExpOpr::reduceRegExpNeg`).
 
 Each is made twice, from one definition: as cvc5's solver does, the arguments
@@ -211,13 +208,12 @@ def reduceExtf (t : Node) : m (Option Node) := do
     let k ← purifySkolem ops t
     let idx := Node.mkNode .STRING_INDEXOF_RE #[x, r, zero]
     -- the first match (`RE_FIRST_MATCH_PRE`, `RE_FIRST_MATCH`, `RE_FIRST_MATCH_POST`)
-    let x' ← ops.rw x
-    let r' ← ops.rw r
-    let idx' := Node.mkNode .STRING_INDEXOF_RE #[x', r', zero]
-    let occ1 := Node.applyUF (.skolem .STRINGS_OCCUR_INDEX_RE #[x', r']) #[intConst 1]
-    let k1 ← skolem ops (substr x' zero idx')
-    let k2 ← skolem ops (substr x' idx' (sub occ1 idx'))
-    let k3 ← skolem ops (substr x' occ1 (sub (mkLen x') occ1))
+    -- (CPC's, of terms not rewritten, unlike cvc5's solver: the second is in the
+    -- quantified formula, under which the certificate does not relate skolems)
+    let occ1 := Node.applyUF (.skolem .STRINGS_OCCUR_INDEX_RE #[x, r]) #[intConst 1]
+    let k1 ← ops.purify (substr x zero idx)
+    let k2 ← ops.purify (substr x idx (sub occ1 idx))
+    let k3 ← ops.purify (substr x occ1 (sub (mkLen x) occ1))
     let l := lengthVar
     let shortest := Node.mkBoundedForall #[l] (Node.mkNode .OR #[Node.notNode (Node.mkNode .GEQ #[l, zero]),
       Node.notNode (Node.mkNode .LT #[l, mkLen k2]),

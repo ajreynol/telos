@@ -206,6 +206,7 @@ theorem indexed_children (k : Kind) (is : List Int) :
     | exact spine1 (fun x h => by typed1)
     | exact spine2 (fun x y h => LogosFacts.update_args _ _ x y (.inl rfl) h)
 
+omit [LogosFacts] in
 /-- The argument of an application of a function skolem of strings. -/
 theorem fnSkolem_children {id : SkolemId} {ks : Array Node}
     (hc : (Op.node .APPLY_UF (.skolem id ks)).childrenTypedOfParent = true) :

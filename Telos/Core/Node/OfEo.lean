@@ -220,6 +220,8 @@ partial def ofEo (env : List Node) (t : Term) : Option Node := do
   | .UOp UserOp.exists, [vs, body] => binder .EXISTS vs body
   | .UOp3 UserOp3._at_re_unfold_pos_component s r i, [] =>
       return .skolem .RE_UNFOLD_POS_COMPONENT #[← ofEo env s, ← ofEo env r, ← ofEo env i]
+  | .UOp2 UserOp2._at_quantifiers_skolemize q i, [] =>
+      return .skolem .QUANTIFIERS_SKOLEMIZE #[← ofEo env q, ← ofEo env i]
   | .UOp2 UserOp2.re_loop (.Numeral i) (.Numeral j), [x] =>
       return .app (.indexed .REGEXP_LOOP #[i, j]) #[← ofEo env x]
   | .UOp2 UserOp2.extract (.Numeral i) (.Numeral j), [x] =>

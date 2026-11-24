@@ -23,8 +23,6 @@ A port of the full-effort check of cvc5's `TheoryStrings` (`postCheck`, with its
 - the extended functions (`ExtfSolver`): their evaluation (`checkExtfEval`) and
   the reductions (`checkExtfReductions`, and `lastCall`).
 
-The reductions with skolem functions are not ported: an answer `sat` with a
-relevant term that needs one rests on the model check (`State.extfUnchecked`).
 A looping word equation, which needs regular expressions, makes the check
 incomplete (`State.incomplete`); the cardinality of the alphabet is not
 checked (it only matters for more than 196608 classes of one length).
@@ -2102,7 +2100,7 @@ strategy, repeated while it had something pending and sent no lemma.
 def postCheck (full : Bool) (relevant : Std.HashSet Key) (needCheck : m Bool) : m Unit := do
   doPendingFacts ops
   if !full || (← ops.run inConflict) || (← needCheck) then return
-  ops.run (modifyStrings fun s => { s with incomplete := false, negMemUnchecked := false, extfUnchecked := false, chk := { relevant } })
+  ops.run (modifyStrings fun s => { s with incomplete := false, negMemUnchecked := false, chk := { relevant } })
   repeat
     ops.run (modifyStrings fun s => { s with sentFacts := 0, sentLemmas := 0 })
     ops.run runStrategy

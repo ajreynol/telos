@@ -568,8 +568,6 @@ def runSat (c : Config) (formulas : List Node) : Result :=
       else some (.notPorted s!"not solved: {", ".intercalate (unsolved.map (·.name))}")
     let restsOnModel : Option Unknown := if e.ee.strings.negMemUnchecked then
         some (.notPorted "strings: negative memberships are not unfolded (STRINGS_RE_UNFOLD_NEG)")
-      else if e.ee.strings.extfUnchecked then
-        some (.notPorted "strings: an extended function whose reduction has a skolem function is not reduced (STRINGS_REDUCTION)")
       else none
     { answer := if solved then .sat else .unknown, events := e.events, ee := e.ee, why, restsOnModel,
       asserted := e.asserted ++ bools,
