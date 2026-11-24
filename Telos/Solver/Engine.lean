@@ -703,10 +703,17 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
       if (← read).satMode then
         let ord := (← read).order
         let fresh := (← get).ee.freshIds
+        let ee := (← get).ee
         let proof := if T == .THEORY_SETS then SetsLemma.prove id lem ord
           else if T == .THEORY_STRINGS then
             -- the order in which the theory rewrote the lemma's parts
-            StringsLemma.prove id lem { ord with fresh }
+            -- (else from the inference's premises, as the engine explains them)
+            match StringsLemma.prove id lem { ord with fresh } with
+            | some p => some p
+            | none =>
+              match ee.strings.lemmaPremises.get? ⟨lem⟩ with
+              | some ps => (EE.lemmaOfStrings ee lem id ps).toOption
+              | none => none
           else DtLemma.prove id lem
         modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lem, false, none, proof),
                                  outputUsed := true, lemmasAdded := true }
@@ -1297,7 +1304,10 @@ def explainAllSteps (lits : Array Node) (all : Bool) (record : Bool) :
       let byArith := match (← get).propagator.get? ⟨l⟩ with
         | some T => T == .THEORY_ARITH
         | none => c.theoryOf (atomOf l).1 == .THEORY_ARITH
-      if c.arithSolver && byArith && !shared then
+      -- (the literal to explain, if arithmetic propagated it, is arithmetic's,
+      -- though the equality engine shared it back after)
+      let mine := forced && (← get).propagator.get? ⟨l⟩ == some .THEORY_ARITH
+      if c.arithSolver && byArith && (mine || !shared) then
         -- `TheoryArith::explain`
         let e ← withArith (Arith.explain l)
         if record && !forced then

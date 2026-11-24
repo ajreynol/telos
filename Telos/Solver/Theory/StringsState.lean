@@ -192,6 +192,9 @@ structure State where
   /-- The internal facts asserted, with their inference and explanation, for the
   certificates. -/
   facts : Std.HashMap Key (String × Node) := {}
+  /-- The premises of the lemmas sent, before their explanation, for the
+  certificates. -/
+  lemmaPremises : Std.HashMap Key (Array Node) := {}
   /-- `d_pendingConflict` (context dependent): a conflict found while the
   equality engine merges (the eager solver's), sent after the fact: its
   inference, and its premises. -/

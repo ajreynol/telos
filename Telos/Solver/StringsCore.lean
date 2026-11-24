@@ -402,6 +402,9 @@ inductive Kind where
   /-- `STRINGS_CTN_POS`, `STRINGS_CTN_NEG_EQUAL`, `STRINGS_CTN_DECOMPOSE`: the
   eager reduction of a `str.contains` of the premises. -/
   | ctn
+  /-- `STRINGS_EXTF_EQ_REW`: the last premise, with the substitution of the
+  others, by cvc5's extended rewriting of equalities. -/
+  | eqRew
   /-- `string_decompose`, from a premise `(>= (str.len x) n)`. -/
   | decompose
   | csplit | cprop | split | lprop | unify | const | eq
@@ -413,6 +416,7 @@ inductive Kind where
 def kindOf (id : String) : Option Kind :=
   match id with
   | "STRINGS_CTN_POS" | "STRINGS_CTN_NEG_EQUAL" | "STRINGS_CTN_DECOMPOSE" => some .ctn
+  | "STRINGS_EXTF_EQ_REW" => some .eqRew
   | "STRINGS_DEQ_DISL_STRINGS_SPLIT" | "STRINGS_DEQ_DISL_FIRST_CHAR_STRING_SPLIT" => some .decompose
   | "STRINGS_SSPLIT_CST" => some .csplit
   | "STRINGS_SSPLIT_CST_PROP" => some .cprop
@@ -617,6 +621,41 @@ def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M
     let (F, i) ← litFact (.trans (.symm q) (atomProof C j))
     if F != conc then throw "a conclusion of another form"
     return i
+  if k == .eqRew then
+    for m in (List.range n).reverse do
+      let .app (.kind .EQUAL) _ := A[m]! | continue
+      let R := ((List.range n).filter fun i => i != m && match A[i]! with
+        | .app (.kind .EQUAL) _ => true
+        | _ => false).toArray
+      let (t, qt) ← substRw R A[m]!
+      let pt : EqProof := match qt with
+        | some q => .trans (.symm q) (.eqTrue (.assume m))
+        | none => .eqTrue (.assume m)
+      -- `(t, true)`, then the extended rewrite of `t`, and its rewrite
+      let (c, p) ← match Preprocess.strEqualityExt t with
+        | none => pure (t, pt)
+        | some r => do
+          let some cs := Proof.cmdsOf r | continue
+          let q : EqProof := .valid (Node.eqNode t r.1) cs
+          let (c, q') := rwProof r.1
+          let q := match q' with
+            | some q' => EqProof.trans q q'
+            | none => q
+          pure (c, EqProof.trans (.symm q) pt)
+      if c == Node.mkFalse then
+        -- (`(false, true)`)
+        if conc != Node.mkFalse then continue
+        let (_, i) ← litFact p
+        return i
+      let parts := match c with
+        | .app (.kind .AND) cs => cs
+        | c => #[c]
+      let some k := parts.findIdx? (fun l => l == conc || Telos.rewrite l == Telos.rewrite conc) | continue
+      let p : EqProof := if parts.size > 1 then .andElim k p else p
+      let (F, i) ← litFact p
+      if F == conc then return i
+      return ← conclude F i conc
+    throw "no premise whose extended rewrite is the conclusion"
   if k == .decompose then
     let l ← match (A[0]? : Option Node) with
       | some (Node.app (.kind .GEQ) #[_, l]) => pure l
@@ -730,7 +769,7 @@ def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M
     let li ← lengthFact R (Node.eqNode (len ht) (len hs))
     let (C, c) ← rule .concat_unify [.node (Node.mkBool rev)] [e, li]
     conclude C c conc R
-  | .eq | .sr | .ctn | .decompose => throw "unreachable"
+  | .eq | .sr | .ctn | .decompose | .eqRew => throw "unreachable"
 
 /-- The premises as a formula: their conjunction, or the one premise. -/
 def premiseFormula (P : Array Node) : Node :=
@@ -846,7 +885,7 @@ def prove (id : String) (P : Array Node) (conc : Node) : Option (Node × List CC
   -- (substitution and rewriting: for a conflict, each main equality; else once)
   let srTries := if conc == Node.mkFalse then mains.map fun m => (Kind.sr, m, false, false) else [(Kind.sr, 0, false, false)]
   let tries := if k == .sr then srTries
-    else if k == .ctn || k == .decompose then [(k, 0, false, false)] else tries ++ srTries
+    else if k == .ctn || k == .decompose || k == .eqRew then [(k, 0, false, false)] else tries ++ srTries
   -- (the second order only for small inferences: an attempt can be costly)
   let orders := if P.size ≤ 8 then [false, true] else [false]
   orders.findSome? fun largest => tries.findSome? fun (k, m, rev, flip) =>
@@ -895,5 +934,24 @@ def proveFrom (id : String) (P : Array Node) (ps : Array EqProof) (conc : Node) 
   let (F, cs) ← prove id P conc
   let pH ← andIntro P ps
   modusPonens F (.valid F cs) pH
+
+/-- The CPC proof of `(=> h conc)`, for `h` the conjunction of `E`, from a proof
+of `(conc, true)` (`(x, false)` for `conc` the negation of `x`) from `E`. -/
+def discharge (E : Array Node) (h conc : Node) (q : EqProof) : Option (List CCmd) := do
+  let act : M Unit := do
+    let p ← push ⟨.refl, [.node h], [], .assume⟩
+    if E.size == 1 then let _ ← known h p
+    else
+      for i in [0:E.size] do
+        let r ← push ⟨.and_elim, [.term (Term.Numeral i)], [p], .step⟩
+        let _ ← known E[i]! r
+    let (F, c) ← litFact q
+    if F != conc then throw "a conclusion of another form"
+    let _ ← push ⟨.scope, [], [← posOf c], .pop⟩
+  match (act.run {}).run {} with
+  | .ok (((), _), st) =>
+    let cs := toCmds st.steps
+    if (EqProof.check #[] (.valid (Node.mkNode .IMPLIES #[h, conc]) cs)).isSome then some cs else none
+  | .error _ => none
 
 end Telos.Solver.StringsCore

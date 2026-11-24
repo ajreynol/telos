@@ -1745,6 +1745,10 @@ the equality engine is its own explanation there.
   which need bounded integers, and so the relevant terms of these kinds leave a
   `sat` answer to the model check (`State.extfUnchecked`). `STRINGS_CTN_TRANS`
   has no certificate (cvc5's has no proof either);
+- certificates of lemmas: from the lemma's explained premises, or else from the
+  inference's own premises, each proven in the equality engine
+  (`EE.lemmaOfStrings`), as conflicts are; `STRINGS_EXTF_EQ_REW` by the extended
+  rewriting of equalities, as cvc5's proof;
 - the evaluator of models (`Model.combineStr`) has every extended function, as
   Logos evaluates it (proved in `TelosProofs/Solver/Model.lean`);
 - codes (`CodePointSolver`): the eager reduction of `str.to_code` (and of

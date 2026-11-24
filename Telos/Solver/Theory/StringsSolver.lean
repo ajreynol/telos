@@ -2043,6 +2043,8 @@ def processLemma (ii : Inference) : m Unit := do
     if let .app (.kind .AND) cs := ii.conc then
       if let some (.app (.kind .EQUAL) #[n, _]) := cs.back? then
         ops.run (modifyStrings fun s => { s with reduced := s.reduced.insert ⟨n⟩ })
+  if !exp.isEmpty then
+    ops.run (modifyStrings fun s => { s with lemmaPremises := s.lemmaPremises.insert ⟨lem⟩ exp })
   let _ ← ops.run (trustedLemma lem ii.id)
 
 /-- `doPendingLemmas`. -/

@@ -150,7 +150,15 @@ mutual
           if x == a && y == b then some (.assume i)
           else if x == b && y == a then some (.symm (.assume i))
           else none
-        | none => none
+        | none => match edge.reason with
+          -- (an assumption with the sides swapped)
+          | .app (.kind .EQUAL) #[l, r] => match C.index.get? ⟨Node.eqNode r l⟩ with
+            | some i =>
+              if r == a && l == b then some (.assume i)
+              else if r == b && l == a then some (.symm (.assume i))
+              else none
+            | none => none
+          | _ => none
       match asAssumption with
       | some p => return p
       | none =>
@@ -679,5 +687,25 @@ def conflictOfStrings (ee : EqualityEngine) (lits : Array Node) (id : String) (p
       | throw s!"a conflict of {id} without a proof"
     -- `(false, true)`, as `(true, false)`
     return .symm q
+
+/-- A proof of `(lem, true)` for the lemma `lem = (=> h conc)` of the theory of
+strings, from the premises of its inference `id` before their explanation `h`:
+the inference (`StringsCore.prove`), and each premise from `h` in the engine,
+under the assumption of `h`. -/
+def lemmaOfStrings (ee : EqualityEngine) (lem : Node) (id : String) (premises : Array Node) :
+    Except String EqProof := do
+  let .app (.kind .IMPLIES) #[h, conc] := lem | throw "a lemma without premises"
+  let E := match h with
+    | .app (.kind .AND) cs => cs
+    | l => #[l]
+  let C := buildCtx ee E E
+  let (A, q) ← build E do
+    let ps ← premises.mapM (proveLitTrue C)
+    let some q := StringsCore.proveFrom id premises ps conc
+      | throw s!"a lemma of {id} without a proof"
+    return q
+  if A.size != E.size then throw "an assumption that is not a premise"
+  let some cs := StringsCore.discharge E h conc q | throw "a lemma whose proof does not check"
+  return .valid lem cs
 
 end Telos.Solver.EE

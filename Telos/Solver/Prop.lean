@@ -414,7 +414,7 @@ def unjustifiedClauses (p : PropState) : Array (SatProof.Clause × String) := Id
         for (d, j) in aux do
           if j.isNone then out := out.push (d, label k)
       | _ => if !hasCert k then if let some c := toNodes c then out := out.push (c, label k)
-    | .theory none => if let some c := toNodes c then out := out.push (c, "a theory conflict")
+    | .theory none => if let some c := toNodes c then out := out.push (c, "a propagation's explanation")
     | .derived aux =>
       for (d, j) in aux do
         if j.isNone then out := out.push (d, "a propagation's explanation")
