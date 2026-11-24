@@ -63,19 +63,26 @@ def posOf (i : Nat) : M Nat := do
   let some p := (← get).pos[i]? | throw "a fact out of range"
   return p
 
-/-- The last fact proven, read back from Logos. -/
-def lastFact : M Node := do
-  let st ← getThe EmitState
-  let cmds := (toCmds st.steps).foldr CCmdList.cons CCmdList.nil
-  let t := __eo_state_proven_nth (runFromEmpty cmds) 0
-  let some n := Node.ofEo (← get).env t | throw "a conclusion that does not read back"
-  return n
+/-- The conclusion of a rule from the premises `prems`, read back from Logos,
+which runs the rule alone (its premises assumed), not the proof so far. -/
+def conclusionOf (r : CRule) (args : List PArg) (prems : List Node) : M Node := do
+  let act : EmitM Unit := do
+    let ps ← prems.mapM fun F => push ⟨.refl, [.node F], [], .assume⟩
+    let _ ← push ⟨r, args, ps, .step⟩
+  match act.run {} with
+  | .error e => throw e
+  | .ok ((), st) =>
+    let cmds := (toCmds st.steps).foldr CCmdList.cons CCmdList.nil
+    let t := __eo_state_proven_nth (runFromEmpty cmds) 0
+    let some n := Node.ofEo (← get).env t | throw "a conclusion that does not read back"
+    return n
 
 /-- Apply a CPC rule to known facts: its conclusion becomes known. -/
 def rule (r : CRule) (args : List PArg) (prems : List Nat) : M (Node × Nat) := do
   let ps ← prems.mapM posOf
+  let A := (← get).A
+  let F ← conclusionOf r args (prems.map fun i => A[i]!)
   let p ← push ⟨r, args, ps, .step⟩
-  let F ← lastFact
   return (F, ← known F p)
 
 /-- A proof from the known facts: its conclusion `(a, b)` becomes the known

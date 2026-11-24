@@ -1,3 +1,4 @@
+import Telos.Core.Regex
 import Telos.Rewriter.Theory.Common
 import Telos.Rewriter.Rewriter
 import Telos.Rewriter.Strings.ArithEntail
@@ -1430,6 +1431,115 @@ def evalConst (n : Node) : Option (Rw n) :=
     (byEvaluate n).filter (·.1.isConst)
   else none
 
+/-- The value of a constant regular expression (for the evaluations below, which
+CPC's rules check). -/
+partial def reValue? (n : Node) : Option Solver.TRe :=
+  match n with
+  | .app (.kind .STRING_TO_REGEXP) #[.const (.string w)] => some (.ofList w)
+  | .app (.kind .REGEXP_RANGE) #[.const (.string a), .const (.string b)] => some (.mkRange a b)
+  | .app (.kind k) cs => do
+    let vs ← cs.mapM reValue?
+    let fold (f : Solver.TRe → Solver.TRe → Solver.TRe) (nil : Solver.TRe) : Solver.TRe := vs.foldr f nil
+    match k, vs.toList with
+    | .REGEXP_CONCAT, _ => some (fold .mkConcat .epsilon)
+    | .REGEXP_UNION, _ => some (fold .mkUnion .empty)
+    | .REGEXP_INTER, _ => some (fold .mkInter (.star .allchar))
+    | .REGEXP_NONE, [] => some .empty
+    | .REGEXP_ALL, [] => some (.star .allchar)
+    | .REGEXP_ALLCHAR, [] => some .allchar
+    | .REGEXP_STAR, [r] => some (.mkStar r)
+    | .REGEXP_PLUS, [r] => some (.mkConcat r (.mkStar r))
+    | .REGEXP_OPT, [r] => some (.mkUnion r .epsilon)
+    | .REGEXP_COMPLEMENT, [r] => some (.mkComp r)
+    | .REGEXP_DIFF, [a, b] => some (.mkInter a (.mkComp b))
+    | _, _ => none
+  | _ => none
+
+/-- The longest string of the evaluations: CPC's rules, run to check them, try
+the prefixes of the string. -/
+def reEvalLimit : Nat := 60
+
+/-- cvc5's `rewriteIndexofRe`: out of bounds (no rule), evaluation
+(`str-indexof-re-eval`), the empty match, the empty regular expression. -/
+def rewriteIndexofRe (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
+  match n.getChildren with
+  | #[s, r, i] => firstOf [
+      fun _ => do
+        let .const (.string w) := s | none
+        let .const (.integer k) := i | none
+        if w.length > reEvalLimit then none
+        let v ← reValue? r
+        checkBy .str_indexof_re_eval n (.const (.integer (Solver.TRe.indexOf w v k))),
+      fun _ => if ArithEntail.check i && ArithEntail.check2 (len s) i then byRuleE rw "str-indexof-re-emp-re" n else none,
+      fun _ => byRule "str-indexof-re-none" n]
+  | _ => none
+
+/-- The string `w` (`s`) with its first match of `v` replaced by `t`, as
+`str-replace-re-eval` states it. -/
+def replaceReTarget (w : List Nat) (v : Solver.TRe) (s t : Node) : Node :=
+  match Solver.TRe.findIdx v w 0 with
+  | some (i, l) => mkNode .STRING_CONCAT #[mkWord (w.take i), t, mkWord (w.drop (i + l))]
+  | none => s
+
+/-- cvc5's `rewriteReplaceRe`: evaluation (`str-replace-re-eval`, the parts of
+the string around its first match), the empty regular expression. -/
+def rewriteReplaceRe (n : Node) : Option (Rw n) :=
+  match n.getChildren with
+  | #[s, r, t] => firstOf [
+      fun _ => do
+        let .const (.string w) := s | none
+        if w.length > reEvalLimit then none
+        let v ← reValue? r
+        checkBy .str_replace_re_eval n (replaceReTarget w v s t),
+      fun _ => byRule "str-replace-re-none" n]
+  | _ => none
+
+/-- cvc5's `rewriteReplaceReAll`: evaluation (`str-replace-re-all-eval`, the parts
+of the string between its nonempty matches), the empty regular expression. -/
+def rewriteReplaceReAll (n : Node) : Option (Rw n) :=
+  match n.getChildren with
+  | #[s, r, t] => firstOf [
+      fun _ => do
+        let .const (.string w) := s | none
+        if w.length > reEvalLimit then none
+        let v ← reValue? r
+        let rec pieces (fuel : Nat) (xs acc : List Nat) : List Node :=
+          match fuel, xs with
+          | fuel + 1, c :: cs =>
+            match Solver.TRe.posPrefixLen v xs with
+            | some (k + 1) =>
+              mkWord acc.reverse :: t :: pieces fuel (xs.drop (k + 1)) []
+            | _ => pieces fuel cs (c :: acc)
+          | _, _ => if acc.isEmpty then [] else [mkWord acc.reverse]
+        match pieces (w.length + 1) w [] with
+        | [] => checkBy .str_replace_re_all_eval n s
+        | [p] => checkBy .str_replace_re_all_eval n p
+        | ps => checkBy .str_replace_re_all_eval n (mkNode .STRING_CONCAT ps.toArray),
+      fun _ => byRule "str-replace-re-all-none" n]
+  | _ => none
+
+/-- cvc5's `rewriteUpdate`, in part: evaluation, out of bounds
+(`str-update-oob`), the first component replaced (`str-update-fit`,
+`str-update-concat-fit0`), and `UPD_REV`. -/
+def rewriteUpdate (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
+  match n.getChildren with
+  | #[s, i, x] =>
+    if s.isConst && i.isConst && x.isConst then byEvaluate n else
+    firstOf [
+      fun _ => if (word? s).isEqSome [] || ArithEntail.check2 (intConst' (-1)) i || ArithEntail.check2 i (len s) then
+          byRuleProving rw Eo.CRule.str_update_oob [s, i, x]
+            [(eqNode (len (mkNode .STRING_SUBSTR #[s, i, intConst' 1])) (intConst' 0), true)] n else none,
+      fun _ => if i == ArithEntail.zero && ArithEntail.checkEq (rw (len s)).1 (rw (len x)).1 then
+          byRuleProving rw Eo.CRule.str_update_fit [s, i, x]
+            [(eqNode i (intConst' 0), true), (eqNode (len s) (len x), true)] n else none,
+      fun _ => if i == ArithEntail.zero && (getConcat s).length ≥ 2 &&
+            ArithEntail.checkEq (rw (len (getConcat s).head!)).1 (rw (len x)).1 then
+          byRuleE rw "str-update-concat-fit0" n else none,
+      fun _ => if s.getKind == .STRING_REV then byRuleE rw "str-update-rev" n else none]
+  | _ => none
+where
+  intConst' (k : Int) : Node := .const (.integer k)
+
 /-- cvc5's `SequencesRewriter::postRewrite`. -/
 def postRewrite (rw : (m : Node) → Rw m) (o : NodeOrder) (n : Node) : RewriteResponse n :=
   let r : Option (Rw n) := match n.getKind with
@@ -1444,6 +1554,10 @@ def postRewrite (rw : (m : Node) → Rw m) (o : NodeOrder) (n : Node) : RewriteR
     | .STRING_REPLACE_ALL => rewriteReplaceAll rw n
     | .STRING_INDEXOF => rewriteIndexof rw n
     | .STRING_REV => rewriteStrReverse n
+    | .STRING_UPDATE => rewriteUpdate rw n
+    | .STRING_INDEXOF_RE => rewriteIndexofRe rw n
+    | .STRING_REPLACE_RE => rewriteReplaceRe n
+    | .STRING_REPLACE_RE_ALL => rewriteReplaceReAll n
     | .STRING_TO_LOWER | .STRING_TO_UPPER => rewriteStrConvert n
     | .STRING_STOI => rewriteStrToInt rw n
     | .STRING_LT => byRule "str-lt-elim" n

@@ -125,6 +125,29 @@ def pathTo (C : BuildCtx) (t : Node) : BuildM SubPath := do
   let some p := (← get).paths.get? ⟨t⟩ | throw "a congruence term is not below its literal"
   return p
 
+/-- The number of arguments of the application node `i` (its spine's length). -/
+def spineDepth (ee : EqualityEngine) (i : Nat) : Nat := Id.run do
+  let mut i := i
+  let mut d := 0
+  for _ in [0:ee.nodes.size] do
+    match ee.apps[i]! with
+    | some (f, _) =>
+      i := f.a
+      d := d + 1
+    | none => break
+  return d
+
+/-- The term of a node: its label, but for a partial application of a
+concatenation (which the engine labels by the whole) to two arguments or more,
+the concatenation of those. -/
+def nodeTerm (ee : EqualityEngine) (i : Nat) : Node :=
+  let t := ee.nodes[i]!
+  match t with
+  | .app (.kind .STRING_CONCAT) cs =>
+    let d := spineDepth ee i
+    if 2 ≤ d && d < cs.size then Node.mkNode .STRING_CONCAT (cs.extract 0 d) else t
+  | _ => t
+
 mutual
   /-- A proof of `(nodes[t₁], nodes[t₂])`, or `none` if they are the same node;
   fails if the builder cannot justify an edge. -/
@@ -140,8 +163,8 @@ mutual
   /-- A proof of `(nodes[cur], nodes[next])` for one edge. -/
   partial def proveEdge (C : BuildCtx) (cur next : Nat) (edge : Edge) : BuildM EqProof := do
     let ee := C.ee
-    let a := ee.nodes[cur]!
-    let b := ee.nodes[next]!
+    let a := nodeTerm ee cur
+    let b := nodeTerm ee next
     match edge.type with
     | .equality =>
       let asAssumption : Option EqProof := match C.index.get? ⟨edge.reason⟩ with
@@ -174,6 +197,10 @@ mutual
             if x == b && y == a then return .symm p
         throw s!"a reason is not an assumption: {edge.reason.toSmtLib}"
     | .congruence =>
+      -- a concatenation, whose prefix (a partial application, which the engine
+      -- has as the concatenation of the prefix) was merged as a term
+      if let (.app (.kind .STRING_CONCAT) cs, .app (.kind .STRING_CONCAT) ds) := (a, b) then
+        if let some p ← concatPrefix C cur next cs ds then return p
       let args ← appArgs C cur next
       -- a term no asserted literal has (a theory's): its typing is checked
       match ← (try (some <$> pathTo C a) catch _ => pure none) with
@@ -228,6 +255,34 @@ mutual
       let p := if px.isNone && py.isNone then v else .trans (.congAt e #[px, py]) v
       return if eFirst then p else .symm p
 
+  /-- A proof of `(nodes[cur], nodes[next])` for two concatenations merged by
+  congruence, when their prefixes are not merged argument by argument: the
+  prefixes as terms, by associativity (the rewriter). -/
+  partial def concatPrefix (C : BuildCtx) (cur next : Nat) (cs ds : Array Node) : BuildM (Option EqProof) := do
+    let ee := C.ee
+    let some (f₁, _) := ee.apps[cur]! | return none
+    let some (f₂, _) := ee.apps[next]! | return none
+    if f₁.a == f₂.a || cs.size < 2 || ds.size < 2 then return none
+    if cs.size < 3 && ds.size < 3 then return none
+    -- (both prefixes congruent argument by argument: the usual case)
+    let byArgs ← if cs.size != ds.size then pure false else do
+      let some path := findPath ee f₁.a f₂.a | pure false
+      pure (path.all fun (_, _, e) => match e.type with | .congruence => true | _ => false)
+    if byArgs then return none
+    if cs.size < 3 || ds.size < 3 then return none
+    let pre₁ := nodeTerm ee f₁.a
+    let pre₂ := nodeTerm ee f₂.a
+    let some q ← proveIds C f₁.a f₂.a | return none
+    let last ← proveIds C f₁.b f₂.b
+    let t₁ := Node.mkNode .STRING_CONCAT #[pre₁, cs.back!]
+    let t₂ := Node.mkNode .STRING_CONCAT #[pre₂, ds.back!]
+    let a := nodeTerm ee cur
+    let b := nodeTerm ee next
+    if Telos.rewrite t₁ != Telos.rewrite a || Telos.rewrite t₂ != Telos.rewrite b then return none
+    let p := EqProof.trans (.rw a) (.symm (.rw t₁))
+    let p := EqProof.trans p (.congAt t₁ #[some q, last])
+    return some (.trans p (.trans (.rw t₂) (.symm (.rw b))))
+
   /-- The argument proofs of two applications merged by one congruence edge. -/
   partial def appArgs (C : BuildCtx) (cur next : Nat) : BuildM (Array (Option EqProof)) := do
     let ee := C.ee
@@ -239,7 +294,9 @@ mutual
       let first ← proveIds C f₁.a f₂.a
       return #[first, last]
     | _ =>
-      let k := (children ee.nodes[cur]!).size
+      let k := match nodeTerm ee cur with
+        | .app (.kind .STRING_CONCAT) cs => cs.size
+        | _ => (children ee.nodes[cur]!).size
       let prefixArgs ← congArgs C f₁.a f₂.a (k - 1)
       return prefixArgs.push last
 

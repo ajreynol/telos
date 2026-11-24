@@ -47,6 +47,11 @@ structure Mark where
   constantIntegers : Nat
   dio : DioMark
   blackBox : Option (Node × Option LinCert)
+  /-- The heads of the context-dependent queues (`CDQueue::restore`). -/
+  toPropagateHead : Nat := 0
+  learnedBoundsHead : Nat := 0
+  diseqQueueHead : Nat := 0
+  constantIntegersHead : Nat := 0
   deriving Inhabited
 
 /-- `ErrorInformation`: a variable that violates a bound. -/
@@ -509,7 +514,9 @@ def push (s : State) : State :=
   { s with marks := s.marks.push ⟨s.lbRevert.size, s.ubRevert.size, s.proofs.size, s.antecedents.size,
                                    s.canBePropagatedW.size, s.assertionOrderW.size, s.toPropagate.size,
                                    s.conflicts.size, s.learnedBounds.size, s.diseqQueue.size,
-                                   s.constantIntegers.size, s.dio.mark, s.blackBox⟩ }
+                                   s.constantIntegers.size, s.dio.mark, s.blackBox,
+                                   s.toPropagateHead, s.learnedBoundsHead, s.diseqQueueHead,
+                                   s.constantIntegersHead⟩ }
 
 /-- Pop one level: the lists back to their sizes at the push, with their
 cleanups from the last element down. -/
@@ -542,14 +549,14 @@ def pop (s : State) : State := Id.run do
                   constraints := s.constraints.modify c fun k => { k with assertionOrder := none, witness := none } }
   s := { s with antecedents := s.antecedents.extract 0 m.antecedents,
                 toPropagate := s.toPropagate.extract 0 m.toPropagate,
-                toPropagateHead := min s.toPropagateHead m.toPropagate,
+                toPropagateHead := m.toPropagateHead,
                 conflicts := s.conflicts.extract 0 m.conflicts,
                 learnedBounds := s.learnedBounds.extract 0 m.learnedBounds,
-                learnedBoundsHead := min s.learnedBoundsHead m.learnedBounds,
+                learnedBoundsHead := m.learnedBoundsHead,
                 diseqQueue := s.diseqQueue.extract 0 m.diseqQueue,
-                diseqQueueHead := min s.diseqQueueHead m.diseqQueue,
+                diseqQueueHead := m.diseqQueueHead,
                 constantIntegers := s.constantIntegers.extract 0 m.constantIntegers,
-                constantIntegersHead := min s.constantIntegersHead m.constantIntegers,
+                constantIntegersHead := m.constantIntegersHead,
                 dio := s.dio.restore m.dio, blackBox := m.blackBox }
   return s
 
