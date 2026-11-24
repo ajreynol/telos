@@ -129,20 +129,24 @@ with
   /-- The SMT type of a node, computed once, when the node is built, from those
   of its children (`kindTy`), for the nodes whose operators and leaves Logos's
   rules cover here; `none` for the others. It is Logos's type of the node's
-  translation (`Node.fastTy_sound`), so typing a node is constant time, however
+  translation (`Node.kept_sound`), so typing a node is constant time, however
   large the term it shares, as cvc5 keeps a type in each node. -/
-  @[computed_field] fastTy : Node → Option Smtm.SmtType
-    | .const c => c.ty
-    | .var _ T => varTy T
-    | .boundVar _ _ => none
+  @[computed_field] kept : Node → KeptTy
+    | .const c => .ofOption c.ty
+    | .var _ T => .ofOption (varTy T)
+    | .boundVar _ _ => .none
     | .skolem id cs =>
-      -- the purification skolem `(@purify t)` has the type of `t`
-      if id == .PURIFY && cs.size == 1 then cs.foldl (fun _ c => c.fastTy) none else none
+      match cs.foldr (fun c acc => acc.bind fun ts => c.kept.ty?.map (· :: ts)) (some []) with
+      | some ts => skolemTy id ts
+      | none => .none
     | .app op cs =>
-      match op with
-      | .kind k =>
-        (cs.foldr (fun c acc => acc.bind fun ts => c.fastTy.map (· :: ts)) (some [])).bind (kindTy k)
-      | _ => none
+      match cs.foldr (fun c acc => acc.bind fun ts => c.kept.ty?.map (· :: ts)) (some []) with
+      | some ts =>
+        match op with
+        | .kind k => .ofOption (kindTy k ts)
+        | .indexed k is => .ofOption (indexedTy k is.toList ts)
+        | .node k f => if k == .APPLY_UF then f.kept.apply ts else .none
+      | none => .none
 
 /-- The operator of an application (cvc5's API `Op`). -/
 inductive Op where
@@ -158,6 +162,9 @@ inductive Op where
 end
 
 deriving instance Repr for Node
+
+/-- The SMT type a node keeps (`Node.kept`). -/
+def Node.fastTy (t : Node) : Option Smtm.SmtType := t.kept.ty?
 
 instance : Hashable Node := ⟨Node.hash⟩
 

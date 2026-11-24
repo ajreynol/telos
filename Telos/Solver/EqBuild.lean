@@ -40,6 +40,9 @@ structure BuildCtx where
   index : Std.HashMap Key Nat
   lits : Array Node
   owner : Std.HashMap Key Nat
+  /-- The internal facts whose proofs are being built: a premise proved by the
+  fact itself has no proof (the engine's graph may have such a path). -/
+  active : List Node := []
 
 /-- The assumptions so far, and a path to each of their subterms. A congruence
 may relate a term that occurs in none of the explanation's literals, only in
@@ -326,6 +329,8 @@ mutual
   /-- A proof of what the internal fact `conc` gives as an assumption, from its
   inference `id` and explanation `exp` (the datatypes theory's). -/
   partial def proveFact (C : BuildCtx) (conc : Node) (id : String) (exp : Node) : BuildM EqProof := do
+    if C.active.contains conc then throw "an internal fact that its own premises need"
+    let C := { C with active := conc :: C.active }
     match id with
     | "DATATYPES_UNIF" =>
       -- `(= c₁ c₂)` and `dt-cons-eq` give the equalities of the arguments
