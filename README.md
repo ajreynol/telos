@@ -151,6 +151,7 @@ python3 scripts/fuzz-solve.py --cvc5 PATH                       # compare the th
 python3 scripts/fuzz-lemmas.py --cvc5 PATH [--solver PATH]       # compare the rewriter with cvc5 on its solver's lemmas (-t im)
 python3 scripts/check-proofs.py --fuzz 500                      # proofs, with Ethos
 python3 scripts/check-full-proofs.py test/solve/*.smt2 test/theory-events/*.smt2   # full proofs of unsat, with Ethos
+python3 scripts/testbed.py run                                  # how many cvc5 regressions telos solves (test/testbed)
 python3 scripts/loc-summary.py                                  # TCB/spec, solver code, verification proofs
 python3 scripts/logos-runtime.py                                # runtime references to Logos
 bash scripts/profile.sh                                         # where rewriting time goes

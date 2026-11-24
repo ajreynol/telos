@@ -11,6 +11,7 @@ telos must give (`.expected`), checked by CI:
 | `theory-events/` | the theory engine, event by event against cvc5's recorded traces (`.cvc5`) | `telos --theory-events FILE`, `scripts/fuzz-solve.py --recorded --strict` |
 | `replay/` | the theories fed cvc5's own trace (`.trace`) | `telos --replay FILE.trace FILE.smt2` |
 | `solve/` | telos as an SMT solver: answers, models, `get-value`, errors, and full proofs | `telos [OPTIONS] FILE`, `scripts/check-full-proofs.py` |
+| `testbed/` | which of cvc5's regressions (safe mode, single query, no bit-vectors or arrays) telos solves: the list and the recorded results | `scripts/testbed.py run` (needs a cvc5 checkout; not in CI) |
 
 The proofs are checked with Ethos, which CI does not install:
 `scripts/check-proofs.py test/rewriter/*.smt2` for rewrites,
