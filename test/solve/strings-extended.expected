@@ -1,0 +1,2 @@
+sat
+((x "aabcc") (y "") ((str.at x 2) "b") ((str.replace_all x "a" "dd") "ddddbcc"))

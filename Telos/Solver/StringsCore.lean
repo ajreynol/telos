@@ -2,6 +2,7 @@ import Telos.Solver.DtLemma
 import Telos.Core.Node.OfEo
 import Telos.Preprocess.Theory.StringsStaticRewrite
 import Telos.Solver.Theory.StringsRegexOps
+import Telos.Solver.Theory.StringsReduce
 
 /-!
 # Proofs of the core inferences of the theory of strings
@@ -47,6 +48,9 @@ structure Known where
   A : Array Node := #[]
   pos : Array Nat := #[]
   env : List Node := []
+  /-- Substitutions replace the larger terms first (a premise about a term that
+  another premise rewrites inside). -/
+  largest : Bool := false
   deriving Inhabited
 
 abbrev M := StateT Known EmitM
@@ -173,6 +177,49 @@ partial def bridge (a b : Node) : Option (Option EqProof) :=
     else sameRw a b
   | _, _ => sameRw a b
 
+/-- `t` with its purification skolems replaced by those of the rewrites of their
+terms, in turn (those of constants by the constants), and a proof of `(t, t')`,
+if it differs. -/
+partial def normSkolems (t : Node) : Node × Option EqProof :=
+  match t with
+  | .skolem .PURIFY #[u] =>
+    let (v, qv) := normSkolems u
+    let (w, qw) := rwProof v
+    if w == u && !w.isConst then (t, none) else
+    match purifyEq t with
+    | none => (t, none)
+    | some (_, pk) =>
+      let q := compose (some pk) (compose qv qw)
+      if w.isConst then (w, q) else
+      let k := Node.mkPurifySkolem w
+      match purifyEq k with
+      | none => (t, none)
+      | some (_, pk') => (k, compose q (some (.symm pk')))
+  | .app op cs =>
+    if !op.eoShape.substCongruent then (t, none) else
+    let rs := cs.map normSkolems
+    if rs.all (·.2.isNone) then (t, none)
+    else (.app op (rs.map (·.1)), some (.congAt t (rs.map (·.2))))
+  | _ => (t, none)
+
+/-- A proof of `(a, b)`, for nodes that differ in their purification skolems,
+up to the rewrites of their terms. -/
+partial def bridgeSkolems (a b : Node) : Option EqProof :=
+  let direct : Option EqProof := do
+    let (a', qa) := normSkolems a
+    let (b', qb) := normSkolems b
+    let m ← sameRw a' b'
+    compose qa (compose m (qb.map .symm))
+  match a, b with
+  | .app op cs, .app op' ds =>
+    if op == op' && cs.size == ds.size && op.eoShape.substCongruent then
+      let args := (cs.zip ds).map fun (c, d) => if c == d then some none else (bridgeSkolems c d).map some
+      match args.mapM id with
+      | some args => some (.congAt a args)
+      | none => direct
+    else direct
+  | _, _ => direct
+
 /-- `t` with each subterm `x` replaced by `y`, for the known equality `(= x y)`
 at index `i` (oriented by `flip`), and its proof. -/
 partial def substOne (x y : Node) (p : EqProof) (t : Node) : Option EqProof :=
@@ -183,17 +230,71 @@ partial def substOne (x y : Node) (p : EqProof) (t : Node) : Option EqProof :=
     if args.all (·.isNone) then none else some (.congAt t args)
   | _ => none
 
+/-- Whether `x` occurs in `t` (each shared subterm visited once). -/
+def occurs (x t : Node) : Bool := Id.run do
+  let mut seen : Std.HashSet Key := {}
+  let mut work := #[t]
+  while !work.isEmpty do
+    let c := work.back!
+    work := work.pop
+    if c == x then return true
+    if seen.contains ⟨c⟩ then continue
+    seen := seen.insert ⟨c⟩
+    work := work ++ c.getChildren
+  return false
+
+/-- Whether `t`, as a tree, has at most `n` nodes (counting stops at `n`). -/
+def treeSizeAtMost (n : Nat) (t : Node) : Bool := Id.run do
+  let mut work := #[t]
+  let mut k := 0
+  while !work.isEmpty do
+    let c := work.back!
+    work := work.pop
+    k := k + 1
+    if k > n then return false
+    work := work ++ c.getChildren
+  return true
+
+/-- The largest term (as a tree) that the substitutions go on with. -/
+def substLimit : Nat := 3000
+
+/-- The size of `t` as a tree, up to `n`. -/
+def sizeUpTo (n : Nat) (t : Node) : Nat := Id.run do
+  let mut work := #[t]
+  let mut k := 0
+  while !work.isEmpty && k < n do
+    let c := work.back!
+    work := work.pop ++ match c with
+      | .app _ cs => cs
+      | _ => #[]
+    k := k + 1
+  return k
+
+/-- The order in which the equalities `R` are used as a substitution. -/
+def substOrder (R : Array Nat) : M (Array Nat) := do
+  let k ← get
+  if !k.largest then return R
+  let size (i : Nat) : Nat := match k.A[i]? with
+    | some (.app (.kind .EQUAL) #[x, y]) =>
+      if x.isConst then sizeUpTo 100 y else if y.isConst then sizeUpTo 100 x else
+        max (sizeUpTo 100 x) (sizeUpTo 100 y)
+    | _ => 0
+  return R.qsort fun i j => size i > size j || (size i == size j && i < j)
+
 /-- `(t, t')` for `t'` the rewrite of `t` with the substitution of the known
 equalities `R` applied in turn (`SBA_SEQUENTIAL`). -/
 def substRw (R : Array Nat) (t : Node) : M (Node × Option EqProof) := do
+  let R ← substOrder R
   let A := (← get).A
   let mut cur := t
   let mut acc : Option EqProof := none
   -- in turn, until nothing changes (an equality may bring a term that an
-  -- earlier one replaces)
+  -- earlier one replaces; one that brings its own left hand side is used once)
+  let mut used : Array Nat := #[]
   for _ in [0:R.size + 1] do
     let mut changed := false
     for i in R do
+      if used.contains i then continue
       let some (.app (.kind .EQUAL) #[x, y]) := A[i]? | continue
       -- (a constant replaces the other side)
       let (x, y, p) : Node × Node × EqProof :=
@@ -203,6 +304,11 @@ def substRw (R : Array Nat) (t : Node) : M (Node × Option EqProof) := do
         cur := c'
         acc := compose acc (some q)
         changed := true
+        if occurs x y then used := used.push i
+        -- (a substitution that grows)
+        if !treeSizeAtMost substLimit cur then
+          changed := false
+          break
     if !changed then break
   let (r, q) := rwProof cur
   return (r, compose acc q)
@@ -293,6 +399,11 @@ def splice (i : Nat) (n : Nat) (rev : Bool) : M (Node × Nat) := do
 
 /-- The rule of an inference, and whether it is a conflict of constants. -/
 inductive Kind where
+  /-- `STRINGS_CTN_POS`, `STRINGS_CTN_NEG_EQUAL`, `STRINGS_CTN_DECOMPOSE`: the
+  eager reduction of a `str.contains` of the premises. -/
+  | ctn
+  /-- `string_decompose`, from a premise `(>= (str.len x) n)`. -/
+  | decompose
   | csplit | cprop | split | lprop | unify | const | eq
   /-- Substitution and rewriting: the main equality rewrites to `false` (a
   conflict), or the conclusion to `true`. -/
@@ -301,6 +412,8 @@ inductive Kind where
 
 def kindOf (id : String) : Option Kind :=
   match id with
+  | "STRINGS_CTN_POS" | "STRINGS_CTN_NEG_EQUAL" | "STRINGS_CTN_DECOMPOSE" => some .ctn
+  | "STRINGS_DEQ_DISL_STRINGS_SPLIT" | "STRINGS_DEQ_DISL_FIRST_CHAR_STRING_SPLIT" => some .decompose
   | "STRINGS_SSPLIT_CST" => some .csplit
   | "STRINGS_SSPLIT_CST_PROP" => some .cprop
   | "STRINGS_SSPLIT_VAR" => some .split
@@ -393,23 +506,11 @@ partial def purifyOriginalM (t : Node) : StateM (Std.HashMap Key (Option (EqProo
 
 def purifyOriginal (t : Node) : Option (EqProof × Node) := ((purifyOriginalM t).run {}).1
 
-/-- Whether `x` occurs in `t` (each shared subterm visited once). -/
-def occurs (x t : Node) : Bool := Id.run do
-  let mut seen : Std.HashSet Key := {}
-  let mut work := #[t]
-  while !work.isEmpty do
-    let c := work.back!
-    work := work.pop
-    if c == x then return true
-    if seen.contains ⟨c⟩ then continue
-    seen := seen.insert ⟨c⟩
-    work := work ++ c.getChildren
-  return false
-
 /-- `substRw`, with each equality of `R` used once, in the direction whose side
 occurs in the term (the premises' orientation is the equality engine's, not
 the one the proof needs). -/
 def substRwEither (R : Array Nat) (t : Node) : M (Node × Option EqProof) := do
+  let R ← substOrder R
   let A := (← get).A
   let mut cur := t
   let mut acc : Option EqProof := none
@@ -420,9 +521,11 @@ def substRwEither (R : Array Nat) (t : Node) : M (Node × Option EqProof) := do
       if used.contains i then continue
       let some (.app (.kind .EQUAL) #[x, y]) := A[i]? | continue
       let (x, y, p) : Node × Node × EqProof :=
-        if occurs x cur && !x.isConst then (x, y, .assume i)
-        else if occurs y cur && !y.isConst then (y, x, .symm (.assume i))
-        else (x, y, .assume i)
+        -- (a term is replaced by one it has)
+        if occurs x y && occurs y cur && !y.isConst then (y, x, .symm (.assume i))
+        else if occurs x cur && !x.isConst then (x, y, .assume i)
+        else (y, x, .symm (.assume i))
+      if x.isConst then continue
       if let some q := substOne x y p cur then
         let some (_, c') := EqProof.check A q | continue
         cur := c'
@@ -432,18 +535,6 @@ def substRwEither (R : Array Nat) (t : Node) : M (Node × Option EqProof) := do
     if !changed then break
   let (r, q) := rwProof cur
   return (r, compose acc q)
-
-/-- Whether `t`, as a tree, has at most `n` nodes (counting stops at `n`). -/
-def treeSizeAtMost (n : Nat) (t : Node) : Bool := Id.run do
-  let mut work := #[t]
-  let mut k := 0
-  while !work.isEmpty do
-    let c := work.back!
-    work := work.pop
-    k := k + 1
-    if k > n then return false
-    work := work ++ c.getChildren
-  return true
 
 /-- The largest expanded conclusion (as a tree) that `byOriginalForms` tries:
 original forms can be exponentially larger than their skolems, when the terms
@@ -493,6 +584,52 @@ def byOriginalForms (R : Array Nat) (conc : Node) : M Nat := do
 `m` (oriented by `flip`), in the direction `rev`. The index of `conc`. -/
 def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M Nat := do
   let A := (← get).A
+  if k == .ctn then
+    let isContains (l : Node) : Bool := match l with
+      | .app (.kind .STRING_CONTAINS) _ => true
+      | .app (.kind .NOT) #[.app (.kind .STRING_CONTAINS) _] => conc != Node.mkFalse
+      | _ => false
+    let some i := (List.range n).find? (fun i => isContains A[i]!)
+      | throw "no str.contains"
+    let (atom, pol) := match A[i]! with
+      | .app (.kind .NOT) #[a] => (a, false)
+      | a => (a, true)
+    let (_, r) ← rule .string_eager_reduction [.node atom] []
+    let (_, c) ← rule (if pol then .ite_elim1 else .ite_elim2) [] [r]
+    let (C, j) ← if pol then rule .resolution [.node (Node.mkBool false), .node atom] [c, i]
+      else rule .resolution [.node (Node.mkBool true), .node atom] [c, i]
+    if conc == Node.mkFalse then
+      -- (`STRINGS_CTN_DECOMPOSE`) a negative `str.contains` that, with this
+      -- equality and the premises', rewrites to `true`
+      let R := ((List.range n).filter fun i => match A[i]! with
+        | .app (.kind .EQUAL) _ => true
+        | _ => false).toArray.push j
+      for m in [0:n] do
+        let .app (.kind .NOT) #[a] := A[m]! | continue
+        let (t, qt) ← substRw R a
+        if t != Node.mkTrue then continue
+        let some qt := qt | continue
+        let (_, i) ← litFact (.symm (.trans (.symm qt) (atomProof A[m]! m)))
+        return i
+      throw "no str.contains that rewrites to true"
+    if C == conc then return j
+    let some q := bridgeSkolems C conc | throw "a reduction of another form"
+    let (F, i) ← litFact (.trans (.symm q) (atomProof C j))
+    if F != conc then throw "a conclusion of another form"
+    return i
+  if k == .decompose then
+    let l ← match (A[0]? : Option Node) with
+      | some (Node.app (.kind .GEQ) #[_, l]) => pure l
+      | _ => throw "no length premise"
+    let some q := EqProof.check A (.rw (Node.mkNode .GEQ #[l, zero])) | throw "unreachable"
+    if q.2 != Node.mkTrue then throw "a length that is not known to be nonnegative"
+    let (_, i) ← litFact (.rw (Node.mkNode .GEQ #[l, zero]))
+    let (C, j) ← rule .string_decompose [.node (Node.mkBool false)] [i, 0]
+    if C == conc then return j
+    let some q := bridgeSkolems C conc | throw "a decomposition of another form"
+    let (F, i) ← litFact (.trans (.symm q) (atomProof C j))
+    if F != conc then throw "a conclusion of another form"
+    return i
   if k == .sr && conc != Node.mkFalse then
     -- the conclusion, with the substitution of the premises, rewrites to `true`
     let R := ((List.range n).filter fun i => match A[i]! with
@@ -593,7 +730,7 @@ def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M
     let li ← lengthFact R (Node.eqNode (len ht) (len hs))
     let (C, c) ← rule .concat_unify [.node (Node.mkBool rev)] [e, li]
     conclude C c conc R
-  | .eq | .sr => throw "unreachable"
+  | .eq | .sr | .ctn | .decompose => throw "unreachable"
 
 /-- The premises as a formula: their conjunction, or the one premise. -/
 def premiseFormula (P : Array Node) : Node :=
@@ -708,8 +845,11 @@ def prove (id : String) (P : Array Node) (conc : Node) : Option (Node × List CC
   let tries := mains.flatMap fun m => [false, true].flatMap fun rev => [false, true].map fun flip => (k, m, rev, flip)
   -- (substitution and rewriting: for a conflict, each main equality; else once)
   let srTries := if conc == Node.mkFalse then mains.map fun m => (Kind.sr, m, false, false) else [(Kind.sr, 0, false, false)]
-  let tries := if k == .sr then srTries else tries ++ srTries
-  tries.findSome? fun (k, m, rev, flip) =>
+  let tries := if k == .sr then srTries
+    else if k == .ctn || k == .decompose then [(k, 0, false, false)] else tries ++ srTries
+  -- (the second order only for small inferences: an attempt can be costly)
+  let orders := if P.size ≤ 8 then [false, true] else [false]
+  orders.findSome? fun largest => tries.findSome? fun (k, m, rev, flip) =>
     let act : M Unit := do
       let p ← push ⟨.refl, [.node h], [], .assume⟩
       if P.size == 1 then let _ ← known h p
@@ -722,7 +862,7 @@ def prove (id : String) (P : Array Node) (conc : Node) : Option (Node × List CC
         if isAnd then let _ ← rule .and_elim [.term (Term.Numeral 0)] [j]
       let c ← coreSteps k total m flip rev conc
       let _ ← push ⟨.scope, [], [← posOf c], .pop⟩
-    match (act.run {}).run {} with
+    match (act.run { largest }).run {} with
     | .ok (((), _), st) =>
       let cs := toCmds st.steps
       if (EqProof.check #[] (.valid F cs)).isSome then some (F, cs) else none

@@ -625,7 +625,13 @@ def assertShared (T : Theory) (lit : Node) : EngineM Unit := do
     let why := "a conflict of a shared literal that rewrites to false, which is not certified yet"
     modify fun s => { s with inConflict := true, theoryConflict := true, cert := .error why }
     if (← read).satMode then
-      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lit, true, none, none),
+      let kind := match lit with
+        | .app (.kind .EQUAL) #[a, b] => some (.constants a b)
+        | _ => none
+      -- (explained by the shared solver, as cvc5 marks it propagated by it:
+      -- its receiver may have propagated the literal too)
+      let (exp, _) ← runEE (EE.explainLit lit)
+      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (EE.mkAnd exp, true, kind, none),
                                outputUsed := true, lemmasAdded := true }
     return
   let norm := lit
@@ -1341,6 +1347,8 @@ def stepClauses (out : Array Node) (steps : Array ExplainStep) :
     EngineM (Array (Array Node × Option SatProof.Just)) := do
   let ints := (steps.filter (·.arith)).map (·.lit)
   let ee := (← get).ee
+  -- (a literal explained by itself gives a tautology, which is not needed)
+  let steps := steps.filter fun st => !st.exp.contains st.lit
   return steps.map fun st =>
     if st.arith then
       ((st.exp.map negate).push st.lit, st.cert.map (.arith (st.exp.push (negate st.lit))))
@@ -1411,6 +1419,16 @@ def cnfHostWith (notify : Node → EngineM Unit) (c : Config) : Cnf.Host (StateT
       | _ => false
 
 /-! ### Preregistration and lemmas (mutually recursive: a theory may send a lemma while it preregisters a term, whose atoms are preregistered then) -/
+
+/-- A proof of `(true, false)` from assumptions with a literal and its negation. -/
+def complementary (A : Array Node) : Option EqProof := do
+  let i ← A.findIdx? fun
+    | .app (.kind .NOT) #[a] => A.contains a
+    | _ => false
+  let .app (.kind .NOT) #[a] := A[i]! | none
+  let j ← A.findIdx? (· == a)
+  let p : EqProof := if a.getKind == .EQUAL then .eqTrue (.assume j) else .assume j
+  some (.trans (.symm p) (.assume i))
 
 mutual
 partial def theoryPreRegister (T : Theory) (t : Node) : EngineM Unit := do
@@ -1596,12 +1614,16 @@ partial def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (p
       | _ => none
     let src ← match kind with
       | some (.arith p) =>
-        if steps.isEmpty then newSatSource (.arith (some (exp, p)))
+        if let some q := complementary exp then newSatSource (.theory (some (exp, q)))
+        else if steps.isEmpty then newSatSource (.arith (some (exp, p)))
         else
           -- the certificate refutes the conflict's literals, which the steps
           -- give from those of the clause
           let A := conf.filter (· != Node.mkTrue)
-          newSatSource (.derived (#[(A.map negate, some (.arith A p))] ++ (← stepClauses exp steps)))
+          let main := match complementary A with
+            | some q => SatProof.Just.theory A q
+            | none => .arith A p
+          newSatSource (.derived (#[(A.map negate, some main)] ++ (← stepClauses exp steps)))
       | _ =>
         if ints.isEmpty then newSatSource (.theory cert)
         else
@@ -1642,7 +1664,8 @@ partial def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (p
         let arithOrder := { c.arith.order with fresh := (← get).ee.freshIds }
         let cands := #[lits, litsOf lem₀, litsOf (Telos.rewrite lem₀ arithOrder)]
         let lits₀ := (cands.find? fun L => p.check (L.map negate)).getD lits
-        if lits₀.all lits.contains then newSatSource (.arith (some (lits.map negate, p)))
+        if let some q := complementary (lits.map negate) then newSatSource (.theory (some (lits.map negate, q)))
+        else if lits₀.all lits.contains then newSatSource (.arith (some (lits.map negate, p)))
         else
           -- each relates to one of the clause by its rewrite
           let rel := (lits₀.filter (!lits.contains ·)).map fun l₀ =>

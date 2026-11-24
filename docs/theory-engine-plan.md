@@ -1653,9 +1653,8 @@ registry and the eager solver; `StringsSolver.lean`, the full-effort check;
   evaluated).
 
 Not yet, and so the check is incomplete (a `sat` answer is then `unknown`):
-looping word equations (`processLoop` needs regular expressions, stage 3),
-extended functions and regular expressions (any relevant term of a later
-stage). Approximated: `stringCheckEntailLen`'s arithmetic entailment (by the
+looping word equations (`processLoop` needs regular expressions, stage 3).
+Approximated: `stringCheckEntailLen`'s arithmetic entailment (by the
 rewriter only); the cardinality of the alphabet is not checked (it only
 matters for more than 196608 classes of one length).
 
@@ -1731,8 +1730,23 @@ the equality engine is its own explanation there.
 - their evaluation (`checkExtfEval`, efforts 0 and 1): the substitution of the
   constants or normal forms of the arguments, `STRINGS_EXTF`/`STRINGS_EXTF_N`
   (stated of the symbolic definition, over the proxy variables, when it has
-  one), `STRINGS_EXTF_D`, `STRINGS_EXTF_REW_SAME`; the inferences of
-  `str.contains` and the extended rewriting of equalities come with stage 2;
+  one), `STRINGS_EXTF_D`, `STRINGS_EXTF_REW_SAME`, the inferences of
+  `str.contains` (`STRINGS_CTN_DECOMPOSE`, `STRINGS_CTN_TRANS`) and the extended
+  rewriting of equalities (`STRINGS_EXTF_EQ_REW`);
+- the reductions without quantified formulas (`checkExtfReductions`,
+  `StringsReduce.lean`): `STRINGS_REDUCTION` of `str.substr`, `str.update`,
+  `str.indexof` and `str.replace`, certified by CPC's `string_reduction` (whose
+  skolems are of terms not rewritten: related by `skolem_intro` and the
+  rewriter); `STRINGS_CTN_POS`, and `STRINGS_CTN_NEG_EQUAL` (at the end of the
+  full-effort strategy; cvc5's is at last call), by `string_eager_reduction`.
+  Not ported: the reductions with quantified formulas (`str.to_int`,
+  `str.from_int`, `str.replace_all`, `str.<=`, `str.rev`, case conversion, the
+  regular expression functions, and a negative `str.contains` at last call),
+  which need bounded integers, and so the relevant terms of these kinds leave a
+  `sat` answer to the model check (`State.extfUnchecked`). `STRINGS_CTN_TRANS`
+  has no certificate (cvc5's has no proof either);
+- the evaluator of models (`Model.combineStr`) has every extended function, as
+  Logos evaluates it (proved in `TelosProofs/Solver/Model.lean`);
 - codes (`CodePointSolver`): the eager reduction of `str.to_code` (and of
   `str.indexof`, `str.to_int`), `STRINGS_CODE_INJ`, and the model's strings of
   length one by the values of their codes;

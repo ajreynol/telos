@@ -133,6 +133,96 @@ theorem ofList_toS : ∀ w : List Nat,
     rw [ofList_toS w]
     rfl
 
+/-- The Logos values of a string's characters. -/
+abbrev chars (w : List Nat) : List SmtValue := (w.map reClamp).map SmtValue.Char
+
+theorem prefixLen_toS : ∀ (w : List Nat) (r : TRe) (n : Nat),
+    impl_native_re_prefix_match_len_go (toS r) (chars w) n = prefixLen r w n
+  | [], r, n => by simp [impl_native_re_prefix_match_len_go, prefixLen, nullable_toS]
+  | c :: w, r, n => by
+    simp only [chars, List.map_cons, impl_native_re_prefix_match_len_go, prefixLen, nullable_toS]
+    split
+    · rfl
+    · rw [← deriv_toS _ (clamp_clamp c)]
+      exact prefixLen_toS w _ _
+
+theorem posPrefixLen_toS : ∀ (w : List Nat) (r : TRe),
+    native_re_positive_prefix_match_len? (toS r) (chars w) = posPrefixLen r w
+  | [], _ => rfl
+  | c :: w, r => by
+    simp only [chars, List.map_cons, native_re_positive_prefix_match_len?, posPrefixLen,
+      native_re_prefix_match_len?]
+    rw [← deriv_toS _ (clamp_clamp c), ← prefixLen_toS w]
+    rcases impl_native_re_prefix_match_len_go (toS (deriv (reClamp c) r)) (chars w) 0 with _ | _ <;> rfl
+
+theorem findIdx_toS (r : TRe) : ∀ (w : List Nat) (i : Nat),
+    impl_native_re_find_idx_aux (toS r) (chars w) i = findIdx r w i
+  | [], i => by
+    unfold impl_native_re_find_idx_aux findIdx native_re_prefix_match_len?
+    rw [prefixLen_toS]
+    rfl
+  | c :: w, i => by
+    unfold impl_native_re_find_idx_aux findIdx native_re_prefix_match_len?
+    rw [prefixLen_toS]
+    split
+    · simp_all
+    · simp only [chars, List.map_cons]
+      rename_i h
+      simp only [h]
+      exact findIdx_toS r w (i + 1)
+
+theorem chars_drop (w : List Nat) (n : Nat) : (chars w).drop n = chars (w.drop n) := by
+  simp [chars, List.map_drop]
+
+theorem chars_take (w : List Nat) (n : Nat) : (chars w).take n = chars (w.take n) := by
+  simp [chars, List.map_take]
+
+theorem indexOf_toS (w : List Nat) (r : TRe) (i : Int) :
+    native_str_indexof_re (chars w) (toS r) i = indexOf w r i := by
+  unfold native_str_indexof_re indexOf native_re_find_idx_from
+  simp only [chars_drop, findIdx_toS]
+  simp only [chars, List.length_map]
+  rfl
+
+theorem replace_toS (w : List Nat) (r : TRe) (u : List Nat) :
+    native_str_replace_re (chars w) (toS r) (chars u) = chars (replace w r u) := by
+  unfold native_str_replace_re replace native_re_find_idx_from
+  simp only [List.drop_zero, findIdx_toS]
+  rcases findIdx r w 0 with _ | ⟨i, l⟩
+  · rfl
+  · simp [chars, List.map_take, List.map_drop]
+
+theorem replaceAllRec_toS (r : TRe) (u : List Nat) : ∀ (n : Nat) (w : List Nat),
+    impl_native_re_replace_all_nonempty_list_aux n (toS r) (chars u) (chars w) =
+      chars (replaceAllRec r u n w)
+  | 0, w => by simp [impl_native_re_replace_all_nonempty_list_aux, replaceAllRec]
+  | n + 1, w => by
+    unfold impl_native_re_replace_all_nonempty_list_aux replaceAllRec
+    simp only [posPrefixLen_toS]
+    have step : ∀ w : List Nat, chars (match w with
+        | [] => []
+        | c :: cs => c :: replaceAllRec r u n cs) = (match chars w with
+        | [] => []
+        | c :: cs => c :: impl_native_re_replace_all_nonempty_list_aux n (toS r) (chars u) cs) := by
+      intro w
+      cases w with
+      | nil => rfl
+      | cons c w =>
+        have := replaceAllRec_toS r u n w
+        simp only [chars, List.map_cons] at this ⊢
+        rw [this]
+    rcases posPrefixLen r w with _ | _ | m
+    · exact (step w).symm
+    · exact (step w).symm
+    · simp only [chars_drop, replaceAllRec_toS r u n]
+      simp [chars]
+
+theorem replaceAll_toS (w : List Nat) (r : TRe) (u : List Nat) :
+    native_str_replace_re_all (chars w) (toS r) (chars u) = chars (replaceAll w r u) := by
+  show impl_native_re_replace_all_nonempty_list_aux ((chars w).length + 1) (toS r) (chars u) (chars w) = _
+  rw [replaceAllRec_toS]
+  simp [chars, replaceAll]
+
 theorem mkRange_toS (a b : List Nat) :
     toS (mkRange a b) = native_re_range ((a.map reClamp).map SmtValue.Char) ((b.map reClamp).map SmtValue.Char) := by
   match a, b with

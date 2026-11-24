@@ -137,6 +137,63 @@ def loopRec (lo : Int) (r : TRe) : Nat → Int → TRe
 def loop (lo hi : Int) (r : TRe) : TRe :=
   if lo > hi then .empty else loopRec lo r (hi + -lo).toNat hi
 
+/-! ### Searching for a match -/
+
+/-- `native_re_prefix_match_len?`: the length of the shortest prefix of `w` in
+`r`, plus `n`. -/
+def prefixLen (r : TRe) : List Nat → Nat → Option Nat
+  | [], n => if nullable r then some n else none
+  | c :: cs, n => if nullable r then some n else prefixLen (deriv (reClamp c) r) cs (n + 1)
+
+/-- `native_re_positive_prefix_match_len?`. -/
+def posPrefixLen (r : TRe) : List Nat → Option Nat
+  | [] => none
+  | c :: cs =>
+    match prefixLen (deriv (reClamp c) r) cs 0 with
+    | some n => some (n + 1)
+    | none => none
+
+/-- `native_re_find_idx_from`, on the rest `w` of the string at `i`: the
+position and the length of the first match. -/
+def findIdx (r : TRe) : List Nat → Nat → Option (Nat × Nat)
+  | [], i =>
+    match prefixLen r [] 0 with
+    | some n => some (i, n)
+    | none => none
+  | c :: cs, i =>
+    match prefixLen r (c :: cs) 0 with
+    | some n => some (i, n)
+    | none => findIdx r cs (i + 1)
+
+/-- `native_str_indexof_re`. -/
+def indexOf (w : List Nat) (r : TRe) (i : Int) : Int :=
+  if i < 0 then -1
+  else if i.toNat ≤ w.length then
+    match findIdx r (w.drop i.toNat) i.toNat with
+    | some (idx, _) => Int.ofNat idx
+    | none => -1
+  else -1
+
+/-- `native_str_replace_re`. -/
+def replace (w : List Nat) (r : TRe) (u : List Nat) : List Nat :=
+  match findIdx r w 0 with
+  | some (idx, len) => w.take idx ++ u ++ w.drop (idx + len)
+  | none => w
+
+/-- `impl_native_re_replace_all_nonempty_list_aux`. -/
+def replaceAllRec (r : TRe) (u : List Nat) : Nat → List Nat → List Nat
+  | 0, xs => xs
+  | fuel + 1, xs =>
+    match posPrefixLen r xs with
+    | some (n + 1) => u ++ replaceAllRec r u fuel (xs.drop (n + 1))
+    | _ =>
+      match xs with
+      | [] => []
+      | c :: cs => c :: replaceAllRec r u fuel cs
+
+/-- `native_str_replace_re_all`. -/
+def replaceAll (w : List Nat) (r : TRe) (u : List Nat) : List Nat := replaceAllRec r u (w.length + 1) w
+
 end TRe
 
 end Telos.Solver

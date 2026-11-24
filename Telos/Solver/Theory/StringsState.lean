@@ -137,6 +137,8 @@ inductive Undo where
   | extTerm (k : Key)
   /-- An extended term marked inactive (`markInactive`), with its old mark. -/
   | extActive (k : Key) (old : Bool)
+  /-- An entry of `ExtfSolver::d_extfInferCache`. -/
+  | extfInfer (k : Key)
   deriving Inhabited
 
 structure State where
@@ -179,6 +181,9 @@ structure State where
   (`STRINGS_RE_UNFOLD_NEG`, at last call, is not ported): a `sat` answer rests
   on the model check. -/
   negMemUnchecked : Bool := false
+  /-- The last full-effort check left unreduced an extended term whose reduction
+  is not ported: a `sat` answer rests on the model check. -/
+  extfUnchecked : Bool := false
   /-- `d_numCurrentFacts`, `d_numCurrentLemmas` since the last `reset`. -/
   sentFacts : Nat := 0
   sentLemmas : Nat := 0
@@ -198,6 +203,8 @@ structure State where
   registered, in order, and whether each is active. -/
   extTerms : Array Node := #[]
   extActive : Std.HashMap Key Bool := {}
+  /-- `ExtfSolver::d_extfInferCache` (context dependent). -/
+  extfInferCache : Std.HashSet Key := {}
   /-- `ExtTheory::d_ci_inactive` (user context): the terms inactive
   independently of the SAT context. -/
   ciInactive : Std.HashSet Key := {}
@@ -265,6 +272,13 @@ def markInactive (s : State) (n : Node) (satDep : Bool := true) : State :=
   let s := { s with extActive := m.insert ⟨n⟩ false, trail := tr.push (.extActive ⟨n⟩ old) }
   if satDep then s else { s with ciInactive := s.ciInactive.insert ⟨n⟩ }
 
+/-- Add to `d_extfInferCache`, on the trail. -/
+def addExtfInfer (s : State) (n : Node) : State :=
+  let m := s.extfInferCache
+  let tr := s.trail
+  let s := { s with extfInferCache := {}, trail := #[] }
+  { s with extfInferCache := m.insert ⟨n⟩, trail := tr.push (.extfInfer ⟨n⟩) }
+
 /-- `ExtTheory::isActive`. -/
 def isActiveExt (s : State) (n : Node) : Bool :=
   (s.extActive.get? ⟨n⟩).getD false && !s.ciInactive.contains ⟨n⟩
@@ -291,9 +305,10 @@ def popTo (s : State) (k : Nat) : State := Id.run do
   let mut nfp := s.nfPairs
   let mut ext := s.extActive
   let mut exts := s.extTerms
+  let mut cache := s.extfInferCache
   let trail := s.trail
   let s := { s with preregistered := {}, eqcInfo := {}, trail := #[], congruent := {}, nfPairs := {},
-                    extActive := {}, extTerms := #[] }
+                    extActive := {}, extTerms := #[], extfInferCache := {} }
   for i in [0:trail.size - tsize] do
     match trail[trail.size - 1 - i]! with
     | .prereg k => pre := pre.erase k
@@ -309,8 +324,9 @@ def popTo (s : State) (k : Nat) : State := Id.run do
       ext := ext.erase k
       exts := exts.pop
     | .extActive k old => ext := ext.insert k old
+    | .extfInfer k => cache := cache.erase k
   return { s with preregistered := pre, eqcInfo := eqc, pendingConflict := pend, trail := trail.take tsize,
-                  congruent := cong, nfPairs := nfp, extActive := ext, extTerms := exts,
+                  congruent := cong, nfPairs := nfp, extActive := ext, extTerms := exts, extfInferCache := cache,
                   functionTerms := s.functionTerms.take fsize,
                   disequalities := s.disequalities.take dsize, saved := s.saved.take k }
 

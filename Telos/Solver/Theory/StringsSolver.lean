@@ -1,4 +1,6 @@
 import Telos.Solver.Theory.Strings
+import Telos.Solver.Theory.StringsReduce
+import Telos.Preprocess.Theory.StringsStaticRewrite
 import Telos.Solver.Theory.StringsRegexOps
 
 /-!
@@ -18,10 +20,13 @@ A port of the full-effort check of cvc5's `TheoryStrings` (`postCheck`, with its
   (`checkNormalFormsEq`), disequalities (`checkNormalFormsDeq`) and length
   normalization (`checkLengthsEqc`).
 
-The steps of later stages (extended functions, regular expressions, codes,
-sequences) do nothing yet: a relevant term that needs them makes the check
-incomplete (`State.incomplete`), and so does a looping word equation, which
-needs regular expressions, and the cardinality of the alphabet, which is not
+- the extended functions (`ExtfSolver`): their evaluation (`checkExtfEval`) and
+  the reductions without quantified formulas (`checkExtfReductions`).
+
+The reductions with quantified formulas are not ported: an answer `sat` with a
+relevant term that needs one rests on the model check (`State.extfUnchecked`).
+A looping word equation, which needs regular expressions, makes the check
+incomplete (`State.incomplete`); the cardinality of the alphabet is not
 checked (it only matters for more than 196608 classes of one length).
 
 cvc5 compares node ids in places (`std::map`s of nodes, the oldest variable of
@@ -1430,10 +1435,10 @@ inferred equal to it (`STRINGS_EXTF`, `STRINGS_EXTF_N`), stated of its
 symbolic definition (its constants replaced by their proxy variables) when it
 has one, and marked inactive; a predicate equal to a constant that rewrites to
 another literal infers it (`STRINGS_EXTF_D`); two terms with the same rewrite
-are equal (`STRINGS_EXTF_REW_SAME`). The inferences of `str.contains`
-(`STRINGS_CTN_*`) and of equalities by the extended rewriter
-(`STRINGS_EXTF_EQ_REW`, the identity on integers) belong to the reductions of
-stage 2. -/
+are equal (`STRINGS_EXTF_REW_SAME`); a term equal to a constant gives the
+inferences of `str.contains` with components (`STRINGS_CTN_DECOMPOSE`) and by
+transitivity (`STRINGS_CTN_TRANS`), and those of the equality with the constant
+by the extended rewriter (`STRINGS_EXTF_EQ_REW`; on integers, the identity). -/
 
 /-- `CoreSolver::getNormalString`: the concatenation of the normal form of `x`,
 its explanation added to `exp`. -/
@@ -1555,12 +1560,71 @@ structure ExtfInfo where
   initExp : Array Node := #[]
   deriving Inhabited
 
+/-- A `str.contains` recorded in an evaluation (`d_ctn`, `d_ctnFrom`): the
+string it holds (or not) of, its polarity, the one contained and the term it
+comes from. -/
+structure CtnInfo where
+  of : Node
+  pol : Bool
+  ctn : Node
+  frm : Node
+  deriving Inhabited
+
+/-- `ExtfSolver::checkExtfInference`, after its first part: the inferences from
+`n`, of the rewrite `nr`, being equal to the constant `c`, with the information
+`info` (with its explanation completed, which is kept), given the others' and
+the `str.contains` recorded. -/
+def checkExtfInference (n nr c : Node) (info : ExtfInfo) (infos : Std.HashMap Key ExtfInfo)
+    (ctns : Array CtnInfo) : EEM (ExtfInfo × Array CtnInfo) := do
+  let exp ← if n.typeHint == some .boolean then
+      pure (info.exp.push (if c == Node.mkTrue then n else Node.notNode n))
+    else do
+      let (_, e) ← explainConstantEqc n (← rep n) info.exp
+      pure e
+  let info := { info with exp }
+  if let .app (.kind .STRING_CONTAINS) #[x, y] := nr then
+    let pol := c == Node.mkTrue
+    let split := if pol then y else x
+    if let .app (.kind .STRING_CONCAT) cs := split then
+      if (← st).extfInferCache.contains ⟨nr⟩ then return (info, ctns)
+      modifyStrings fun s => s.addExtfInfer nr
+      for nc in cs do
+        let atom := Node.mkNode .STRING_CONTAINS (if pol then #[x, nc] else #[nc, y])
+        let conc ← rw (if pol then atom else Node.notNode atom)
+        if ← hasTerm conc then
+          if ← areEq conc Node.mkFalse then
+            let _ ← sendInference (info.exp.push (negLit conc)) Node.mkFalse "STRINGS_CTN_DECOMPOSE"
+            return (info, ctns)
+          else if extfKind conc.getKind then modifyStrings fun s => s.markInactive conc
+      return (info, ctns)
+    if ctns.any fun t => t.of == x && t.pol == pol && t.ctn == y then return (info, ctns)
+    -- transitivity: what holds `t`, and does not hold `r`, shows `t` does not
+    for t in ctns do
+      if t.of != x || t.pol == pol then continue
+      let orig := Node.mkNode .STRING_CONTAINS (if pol then #[y, t.ctn] else #[t.ctn, y])
+      let r ← rw orig
+      if r != orig then continue
+      if ← areEq orig Node.mkFalse then continue
+      let fromExp := if t.frm == n then info.exp else ((infos.get? ⟨t.frm⟩).getD {}).exp
+      let _ ← sendInference (info.exp ++ fromExp) (Node.notNode orig) "STRINGS_CTN_TRANS"
+    return (info, ctns.push { of := x, pol, ctn := y, frm := n })
+  -- the equality with the constant, by the extended rewriter
+  let eqr ← rw (Node.eqNode nr c)
+  if let .app (.kind .EQUAL) #[a, _] := eqr then
+    if a.typeHint == some .string then
+      if let some r := Preprocess.strEqualityExt eqr then
+        if r.1 != eqr then
+          let conc ← rw r.1
+          let _ ← sendInternalInference info.exp conc "STRINGS_EXTF_EQ_REW"
+  return (info, ctns)
+
 /-- `ExtfSolver::checkExtfEval` at effort 0 or 1. -/
 def checkExtfEval (effort : Nat) : EEM Unit := do
   let terms := (← st).activeExt
   let mut infos : Std.HashMap Key ExtfInfo := {}
   let mut toOrig : Std.HashMap Key Node := {}
   let mut inferProcessed : Std.HashSet Key := {}
+  let mut ctns : Array CtnInfo := #[]
   for n in terms do
     let r ← rep n
     let mut einfo : ExtfInfo := { const := ← getConstantEqc r }
@@ -1621,8 +1685,90 @@ def checkExtfEval (effort : Nat) : EEM Unit := do
         if !(← areEq n no) then
           let eito := (infos.get? ⟨no⟩).getD {}
           let _ ← sendInference (einfo.initExp ++ eito.initExp) (Node.eqNode n no) "STRINGS_EXTF_REW_SAME"
-      | none => toOrig := toOrig.insert ⟨toReduce⟩ n
+      | none =>
+        toOrig := toOrig.insert ⟨toReduce⟩ n
+        if let some c := einfo.const then
+          let (i, cs) ← checkExtfInference n toReduce c einfo infos ctns
+          infos := infos.insert ⟨n⟩ i
+          ctns := cs
     if ← inConflict then return
+
+/-! ## Reductions (`ExtfSolver::checkExtfReductions`) -/
+
+/-- The skolems of the solver's reductions. -/
+def solverSkolems : SkolemOps EEM := {
+  rw := rw
+  purify := fun t => do
+    let k := Node.mkPurifySkolem t
+    note (.skolem k)
+    return k }
+
+/-- The kinds whose reductions, at full effort, telos does not port (they have
+quantified formulas, which cvc5 instantiates by bounded integers). -/
+def unportedReduction (k : Kind) : Bool :=
+  k == .STRING_ITOS || k == .STRING_STOI || k == .STRING_INDEXOF_RE ||
+    k == .STRING_REPLACE_ALL || k == .STRING_REPLACE_RE || k == .STRING_REPLACE_RE_ALL ||
+    k == .STRING_TO_LOWER || k == .STRING_TO_UPPER || k == .STRING_REV || k == .STRING_LEQ
+
+/-- `ExtfSolver::shouldDoReduction` at effort 1 (eager) or 2, for a term not
+reduced yet, of polarity `pol` (1, -1, or 0 for none). A negative
+`str.contains` is reduced at last call (`checkNegContains`). -/
+def shouldReduce (effort : Nat) (n : Node) (pol : Int) : EEM Bool := do
+  let k := n.getKind
+  if k == .STRING_CONTAINS && pol == -1 then return false
+  if k == .STRING_SUBSTR || (k == .STRING_CONTAINS && pol == 1) then return effort == 1
+  if k == .STRING_IN_REGEXP || k == .STRING_TO_CODE then return false
+  if n.typeHint == some .boolean && pol == 0 then return false
+  if unportedReduction k then
+    modifyStrings fun s => { s with extfUnchecked := true }
+    return false
+  return effort == 2
+
+/-- `ExtfSolver::doReduction`. -/
+def doReduction (n : Node) : EEM Unit := do
+  if let .app (.kind .STRING_CONTAINS) #[x, y] := n then
+    let eq ← reduceContainsPos solverSkolems x y
+    let _ ← sendInference #[n] eq "STRINGS_CTN_POS" false true #[n]
+    modifyStrings fun s => { s with reduced := s.reduced.insert ⟨n⟩ }
+    return
+  let some lem ← reduceExtf solverSkolems n | return
+  if (← rw lem) == Node.mkTrue then
+    modifyStrings fun s => { s with reduced := s.reduced.insert ⟨n⟩ }
+  else
+    -- (marked reduced when the lemma is sent)
+    sendInferenceInfo { id := "STRINGS_REDUCTION", conc := lem } true
+
+/-- `ExtfSolver::checkExtfReductionsInternal` at effort 1 or 2: the active
+relevant extended terms, in order, until a reduction is sent. -/
+def checkExtfReductions (effort : Nat) : EEM Unit := do
+  for n in (← st).activeExt do
+    if !(← chk).relevant.contains ⟨n⟩ then continue
+    let pol : Int ← if n.typeHint == some .boolean then do
+        let r ← rep n
+        pure (if r == Node.mkTrue then 1 else if r == Node.mkFalse then -1 else 0)
+      else pure 0
+    let key := if pol == -1 then Node.notNode n else n
+    if (← st).reduced.contains ⟨key⟩ then continue
+    if ← shouldReduce effort n pol then
+      doReduction n
+      if ← hasProcessed then return
+
+/-- The negative `str.contains`, whose reductions are cvc5's at last call: a
+disequality, if the lengths are equal (`STRINGS_CTN_NEG_EQUAL`). It ends the
+strategy here, and does not depend on the model; the reduction with a
+quantified formula is not ported. -/
+def checkNegContains : EEM Unit := do
+  for n in (← st).activeExt (some .STRING_CONTAINS) do
+    if !(← chk).relevant.contains ⟨n⟩ || (← rep n) != Node.mkFalse then continue
+    let .app _ #[x, y] := n | continue
+    let (lx, e) ← getLength x #[]
+    let (ly, e) ← getLength y e
+    if ← areEq lx ly then
+      let exp := (e.push (Node.eqNode lx ly)).push (Node.notNode n)
+      let _ ← sendInference exp (Node.notNode (Node.eqNode x y)) "STRINGS_CTN_NEG_EQUAL" false true
+      modifyStrings fun s => s.markInactive n
+      if ← hasProcessed then return
+    else modifyStrings fun s => { s with extfUnchecked := true }
 
 /-! ## Codes (`CodePointSolver`) -/
 
@@ -1819,22 +1965,12 @@ def checkMemberships : EEM Unit := do
   if ← inConflict then return
   checkUnfold mems
 
-/-- The kinds of the extended functions and regular expressions, which later
-stages handle. -/
-def laterKind (k : Kind) : Bool :=
-  k == .STRING_SUBSTR || k == .STRING_UPDATE || k == .STRING_ITOS || k == .STRING_STOI ||
-    k == .STRING_INDEXOF || k == .STRING_INDEXOF_RE || k == .STRING_REPLACE ||
-    k == .STRING_REPLACE_ALL || k == .STRING_REPLACE_RE || k == .STRING_REPLACE_RE_ALL ||
-    k == .STRING_TO_LOWER || k == .STRING_TO_UPPER || k == .STRING_REV || k == .STRING_CONTAINS ||
-    k == .STRING_LEQ || k == .STRING_LT ||
-    k == .STRING_FROM_CODE || k == .STRING_IS_DIGIT || k == .STRING_PREFIX || k == .STRING_SUFFIX
-
 /-- `runStrategy` at full effort: the steps, until one has something to process.
 -/
 def runStrategy : EEM Unit := do
   let steps : List (EEM Unit) := [checkInit, checkConstantEquivalenceClasses, checkExtfEval 0,
-    checkCycles, checkFlatForms, checkNormalFormsEqProp, checkNormalFormsEq, checkExtfEval 1,
-    checkNormalFormsDeq, checkCodes, checkLengthsEqc, checkMemberships]
+    checkCycles, checkFlatForms, checkExtfReductions 1, checkNormalFormsEqProp, checkNormalFormsEq, checkExtfEval 1,
+    checkNormalFormsDeq, checkCodes, checkLengthsEqc, checkExtfReductions 2, checkMemberships, checkNegContains]
   for s in steps do
     s
     if ← hasProcessed then return
@@ -1902,6 +2038,11 @@ def processLemma (ii : Inference) : m Unit := do
   for (p, b) in ii.phases do
     let p ← ops.run (rw p)
     ops.run (modifyStrings fun s => { s with pendingPhases := s.pendingPhases.push (p, b) })
+  -- `ExtfSolver::processSideEffect`: the term reduced
+  if ii.id == "STRINGS_REDUCTION" then
+    if let .app (.kind .AND) cs := ii.conc then
+      if let some (.app (.kind .EQUAL) #[n, _]) := cs.back? then
+        ops.run (modifyStrings fun s => { s with reduced := s.reduced.insert ⟨n⟩ })
   let _ ← ops.run (trustedLemma lem ii.id)
 
 /-- `doPendingLemmas`. -/
@@ -1944,10 +2085,7 @@ strategy, repeated while it had something pending and sent no lemma.
 def postCheck (full : Bool) (relevant : Std.HashSet Key) (needCheck : m Bool) : m Unit := do
   doPendingFacts ops
   if !full || (← ops.run inConflict) || (← needCheck) then return
-  ops.run (modifyStrings fun s => { s with incomplete := false, negMemUnchecked := false, chk := { relevant } })
-  -- a relevant term of a later stage: the check is incomplete
-  if relevant.toArray.any (fun k => laterKind k.node.getKind) then
-    ops.run (modifyStrings fun s => { s with incomplete := true })
+  ops.run (modifyStrings fun s => { s with incomplete := false, negMemUnchecked := false, extfUnchecked := false, chk := { relevant } })
   repeat
     ops.run (modifyStrings fun s => { s with sentFacts := 0, sentLemmas := 0 })
     ops.run runStrategy

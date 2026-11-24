@@ -1341,6 +1341,153 @@ theorem combineIdx_sound_in (N : SmtModel) {k : Kind} {is : Array Int} {cs : Arr
     · simp [hij, loopRec_toS, native_zplus, native_zneg, native_int_to_nat]
   · cases h
 
+/-! ### The extended functions of strings -/
+
+omit [LogosFacts] in
+theorem strV (w : List Nat) : toVal (.str w) = .Seq (native_pack_seq .Char (TRe.chars w)) := by
+  simp only [toVal, native_pack_string, TRe.chars, clampChar_eq]
+
+omit [LogosFacts] in
+theorem intV (i : Int) : toVal (.int i) = .Numeral i := rfl
+
+omit [LogosFacts] in
+theorem boolV (b : Bool) : toVal (.bool b) = .Boolean b := rfl
+
+omit [LogosFacts] in
+theorem reV (r : TRe) : toVal (.re r) = .RegLan r.toS := rfl
+
+omit [LogosFacts] in
+theorem validStr_sound {w : List Nat} {r : MVal} (h : Model.validStr w = some r) :
+    toVal r = .Seq (native_pack_string w) := by
+  unfold Model.validStr at h
+  split at h
+  · rename_i hw
+    cases h
+    simp only [toVal]
+    congr 2
+    rw [List.map_congr_left (g := id) (fun c hc => by
+      simpa using clampChar_of_lt (by simpa using List.all_eq_true.1 hw c hc))]
+    simp
+  · cases h
+
+/-- **An extended function of strings has its value.** -/
+theorem combineStr_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List MVal} {r : MVal}
+    (hv : ValsIn N cs.toList vs) (h : Model.combineStr k vs = some r) :
+    __smtx_model_eval N (Node.app (.kind k) cs).toSmt = toVal r := by
+  have hlen : cs.size = vs.length := by simpa using hv.length_eq
+  unfold Model.combineStr at h
+  split at h
+  all_goals first
+    | (cases h; done)
+    | skip
+  all_goals first
+    | (have hs : cs.size = 2 := by simpa using hlen
+       rw [toList_two hs] at hv
+       obtain ⟨h0, hv⟩ := List.forall₂_cons.1 hv
+       obtain ⟨h1, -⟩ := List.forall₂_cons.1 hv
+       obtain rfl := Option.some.inj h
+       first
+       | (rw [toSmt_bin (op := UserOp.str_at) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.str_at) x) y)
+            = SmtTerm.str_at (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+          exact extract_sound _ _ 1)
+       | (rw [toSmt_bin (op := UserOp.str_contains) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.str_contains) x) y)
+            = SmtTerm.str_contains (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+          simp only [strV, __smtx_model_eval_str_contains, unpack_pack, native_seq_contains, native_seq_indexof, ← TRe.ofList_toS, TRe.indexOf_toS, boolV]; try rfl)
+       | (rw [toSmt_bin (op := UserOp.str_prefixof) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.str_prefixof) x) y)
+            = SmtTerm.str_prefixof (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+          simp only [__smtx_model_eval_str_prefixof, show ∀ w : List Nat, __smtx_model_eval_str_len (toVal (.str w)) = .Numeral w.length from fun w => by
+            simp [strV, __smtx_model_eval_str_len, native_seq_len, unpack_pack]]
+          rw [extract_sound, eval_eq_toVal (.str _) (.str _) rfl]; try rfl)
+       | (rw [toSmt_bin (op := UserOp.str_suffixof) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.str_suffixof) x) y)
+            = SmtTerm.str_suffixof (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+          simp only [__smtx_model_eval_str_suffixof, show ∀ w : List Nat, __smtx_model_eval_str_len (toVal (.str w)) = .Numeral w.length from fun w => by
+            simp [strV, __smtx_model_eval_str_len, native_seq_len, unpack_pack], __smtx_model_eval__, native_zplus, native_zneg]
+          rw [extract_sound, eval_eq_toVal (.str _) (.str _) rfl]; try rfl)
+       | (rw [toSmt_bin (op := UserOp.str_lt) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.str_lt) x) y)
+            = SmtTerm.str_lt (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+          simp only [toVal, __smtx_model_eval_str_lt, unpack_pack_string, native_str_lt, Model.strLt])
+       | (rw [toSmt_bin (op := UserOp.str_leq) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.str_leq) x) y)
+            = SmtTerm.str_leq (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+          simp only [__smtx_model_eval_str_leq]
+          rw [eval_eq_toVal (.str _) (.str _) rfl]
+          simp only [toVal, __smtx_model_eval_str_lt, unpack_pack_string, native_str_lt, Model.strLt, __smtx_model_eval_or, native_or]))
+    | skip
+  all_goals first
+    | (have hs : cs.size = 3 := by simpa using hlen
+       rw [toList_three hs] at hv
+       obtain ⟨h0, hv⟩ := List.forall₂_cons.1 hv
+       obtain ⟨h1, hv⟩ := List.forall₂_cons.1 hv
+       obtain ⟨h2, -⟩ := List.forall₂_cons.1 hv
+       obtain rfl := Option.some.inj h
+       first
+       | (rw [toSmt_tern (op := UserOp.str_indexof) rfl hs, show ∀ x y z,
+            __eo_to_smt (Term.Apply (Term.Apply (Term.Apply (Term.UOp UserOp.str_indexof) x) y) z)
+              = SmtTerm.str_indexof (__eo_to_smt x) (__eo_to_smt y) (__eo_to_smt z) from fun _ _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, ← Node.toSmt, h0, h1, h2]
+          simp only [strV, intV, __smtx_model_eval_str_indexof, unpack_pack, native_seq_indexof, ← TRe.ofList_toS, TRe.indexOf_toS])
+       | (rw [toSmt_tern (op := UserOp.str_indexof_re) rfl hs, show ∀ x y z,
+            __eo_to_smt (Term.Apply (Term.Apply (Term.Apply (Term.UOp UserOp.str_indexof_re) x) y) z)
+              = SmtTerm.str_indexof_re (__eo_to_smt x) (__eo_to_smt y) (__eo_to_smt z) from fun _ _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, ← Node.toSmt, h0, h1, h2]
+          simp only [strV, intV, reV, __smtx_model_eval_str_indexof_re, unpack_pack, TRe.indexOf_toS])
+       | (rw [toSmt_tern (op := UserOp.str_replace) rfl hs, show ∀ x y z,
+            __eo_to_smt (Term.Apply (Term.Apply (Term.Apply (Term.UOp UserOp.str_replace) x) y) z)
+              = SmtTerm.str_replace (__eo_to_smt x) (__eo_to_smt y) (__eo_to_smt z) from fun _ _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, ← Node.toSmt, h0, h1, h2]
+          simp only [strV, __smtx_model_eval_str_replace, unpack_pack, elem_pack, native_seq_replace, ← TRe.ofList_toS, TRe.replace_toS])
+       | (rw [toSmt_tern (op := UserOp.str_replace_re) rfl hs, show ∀ x y z,
+            __eo_to_smt (Term.Apply (Term.Apply (Term.Apply (Term.UOp UserOp.str_replace_re) x) y) z)
+              = SmtTerm.str_replace_re (__eo_to_smt x) (__eo_to_smt y) (__eo_to_smt z) from fun _ _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, ← Node.toSmt, h0, h1, h2]
+          simp only [strV, reV, __smtx_model_eval_str_replace_re, unpack_pack, elem_pack, TRe.replace_toS])
+       | (rw [toSmt_tern (op := UserOp.str_replace_all) rfl hs, show ∀ x y z,
+            __eo_to_smt (Term.Apply (Term.Apply (Term.Apply (Term.UOp UserOp.str_replace_all) x) y) z)
+              = SmtTerm.str_replace_all (__eo_to_smt x) (__eo_to_smt y) (__eo_to_smt z) from fun _ _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, ← Node.toSmt, h0, h1, h2]
+          simp only [strV, __smtx_model_eval_str_replace_all, unpack_pack, elem_pack, native_seq_replace_all, ← TRe.ofList_toS, TRe.replaceAll_toS])
+       | (rw [toSmt_tern (op := UserOp.str_replace_re_all) rfl hs, show ∀ x y z,
+            __eo_to_smt (Term.Apply (Term.Apply (Term.Apply (Term.UOp UserOp.str_replace_re_all) x) y) z)
+              = SmtTerm.str_replace_re_all (__eo_to_smt x) (__eo_to_smt y) (__eo_to_smt z) from fun _ _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, ← Node.toSmt, h0, h1, h2]
+          simp only [strV, reV, __smtx_model_eval_str_replace_re_all, unpack_pack, elem_pack, TRe.replaceAll_toS])
+       | (rw [toSmt_tern (op := UserOp.str_update) rfl hs, show ∀ x y z,
+            __eo_to_smt (Term.Apply (Term.Apply (Term.Apply (Term.UOp UserOp.str_update) x) y) z)
+              = SmtTerm.str_update (__eo_to_smt x) (__eo_to_smt y) (__eo_to_smt z) from fun _ _ _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, ← Node.toSmt, ← Node.toSmt, h0, h1, h2]
+          simp only [strV, intV, __smtx_model_eval_str_update, unpack_pack, elem_pack, native_seq_update, Model.strUpdate]
+          congr 2
+          simp only [TRe.chars, List.length_map]
+          split <;> simp [List.map_take, List.map_drop]))
+    | skip
+  all_goals
+    have hs : cs.size = 1 := by simpa using hlen
+    rw [toList_one hs] at hv
+    obtain ⟨h0, -⟩ := List.forall₂_cons.1 hv
+  · rw [toSmt_un (op := UserOp.str_from_code) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.str_from_code) x)
+            = SmtTerm.str_from_code (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+    simp only; rw [← Node.toSmt, h0]
+    rw [validStr_sound h]
+    simp only [toVal, __smtx_model_eval_str_from_code, native_str_from_code]
+    rfl
+  · rw [toSmt_un (op := UserOp.str_to_int) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.str_to_int) x)
+            = SmtTerm.str_to_int (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+    simp only; rw [← Node.toSmt, h0]
+    obtain rfl := Option.some.inj h
+    simp only [toVal, __smtx_model_eval_str_to_int, unpack_pack_string]
+    rfl
+  · rw [toSmt_un (op := UserOp.str_from_int) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.str_from_int) x)
+            = SmtTerm.str_from_int (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+    simp only; rw [← Node.toSmt, h0]
+    rw [validStr_sound h]
+    simp only [toVal, __smtx_model_eval_str_from_int, native_str_from_int]
+    rfl
+
 /-- `divisible` on integers, as the evaluator has it. -/
 theorem divisible_eval (k t : Int) :
     __smtx_model_eval_divisible (toVal (.int k)) (toVal (.int t)) = toVal (.bool (native_mod_total t k == 0)) := by
@@ -1356,6 +1503,9 @@ theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List 
   split at h
   · exact combineRe_sound_in N hv h
   rename_i hnre
+  split at h
+  · exact combineStr_sound_in N hv h
+  rename_i hnstr
   split at h
   · rename_i b
     cases h

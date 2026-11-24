@@ -1,0 +1,10 @@
+; Extended functions of strings: reductions, and a model with them.
+(set-logic ALL)
+(set-option :produce-models true)
+(declare-fun x () String)
+(declare-fun y () String)
+(assert (= (str.indexof x "b" 0) 2))
+(assert (= (str.replace x "b" y) "aacc"))
+(assert (not (str.contains y "a")))
+(check-sat)
+(get-value (x y (str.at x 2) (str.replace_all x "a" "dd")))

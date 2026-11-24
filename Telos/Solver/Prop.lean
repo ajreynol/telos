@@ -502,10 +502,12 @@ def runSat (c : Config) (formulas : List Node) : Result :=
           | none => some (.notPorted s!"{T} set the model unsound ({id}), which cvc5 does not")
         | none => some (.internal "the model is unsound, and no theory said so")
       else if e.ee.strings.incomplete && unsolved.contains .THEORY_STRINGS then
-        some (.notPorted "strings: the last full check met terms of a stage not ported (extended functions, loops)")
+        some (.notPorted "strings: the last full check met a part not ported (a looping word equation, an unfolding)")
       else some (.notPorted s!"not solved: {", ".intercalate (unsolved.map (·.name))}")
     let restsOnModel : Option Unknown := if e.ee.strings.negMemUnchecked then
         some (.notPorted "strings: negative memberships are not unfolded (STRINGS_RE_UNFOLD_NEG)")
+      else if e.ee.strings.extfUnchecked then
+        some (.notPorted "strings: an extended function whose reduction has a quantified formula is not reduced (STRINGS_REDUCTION)")
       else none
     { answer := if solved then .sat else .unknown, events := e.events, ee := e.ee, why, restsOnModel,
       asserted := e.asserted ++ bools,

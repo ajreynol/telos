@@ -450,11 +450,62 @@ def combineRe (k : Kind) (vs : List MVal) : Option MVal :=
   | .REGEXP_RANGE, [.str a, .str b] => some (.re (TRe.mkRange a b))
   | _, _ => none
 
+/-- Whether `k` is an operator of strings of `combineStr`. -/
+def isStrFnKind : Kind → Bool
+  | .STRING_CHARAT | .STRING_CONTAINS | .STRING_PREFIX | .STRING_SUFFIX | .STRING_LT | .STRING_LEQ
+  | .STRING_INDEXOF | .STRING_REPLACE | .STRING_REPLACE_ALL | .STRING_UPDATE | .STRING_INDEXOF_RE
+  | .STRING_REPLACE_RE | .STRING_REPLACE_RE_ALL | .STRING_FROM_CODE | .STRING_STOI | .STRING_ITOS => true
+  | _ => false
+
+/-- The order of strings (`native_str_lt`). -/
+def strLt (w u : List Nat) : Bool := decide (w.map MVal.clampChar < u.map MVal.clampChar)
+
+/-- `str.update` (`native_seq_update`). -/
+def strUpdate (w : List Nat) (i : Int) (u : List Nat) : List Nat :=
+  if i < 0 || Int.ofNat w.length <= i then w
+  else w.take i.toNat ++ u.take (w.length - i.toNat) ++ w.drop (i.toNat + u.length)
+
+/-- `str.to_int` (`native_str_to_int`). -/
+def strToInt (w : List Nat) : Int :=
+  match w with
+  | [] => -1
+  | _ => if w.all (fun c => 48 <= c && c <= 57) then
+      Int.ofNat (w.foldl (fun acc c => 10 * acc + (c - 48)) 0) else -1
+
+/-- A string of valid characters. -/
+def validStr (w : List Nat) : Option MVal :=
+  if w.all (fun c => decide (c < 196608)) then some (.str w) else none
+
+/-- The value of an extended function of strings of kind `k` on the values `vs`
+of its children, as Logos evaluates it: the searches by the regular expression
+of the string searched for. -/
+def combineStr (k : Kind) (vs : List MVal) : Option MVal :=
+  match k, vs with
+  | .STRING_CHARAT, [.str w, .int i] => some (.str (strExtract w i 1))
+  | .STRING_CONTAINS, [.str w, .str u] => some (.bool (decide (0 ≤ TRe.indexOf w (TRe.ofList u) 0)))
+  | .STRING_PREFIX, [.str u, .str w] => some (.bool ((MVal.str u).veq (.str (strExtract w 0 u.length))))
+  | .STRING_SUFFIX, [.str u, .str w] =>
+    some (.bool ((MVal.str u).veq (.str (strExtract w (w.length + -(u.length : Int)) u.length))))
+  | .STRING_LT, [.str w, .str u] => some (.bool (strLt w u))
+  | .STRING_LEQ, [.str w, .str u] => some (.bool ((MVal.str w).veq (.str u) || strLt w u))
+  | .STRING_INDEXOF, [.str w, .str u, .int i] => some (.int (TRe.indexOf w (TRe.ofList u) i))
+  | .STRING_INDEXOF_RE, [.str w, .re r, .int i] => some (.int (TRe.indexOf w r i))
+  | .STRING_REPLACE, [.str w, .str u, .str z] => some (.str (TRe.replace w (TRe.ofList u) z))
+  | .STRING_REPLACE_RE, [.str w, .re r, .str z] => some (.str (TRe.replace w r z))
+  | .STRING_REPLACE_ALL, [.str w, .str u, .str z] => some (.str (TRe.replaceAll w (TRe.ofList u) z))
+  | .STRING_REPLACE_RE_ALL, [.str w, .re r, .str z] => some (.str (TRe.replaceAll w r z))
+  | .STRING_UPDATE, [.str w, .int i, .str u] => some (.str (strUpdate w i u))
+  | .STRING_FROM_CODE, [.int i] => validStr (if 0 ≤ i && decide (i.toNat < 196608) then [i.toNat] else [])
+  | .STRING_STOI, [.str w] => some (.int (strToInt (w.map MVal.clampChar)))
+  | .STRING_ITOS, [.int i] => validStr (if i < 0 then [] else native_string_lit (toString i))
+  | _, _ => none
+
 /-- The value of a connective (or equality, or `ite`, or an arithmetic, string,
 set or regular expression operation) of kind `k` on the values `vs` of its
 children `cs`. -/
 def combine (k : Kind) (cs : Array Node) (vs : List MVal) : Option MVal :=
   if isReKind k then combineRe k vs else
+  if isStrFnKind k then combineStr k vs else
   match k, vs with
   | .NOT, [.bool b] => some (.bool !b)
   | .AND, vs => if 2 ≤ vs.length then (bools vs).map fun bs => .bool (bs.all id) else none

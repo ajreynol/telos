@@ -506,7 +506,8 @@ def conflictOfPropagation (ee : EqualityEngine) (lits : Array Node) (E : Array N
       return EqProof.trans (.symm q) (.assume n)
 
 /-- A certificate of the conflict of a merge of the constants `t₁` and `t₂`
-(`true` and `false`), explained by `E`. -/
+(`true` and `false`), or of other terms whose equality rewrites to `false`,
+explained by `E`. -/
 def conflictOfConstants (ee : EqualityEngine) (lits : Array Node) (E : Array Node) (t₁ t₂ : Node) :
     Except String (Array Node × EqProof) :=
   let C := buildCtx ee E lits
@@ -517,7 +518,7 @@ def conflictOfConstants (ee : EqualityEngine) (lits : Array Node) (E : Array Nod
     -- distinct values (strings, numbers): the rewriter evaluates their
     -- equality to `false`
     let e := Node.eqNode t₁ t₂
-    if t₁.isConst && t₂.isConst && Telos.rewrite e == Node.mkFalse then
+    if Telos.rewrite e == Node.mkFalse then
       return .trans (.symm (.eqTrue p)) (.rw e)
     throw "a merge of constants that are not distinct values"
 

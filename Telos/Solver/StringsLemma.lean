@@ -15,7 +15,10 @@ theory rewrote its parts:
   `string_length_pos`. The lemmas of the skolems of length at least one, or one,
   are not proven (as in cvc5, whose lemma has no proof generator);
 - the splits on a literal (`STRINGS_LEN_SPLIT`, `STRINGS_LEN_SPLIT_EMP`,
-  `STRINGS_DEQ_LENGTH_SP`), `(or l (not l))`: the rewriter;
+  `STRINGS_DEQ_LENGTH_SP` and the other splits of disequalities),
+  `(or l (not l))`: the rewriter;
+- the reductions of the extended functions (`STRINGS_REDUCTION`):
+  `string_reduction`, whose skolems are of terms not rewritten;
 - a core inference sent as a lemma, `(=> h conc)`: its CPC proof
   (`Telos/Solver/StringsCore.lean`).
 
@@ -121,34 +124,57 @@ def prove (id : String) (lem : Node) (o : NodeOrder := {}) : Option EqProof := d
   | "STRINGS_CODE_INJ", .app (.kind .OR) #[.app (.kind .EQUAL) #[.app (.kind .STRING_TO_CODE) #[t], _], _,
       .app (.kind .EQUAL) #[_, s']] =>
     checked lem (.valid lem [.step .string_code_inj (.cons t.toEo (.cons s'.toEo .nil)) .nil])
-  | "STRINGS_EXTF", l@(.app (.kind .STRING_IN_REGEXP) _) | "STRINGS_EXTF_N", l@(.app (.kind .STRING_IN_REGEXP) _)
-  | "STRINGS_EXTF", l@(.app (.kind .NOT) _) | "STRINGS_EXTF_N", l@(.app (.kind .NOT) _) =>
-    bySymbolic l
+  -- a reduction (`STRING_REDUCTION`), its skolems those of CPC's, rewritten
+  | "STRINGS_REDUCTION", .app (.kind .AND) cs =>
+    let .app (.kind .EQUAL) #[t, _] ← cs.back? | none
+    let F ← Strings.reduceExtfCpc t
+    let p : EqProof := .valid F [DT.argStep .string_reduction t]
+    if F == lem then checked lem p
+    else checked lem (.trans (.symm (← StringsCore.bridgeSkolems F lem)) p)
   | "STRINGS_REGISTER_TERM", .app (.kind .AND) #[eq, ceq] =>
     let k ← skolemOfEq? eq
     let (t, pk) ← purify? k
     let p1 ← viaRw o (Node.eqNode k t) eq (.eqTrue pk)
     let lk := Node.mkNode .STRING_LENGTH #[k]
     let lt := Node.mkNode .STRING_LENGTH #[t]
-    let p2 ← viaRw o (Node.eqNode lk lt) ceq (.eqTrue (.congAt lk #[some pk]))
+    let pl : EqProof := .congAt lk #[some pk]
+    let p2 ← (viaRw o (Node.eqNode lk lt) ceq (.eqTrue pl)).orElse fun _ => do
+      -- (the lengths of the proxies of constants as theirs)
+      let mut q := pl
+      let mut cur := lt
+      for c in constPurifies lt do
+        let (v, pc) ← purify? c
+        let some s := StringsCore.substOne c v pc cur | continue
+        let some (_, cur') := EqProof.check #[] s | none
+        cur := cur'
+        q := .trans q s
+      viaRw o (Node.eqNode lk cur) ceq (.eqTrue q)
     checked lem (← andIntro lem #[p1, p2])
   | "STRINGS_REGISTER_TERM_ATOMIC", .app (.kind .OR) #[.app (.kind .AND) #[_, .app (.kind .EQUAL) #[n, _]], _] =>
     checked lem (.valid lem [DT.argStep .string_length_pos n])
   -- a split on a literal, `(or l (not l))`: `split` (or the rewriter)
-  | "STRINGS_LEN_SPLIT", _ | "STRINGS_LEN_SPLIT_EMP", _ | "STRINGS_DEQ_LENGTH_SP", _ =>
+  | "STRINGS_LEN_SPLIT", _ | "STRINGS_LEN_SPLIT_EMP", _ | "STRINGS_DEQ_LENGTH_SP", _
+  | "STRINGS_DEQ_LENS_EQ", _ | "STRINGS_DEQ_STRINGS_EQ", _ | "STRINGS_DEQ_DISL_EMP_SPLIT", _
+  | "STRINGS_DEQ_DISL_FIRST_CHAR_EQ_SPLIT", _ =>
     match lem with
     | .app (.kind .OR) #[l, .app (.kind .NOT) #[l']] =>
       if l == l' then checked lem (.valid lem [DT.argStep .split l])
       else if Telos.rewrite lem == Node.mkTrue then checked lem (.rw lem) else none
     | _ => if Telos.rewrite lem == Node.mkTrue then checked lem (.rw lem) else none
   -- a core inference, `(=> h conc)`
-  | _, .app (.kind .IMPLIES) #[h, conc] =>
+  | "STRINGS_EXTF", .app (.kind .IMPLIES) _ | "STRINGS_EXTF_N", .app (.kind .IMPLIES) _ => implied
+  -- an evaluation without premises
+  | "STRINGS_EXTF", l | "STRINGS_EXTF_N", l => bySymbolic l
+  | _, .app (.kind .IMPLIES) _ => implied
+  | _, _ => none
+where
+  implied : Option EqProof := do
+    let .app (.kind .IMPLIES) #[h, conc] := lem | none
     let P := match h with
       | .app (.kind .AND) cs => cs
       | l => #[l]
     let (F, cs) ← StringsCore.prove id P conc
     if F != lem then none
     checked lem (.valid lem cs)
-  | _, _ => none
 
 end Telos.Solver.StringsLemma
