@@ -21,9 +21,9 @@ A port of the full-effort check of cvc5's `TheoryStrings` (`postCheck`, with its
   normalization (`checkLengthsEqc`).
 
 - the extended functions (`ExtfSolver`): their evaluation (`checkExtfEval`) and
-  the reductions without quantified formulas (`checkExtfReductions`).
+  the reductions (`checkExtfReductions`, and `lastCall`).
 
-The reductions with quantified formulas are not ported: an answer `sat` with a
+The reductions with skolem functions are not ported: an answer `sat` with a
 relevant term that needs one rests on the model check (`State.extfUnchecked`).
 A looping word equation, which needs regular expressions, makes the check
 incomplete (`State.incomplete`); the cardinality of the alphabet is not
@@ -1625,6 +1625,7 @@ def checkExtfEval (effort : Nat) : EEM Unit := do
   let mut toOrig : Std.HashMap Key Node := {}
   let mut inferProcessed : Std.HashSet Key := {}
   let mut ctns : Array CtnInfo := #[]
+  let mut hasNreduce := false
   for n in terms do
     let r ← rep n
     let mut einfo : ExtfInfo := { const := ← getConstantEqc r }
@@ -1691,7 +1692,9 @@ def checkExtfEval (effort : Nat) : EEM Unit := do
           let (i, cs) ← checkExtfInference n toReduce c einfo infos ctns
           infos := infos.insert ⟨n⟩ i
           ctns := cs
+      if (← st).isActiveExt n then hasNreduce := true
     if ← inConflict then return
+  modifyStrings fun s => { s with hasExtf := hasNreduce }
 
 /-! ## Reductions (`ExtfSolver::checkExtfReductions`) -/
 
@@ -1704,11 +1707,10 @@ def solverSkolems : SkolemOps EEM := {
     return k }
 
 /-- The kinds whose reductions, at full effort, telos does not port (they have
-quantified formulas, which cvc5 instantiates by bounded integers). -/
+skolem functions, which telos does not have). -/
 def unportedReduction (k : Kind) : Bool :=
-  k == .STRING_ITOS || k == .STRING_STOI || k == .STRING_INDEXOF_RE ||
-    k == .STRING_REPLACE_ALL || k == .STRING_REPLACE_RE || k == .STRING_REPLACE_RE_ALL ||
-    k == .STRING_TO_LOWER || k == .STRING_TO_UPPER || k == .STRING_REV || k == .STRING_LEQ
+  k == .STRING_ITOS || k == .STRING_STOI || k == .STRING_REPLACE_ALL ||
+    k == .STRING_REPLACE_RE || k == .STRING_REPLACE_RE_ALL
 
 /-- `ExtfSolver::shouldDoReduction` at effort 1 (eager) or 2, for a term not
 reduced yet, of polarity `pol` (1, -1, or 0 for none). A negative
@@ -1753,13 +1755,15 @@ def checkExtfReductions (effort : Nat) : EEM Unit := do
       doReduction n
       if ← hasProcessed then return
 
-/-- The negative `str.contains`, whose reductions are cvc5's at last call: a
-disequality, if the lengths are equal (`STRINGS_CTN_NEG_EQUAL`). It ends the
-strategy here, and does not depend on the model; the reduction with a
-quantified formula is not ported. -/
-def checkNegContains : EEM Unit := do
+/-- `checkExtfReductions` at last call (effort 3): the negative `str.contains`
+that the model does not satisfy (`holds`, the value of an atom on the model's
+values of its arguments): a disequality, if the lengths are equal
+(`STRINGS_CTN_NEG_EQUAL`), else its reduction. -/
+def checkNegContains (holds : Node → Option Bool) : EEM Unit := do
   for n in (← st).activeExt (some .STRING_CONTAINS) do
     if !(← chk).relevant.contains ⟨n⟩ || (← rep n) != Node.mkFalse then continue
+    if (← st).reduced.contains ⟨Node.notNode n⟩ then continue
+    if holds n == some false then continue
     let .app _ #[x, y] := n | continue
     let (lx, e) ← getLength x #[]
     let (ly, e) ← getLength y e
@@ -1767,8 +1771,10 @@ def checkNegContains : EEM Unit := do
       let exp := (e.push (Node.eqNode lx ly)).push (Node.notNode n)
       let _ ← sendInference exp (Node.notNode (Node.eqNode x y)) "STRINGS_CTN_NEG_EQUAL" false true
       modifyStrings fun s => s.markInactive n
-      if ← hasProcessed then return
-    else modifyStrings fun s => { s with extfUnchecked := true }
+    else
+      let some lem ← reduceExtf solverSkolems n | continue
+      sendInferenceInfo { id := "STRINGS_REDUCTION", conc := lem } true
+    if ← hasProcessed then return
 
 /-! ## Codes (`CodePointSolver`) -/
 
@@ -1941,8 +1947,7 @@ def checkUnfold (mems : Array (Node × Array Node)) : EEM Unit := do
   for assertion in all do
     let (pol, atom) := atomOf assertion
     if !pol then
-      -- (unfolded at last call by cvc5, which telos does not port)
-      modifyStrings fun s => { s with negMemUnchecked := true }
+      -- (at last call)
       continue
     if (← st).reduced.contains ⟨assertion⟩ then continue
     match reduceRegExpPos atom with
@@ -1950,6 +1955,22 @@ def checkUnfold (mems : Array (Node × Array Node)) : EEM Unit := do
       let _ ← sendInference #[assertion] conc "STRINGS_RE_UNFOLD_POS" false false #[assertion]
       modifyStrings fun s => { s with reduced := s.reduced.insert ⟨assertion⟩ }
     | none => modifyStrings fun s => { s with incomplete := true }
+  let _ := ()
+
+/-- `checkUnfold` at last call: the negative memberships that the model does not
+satisfy, in node order, unfolded once. -/
+def checkNegUnfold (holds : Node → Option Bool) : EEM Unit := do
+  let mems ← computeAssertedMemberships
+  for assertion in ← sortNodes (mems.foldl (fun acc (_, as) => acc ++ as) #[]) do
+    let (pol, atom) := atomOf assertion
+    if pol || (← st).reduced.contains ⟨assertion⟩ then continue
+    if holds atom == some false then continue
+    let .app _ #[s, r] := atom | continue
+    match reduceRegExpNeg s r with
+    | some (conc, _) =>
+      let _ ← sendInference #[assertion] conc "STRINGS_RE_UNFOLD_NEG" false false #[assertion]
+      modifyStrings fun s => { s with reduced := s.reduced.insert ⟨assertion⟩ }
+    | none => modifyStrings fun s => { s with negMemUnchecked := true }
   let _ := ()
 
 /-- `RegExpSolver::checkMemberships` at full effort. -/
@@ -1970,7 +1991,7 @@ def checkMemberships : EEM Unit := do
 def runStrategy : EEM Unit := do
   let steps : List (EEM Unit) := [checkInit, checkConstantEquivalenceClasses, checkExtfEval 0,
     checkCycles, checkFlatForms, checkExtfReductions 1, checkNormalFormsEqProp, checkNormalFormsEq, checkExtfEval 1,
-    checkNormalFormsDeq, checkCodes, checkLengthsEqc, checkExtfReductions 2, checkMemberships, checkNegContains]
+    checkNormalFormsDeq, checkCodes, checkLengthsEqc, checkExtfReductions 2, checkMemberships]
   for s in steps do
     s
     if ← hasProcessed then return
@@ -2042,7 +2063,10 @@ def processLemma (ii : Inference) : m Unit := do
   if ii.id == "STRINGS_REDUCTION" then
     if let .app (.kind .AND) cs := ii.conc then
       if let some (.app (.kind .EQUAL) #[n, _]) := cs.back? then
-        ops.run (modifyStrings fun s => { s with reduced := s.reduced.insert ⟨n⟩ })
+        -- (under its polarity)
+        let neg ← ops.run (do return (← hasTerm n) && n.typeHint == some .boolean && (← rep n) == Node.mkFalse)
+        let key := if neg then Node.notNode n else n
+        ops.run (modifyStrings fun s => { s with reduced := s.reduced.insert ⟨key⟩ })
   if !exp.isEmpty then
     ops.run (modifyStrings fun s => { s with lemmaPremises := s.lemmaPremises.insert ⟨lem⟩ exp })
   let _ ← ops.run (trustedLemma lem ii.id)
@@ -2095,6 +2119,15 @@ def postCheck (full : Bool) (relevant : Std.HashSet Key) (needCheck : m Bool) : 
     doPending ops
     let sentLemma := (← ops.run st).sentLemmas > 0
     if (← ops.run inConflict) || sentLemma || !hadPending then break
+
+/-- `postCheck` at last call: the reductions that the model asks for. `holds`
+is the value of an atom on the model's values of its arguments. -/
+def lastCall (relevant : Std.HashSet Key) (holds : Node → Option Bool) : m Unit := do
+  ops.run (modifyStrings fun s => { s with negMemUnchecked := false, chk := { s.chk with relevant } })
+  ops.run (modifyStrings fun s => { s with sentFacts := 0, sentLemmas := 0 })
+  ops.run (checkNegContains holds)
+  if !(← ops.run hasProcessed) then ops.run (checkNegUnfold holds)
+  doPending ops
 
 end
 

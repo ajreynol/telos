@@ -121,6 +121,12 @@ def prove (id : String) (lem : Node) (o : NodeOrder := {}) : Option EqProof := d
     checked lem (.valid lem [DT.argStep .string_eager_reduction t])
   | "STRINGS_RE_UNFOLD_POS", .app (.kind .IMPLIES) #[h, c] =>
     checked lem (← underAssumption h c .re_unfold_pos [])
+  | "STRINGS_RE_UNFOLD_NEG", .app (.kind .IMPLIES)
+      #[h@(.app (.kind .NOT) #[.app (.kind .STRING_IN_REGEXP) #[s, r]]), c] =>
+    let (_, fixed) ← Strings.reduceRegExpNeg s r
+    checked lem (← match fixed with
+      | some rev => underAssumption h c .re_unfold_neg_concat_fixed [.node (Node.mkBool rev)]
+      | none => underAssumption h c .re_unfold_neg [])
   | "STRINGS_CODE_INJ", .app (.kind .OR) #[.app (.kind .EQUAL) #[.app (.kind .STRING_TO_CODE) #[t], _], _,
       .app (.kind .EQUAL) #[_, s']] =>
     checked lem (.valid lem [.step .string_code_inj (.cons t.toEo (.cons s'.toEo .nil)) .nil])

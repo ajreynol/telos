@@ -324,6 +324,23 @@ def mkTrue : Node := .const (.boolean true)
 def mkFalse : Node := .const (.boolean false)
 def mkBool (b : Bool) : Node := .const (.boolean b)
 
+/-- Whether `v` is a variable of the quantified formulas the theory of strings
+makes (`SkolemCache::mkIndexVar`, `mkLengthVar`: reserved names). -/
+def isInternalVar : Node → Bool
+  | .boundVar x _ => x == "@var.str_index" || x == "@var.str_length"
+  | _ => false
+
+/-- `(forall vs body)`, as the theory of strings makes it
+(`BoundedIntegers::mkBoundedForall`). -/
+def mkBoundedForall (vs : Array Node) (body : Node) : Node :=
+  mkNode .FORALL #[mkNode .BOUND_VAR_LIST vs, body]
+
+/-- `QuantAttributes::isQuantBounded`: cvc5 marks these formulas by an
+attribute; their variables, whose names CPC's rules fix, say the same. -/
+def isBoundedForall : Node → Bool
+  | .app (.kind .FORALL) #[.app (.kind .BOUND_VAR_LIST) vs, _] => !vs.isEmpty && vs.all isInternalVar
+  | _ => false
+
 def notNode (n : Node) : Node := mkNode .NOT #[n]
 def eqNode (a b : Node) : Node := mkNode .EQUAL #[a, b]
 def andNode (a b : Node) : Node := mkNode .AND #[a, b]

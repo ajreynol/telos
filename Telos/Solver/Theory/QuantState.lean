@@ -52,6 +52,9 @@ structure Ctx where
   and the rewriter at an order (for instances, whose nodes are numbered). -/
   order : NodeOrder := {}
   rewriteAt : NodeOrder → Node → Node := fun _ n => n
+  /-- The model at last call: the value of an integer term, and of a formula. -/
+  modelInt : Node → Option Int := fun _ => none
+  modelBool : Node → Option Bool := fun _ => none
 
 /-- `TNodeTrie`: its children (or, at a leaf, the term), in cvc5's node order. -/
 inductive Trie where

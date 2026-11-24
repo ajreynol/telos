@@ -358,67 +358,128 @@ def explainLevelZero : PropM Unit := do
       for e in (if exp.isEmpty then #[Node.mkTrue] else exp) do out := out.push (← satLit e).neg
       modifyThe PropState fun q => { q with base := q.base.push (out, tag) }
 
-/-- **The certificate of a refutation**: the clauses as literals of terms, with
-their justifications; those with none (lemmas with no proof) are left
-out, and the check fails if the refutation needs them. -/
-def buildCert (p : PropState) : Option SatProof.Cert := do
+/-- A clause of a refutation before its certificate: its literals, the clauses
+it follows from by unit propagation instead (`derived`), and what justifies
+it, made when used. -/
+structure BaseClause where
+  clause : SatProof.Clause
+  derived : Option (Array (Array Node × Option SatProof.Just)) := none
+  just : Thunk (Option SatProof.Just) := Thunk.pure none
+
+/-- The clauses given to the SAT solver. -/
+def baseClauses (p : PropState) : Option (Array BaseClause) :=
   let toNodes (c : Array Lit) : Option SatProof.Clause := c.mapM (Cnf.getNode? p.eng.cnf)
-  let source (k : Nat) : Option SatProof.Just :=
-    match p.eng.satSources[k]? with
-    | some (.input i) => some (.input i)
-    | some (.theory (some (A, q))) => some (.theory A q)
-    | some (.lemma (some (F, q))) => some (.lemma F q)
-    | some (.arith (some (A, q))) => some (.arith A q)
-    | _ => none
+  p.base.mapM fun (c, tag) => do
+    let clause ← toNodes c
+    match tag with
+    | .cnf (.defn n) => some { clause, just := Thunk.pure (some (.defn n)) }
+    | .cnf (.src k) => match p.eng.satSources[k]? with
+      | some (.derived aux) => some { clause, derived := some aux }
+      | some (.input i) => some { clause, just := Thunk.pure (some (.input i)) }
+      | some (.theory cert) => some { clause, just := Thunk.pure (cert.map fun (A, q) => .theory A q) }
+      | some (.lemma cert) => some { clause, just := Thunk.mk fun _ => cert.get.map fun (F, q) => .lemma F q }
+      | some (.arith cert) => some { clause, just := Thunk.pure (cert.map fun (A, q) => .arith A q) }
+      | none => some { clause }
+    | .theory j => some { clause, just := Thunk.pure j }
+    | .derived aux => some { clause, derived := some aux }
+
+/-- The clauses of `db` (those before `top`) that refute the negations of the
+literals of `c` by unit propagation, as indices; none if it finds no conflict. -/
+def unitCore (db : Array SatProof.Clause) (top : Nat) (c : SatProof.Clause) : Option (Array Nat) := Id.run do
+  -- each true literal, with the clause it is propagated by
+  let mut reason : Std.HashMap Key (Option Nat) := c.foldl (fun m l => m.insert ⟨negate l⟩ none) {}
+  let mut conflict : Option Nat := none
+  let mut changed := true
+  while changed && conflict.isNone do
+    changed := false
+    for i in [0:top] do
+      let d := db[i]!
+      let mut open_ : Option Node := none
+      let mut many := false
+      for l in d do
+        if !reason.contains ⟨negate l⟩ then
+          if open_.isSome then many := true; break
+          else open_ := some l
+      if many then continue
+      match open_ with
+      | none =>
+        conflict := some i
+        break
+      | some l =>
+        if !reason.contains ⟨l⟩ then
+          reason := reason.insert ⟨l⟩ (some i)
+          changed := true
+  let some k := conflict | return none
+  let mut out : Array Nat := #[]
+  let mut seen : Std.HashSet Nat := {}
+  let mut todo := #[k]
+  while !todo.isEmpty do
+    let i := todo.back!
+    todo := todo.pop
+    if seen.contains i then continue
+    seen := seen.insert i
+    out := out.push i
+    for l in db[i]! do
+      if let some (some j) := reason.get? ⟨negate l⟩ then todo := todo.push j
+  return some out
+
+/-- The clauses of a refutation that it uses, going back from the empty clause
+(`base` first, then `learned`, in order); all of them if a step does not
+follow. -/
+def usedClauses (base learned : Array SatProof.Clause) : Array Bool := Id.run do
+  let db := base ++ learned
+  let all := db.map fun _ => true
+  let mut used := db.map fun _ => false
+  let some core := unitCore db db.size #[] | return all
+  for i in core do used := used.set! i true
+  for k in [0:learned.size] do
+    let i := db.size - 1 - k
+    if used[i]! then
+      let some core := unitCore db i db[i]! | return all
+      for j in core do used := used.set! j true
+  return used
+
+/-- **The certificate of a refutation**: the clauses it uses, as literals of
+terms, with their justifications; those with none (lemmas with no proof) are
+left out, and the check fails if the refutation needs them. -/
+def buildCert (p : PropState) : Option SatProof.Cert := do
+  let base ← baseClauses p
+  let learned ← p.learned.mapM fun c => c.mapM (Cnf.getNode? p.eng.cnf)
+  let used := usedClauses (base.map (·.clause)) learned
   let mut clauses : Array (SatProof.Clause × SatProof.Just) := #[]
   -- the clauses that follow by unit propagation from the steps of their
   -- explanations, which come first among the learned clauses
   let mut derived : Array SatProof.Clause := #[]
-  for (c, tag) in p.base do
-    let aux := match tag with
-      | .cnf (.src k) => match p.eng.satSources[k]? with
-        | some (.derived aux) => some aux
-        | _ => none
-      | .derived aux => some aux
-      | _ => none
-    if let some aux := aux then
+  for i in [0:base.size] do
+    if !used[i]! then continue
+    let some b := base[i]? | continue
+    match b.derived with
+    | some aux =>
       for (d, j) in aux do
         if let some j := j then clauses := clauses.push (d, j)
-      derived := derived.push (← toNodes c)
-      continue
-    let j := match tag with
-      | .cnf (.defn n) => some (.defn n)
-      | .cnf (.src k) => source k
-      | .theory j => j
-      | .derived _ => none
-    if let some j := j then clauses := clauses.push ((← toNodes c), j)
-  let learned ← p.learned.mapM toNodes
+      derived := derived.push b.clause
+    | none => if let some j := b.just.get then clauses := clauses.push (b.clause, j)
+  let learned := (learned.zipIdx.filter fun (_, i) => used[base.size + i]!).map (·.1)
   return { clauses, learned := derived ++ learned }
 
 /-- The clauses that `buildCert` leaves out for want of a certificate, with the
 label of their source (the theory and inference of the lemma or conflict):
 for the diagnosis of a certificate that does not check. -/
 def unjustifiedClauses (p : PropState) : Array (SatProof.Clause × String) := Id.run do
-  let toNodes (c : Array Lit) : Option SatProof.Clause := c.mapM (Cnf.getNode? p.eng.cnf)
-  let label (k : Nat) : String := (p.eng.srcLabels.get? k).getD s!"source {k}"
-  let hasCert (k : Nat) : Bool :=
-    match p.eng.satSources[k]? with
-    | some (.input _) | some (.theory (some _)) | some (.lemma (some _)) | some (.arith (some _)) => true
-    | _ => false
+  let some base := baseClauses p | return #[]
+  let learned : Array SatProof.Clause :=
+    (p.learned.mapM fun (c : Array Lit) => c.mapM (Cnf.getNode? p.eng.cnf)).getD #[]
+  let used := usedClauses (base.map (·.clause)) learned
   let mut out := #[]
-  for (c, tag) in p.base do
-    match tag with
-    | .cnf (.src k) =>
-      match p.eng.satSources[k]? with
-      | some (.derived aux) =>
-        for (d, j) in aux do
-          if j.isNone then out := out.push (d, label k)
-      | _ => if !hasCert k then if let some c := toNodes c then out := out.push (c, label k)
-    | .theory none => if let some c := toNodes c then out := out.push (c, "a propagation's explanation")
-    | .derived aux =>
-      for (d, j) in aux do
-        if j.isNone then out := out.push (d, "a propagation's explanation")
-    | _ => pure ()
+  for i in [0:base.size] do
+    if !used[i]! then continue
+    let some b := base[i]? | continue
+    let label := match p.base[i]? with
+      | some (_, .cnf (.src k)) => (p.eng.srcLabels.get? k).getD s!"source {k}"
+      | _ => "a propagation's explanation"
+    match b.derived with
+    | some aux => for (d, j) in aux do if j.isNone then out := out.push (d, label)
+    | none => if b.just.get.isNone then out := out.push (b.clause, label)
   return out
 
 /-- Why a certificate of a refutation does not check, with its code:
@@ -439,6 +500,7 @@ def diagnoseCert (p : PropState) (inputs : Array Node) (cert : SatProof.Cert) : 
 /-- A quantified literal with a variable of a type cvc5's counterexample-guided
 instantiation handles (integers, reals, datatypes). -/
 def cegqiApplies (lit : Node) : Bool :=
+  if lit.isBoundedForall then false else
   let q := match lit with
     | .app (.kind .NOT) #[a] => a
     | a => a
@@ -507,7 +569,7 @@ def runSat (c : Config) (formulas : List Node) : Result :=
     let restsOnModel : Option Unknown := if e.ee.strings.negMemUnchecked then
         some (.notPorted "strings: negative memberships are not unfolded (STRINGS_RE_UNFOLD_NEG)")
       else if e.ee.strings.extfUnchecked then
-        some (.notPorted "strings: an extended function whose reduction has a quantified formula is not reduced (STRINGS_REDUCTION)")
+        some (.notPorted "strings: an extended function whose reduction has a skolem function is not reduced (STRINGS_REDUCTION)")
       else none
     { answer := if solved then .sat else .unknown, events := e.events, ee := e.ee, why, restsOnModel,
       asserted := e.asserted ++ bools,

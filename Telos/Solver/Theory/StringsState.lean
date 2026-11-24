@@ -184,6 +184,11 @@ structure State where
   /-- The last full-effort check left unreduced an extended term whose reduction
   is not ported: a `sat` answer rests on the model check. -/
   extfUnchecked : Bool := false
+  /-- `ExtfSolver::d_hasExtf`: the last evaluation left an extended term. -/
+  hasExtf : Bool := false
+  /-- The rewrites of the terms the theory rewrote (cvc5's rewriter caches them
+  by node). -/
+  rwCache : Std.HashMap Key Node := {}
   /-- `d_numCurrentFacts`, `d_numCurrentLemmas` since the last `reset`. -/
   sentFacts : Nat := 0
   sentLemmas : Nat := 0

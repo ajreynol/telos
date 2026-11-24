@@ -1,3 +1,4 @@
+import Telos.Rewriter.Rewrite
 import Telos.Solver.Theory.QuantEMatching
 import Telos.Solver.Event
 
@@ -153,6 +154,109 @@ def qcfCheck (rd : Round) : EM Round := do
     if added > 0 || rd.inConflict then break
   return rd
 
+/-! ## Bounded quantified formulas
+
+The formulas the reductions of strings make (`isBoundedForall`), over integers
+bounded by literals of their bodies: cvc5's `BoundedIntegers`, `checkOwnership`
+(integer ranges only), and its model engine (`FullModelChecker`) with them:
+at last call, an instance that the model does not make true, the first in the
+order of the values. The decision strategy of the ranges
+(`IntRangeDecisionHeuristic`) is not ported. -/
+
+/-- The bounds of the variable `v` by the disjunct `d` of a body, whose
+negation is assumed: a lower (`true`) or an upper bound. -/
+def boundOfDisjunct (v d : Node) : Array (Bool × Node) :=
+  let (atom, pol) := match d with
+    | .app (.kind .NOT) #[a] => (a, true)
+    | a => (a, false)
+  match atom with
+  | .app (.kind .GEQ) #[a, b] =>
+    if a.typeHint != some .integer then #[] else
+    -- `p ≥ 0` (`pol`), or `p ≤ -1`
+    let p := Telos.Arith.polyOf (Node.mkNode .SUB #[a, b])
+    let c := (p.find? (·.1 == [v])).map (·.2)
+    let rest := p.filter (·.1 != [v])
+    if rest.any (·.1.contains v) then #[] else
+    match c with
+    | some c =>
+      if c == 1 then
+        let r := Telos.Arith.Poly.scale rest (-1)
+        if pol then #[(true, r.toNode false)]
+        else #[(false, (Telos.Arith.Poly.add r (Telos.Arith.Poly.const (-1))).toNode false)]
+      else if c == -1 then
+        if pol then #[(false, (Telos.Arith.Poly.scale rest 1).toNode false)]
+        else #[(true, (Telos.Arith.Poly.add rest (Telos.Arith.Poly.const 1)).toNode false)]
+      else #[]
+    | none => #[]
+  | _ => #[]
+
+/-- The variables of `q` in the order they are found bounded, each with its
+bounds; none if one is not. -/
+def boundsOf (q : Node) : Option (Array (Node × Node × Node)) := Id.run do
+  let vs := quantVars q
+  let ds := match quantBody q with
+    | .app (.kind .OR) cs => cs
+    | b => #[b]
+  let mut out : Array (Node × Node × Node) := #[]
+  for _ in vs do
+    for v in vs do
+      if out.any (·.1 == v) then continue
+      let bs := ds.flatMap (boundOfDisjunct v)
+      let ok (t : Node) : Bool := t.vars.all fun x => !vs.contains x || out.any (·.1 == x)
+      -- (a later literal's bound replaces an earlier one's)
+      let lo := (bs.filter fun (l, t) => l && ok t).back?
+      let hi := (bs.filter fun (l, t) => !l && ok t).back?
+      match lo, hi with
+      | some (_, l), some (_, h) => out := out.push (v, l, h)
+      | _, _ => pure ()
+  return if out.size == vs.size then some out else none
+
+/-- The most values of a variable that are enumerated. -/
+def rangeLimit : Int := 100000
+
+/-- `FullModelChecker::exhaustiveInstantiate` of a bounded formula: the number
+of instances added (at most one), and whether all were considered. -/
+partial def exhaustiveInstantiate (rd : Round) (q : Node) : EM (Nat × Bool × Round) := do
+  let some bs := boundsOf q | return (0, false, rd)
+  let c ← ectx
+  let vs := quantVars q
+  let rec go (rd : Round) (i : Nat) (asg : Array (Node × Node)) : EM (Nat × Bool × Round) := do
+    let subst (t : Node) : Node := substitute (asg.map (·.1)) (asg.map (·.2)) t
+    if h : i < bs.size then
+      let (v, l, u) := bs[i]
+      let some lv := c.modelInt (subst l) | return (0, false, rd)
+      let some uv := c.modelInt (subst u) | return (0, false, rd)
+      if uv - lv > rangeLimit then return (0, false, rd)
+      let mut rd := rd
+      let mut complete := true
+      for j in [0:(uv - lv + 1).toNat] do
+        let k := Node.const (.integer (lv + (j : Int)))
+        let (n, ok, rd') ← go rd (i + 1) (asg.push (v, k))
+        rd := rd'
+        complete := complete && ok
+        if n > 0 then return (n, complete, rd)
+      return (0, complete, rd)
+    else
+      let terms := vs.map fun v => ((asg.find? (·.1 == v)).map (·.2)).getD v
+      if c.modelBool (substitute vs terms (quantBody q)) == some true then return (0, true, rd)
+      let (ok, rd) ← addInstantiation rd q terms "QUANTIFIERS_INST_FMF_FMC_EXH"
+      return (if ok then 1 else 0, true, rd)
+  go rd 0 #[]
+
+/-- `ModelEngine::check`: the bounded formulas, in the order of relevance;
+whether every asserted formula is one of them, completely instantiated. -/
+def modelEngineCheck (rd : Round) : EM (Bool × Round) := do
+  let mut rd := rd
+  let mut complete := true
+  for q in ← orderedAsserted do
+    if !q.isBoundedForall then
+      complete := false
+      continue
+    let (_, ok, rd') ← exhaustiveInstantiate rd q
+    rd := rd'
+    if !ok then complete := false
+  return (complete, rd)
+
 /-! ## The check -/
 
 /-- `QuantifiersEngine::check`, at the effort `e`; `needCheck` is the theory
@@ -180,6 +284,11 @@ def check (e : Effort) (needCheck : Bool) (allTerms : Array Node) : EM Unit := d
     for qe in [0, 1, 2, 3] do
       if qe == 0 && qcfNeeds then rd ← qcfCheck rd
       if qe == 1 && emNeeds && !rd.inConflict then rd ← ematchCheck rd (e == .lastCall)
+      let mut complete := false
+      if qe == 2 && e == .lastCall then
+        let (ok, rd') ← modelEngineCheck rd
+        rd := rd'
+        complete := ok
       for l in rd.pending do let _ ← emitLemma l
       rd := { rd with pending := #[] }
       if (← getThe Out).lemmas.size > lemmasBefore || rd.inConflict then break
@@ -193,8 +302,8 @@ def check (e : Effort) (needCheck : Bool) (allTerms : Array Node) : EM Unit := d
         else if e == .lastCall then
           modify fun en => { en with st := { en.st with ierCounterLc := en.st.ierCounterLc + 1 } }
       else if qe == 2 && e == .lastCall then
-        -- no module is complete for an asserted formula
-        unsound := true
+        -- no module is complete for an asserted formula, but for the bounded
+        unsound := !complete
         break
   else
     if e == .full then

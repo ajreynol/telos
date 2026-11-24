@@ -1737,13 +1737,24 @@ the equality engine is its own explanation there.
   `StringsReduce.lean`): `STRINGS_REDUCTION` of `str.substr`, `str.update`,
   `str.indexof` and `str.replace`, certified by CPC's `string_reduction` (whose
   skolems are of terms not rewritten: related by `skolem_intro` and the
-  rewriter); `STRINGS_CTN_POS`, and `STRINGS_CTN_NEG_EQUAL` (at the end of the
-  full-effort strategy; cvc5's is at last call), by `string_eager_reduction`.
-  Not ported: the reductions with quantified formulas (`str.to_int`,
-  `str.from_int`, `str.replace_all`, `str.<=`, `str.rev`, case conversion, the
-  regular expression functions, and a negative `str.contains` at last call),
-  which need bounded integers, and so the relevant terms of these kinds leave a
-  `sat` answer to the model check (`State.extfUnchecked`). `STRINGS_CTN_TRANS`
+  rewriter); `STRINGS_CTN_POS`, by `string_eager_reduction`;
+- the reductions with bounded quantified formulas (`Node.isBoundedForall`, known
+  by their variables' reserved names) of a negative `str.contains`, `str.<=`,
+  `str.rev`, case conversion and `str.indexof_re`; the check at last call
+  (`Strings.lastCall`), over the model's values (`modelEval`): the reductions of
+  the negative `str.contains` (or `STRINGS_CTN_NEG_EQUAL`) and memberships
+  (`STRINGS_RE_UNFOLD_NEG`) that the model does not satisfy; and the bounded
+  formulas' instances that the model does not make true
+  (`Quant.modelEngineCheck`, cvc5's `BoundedIntegers` and model engine, but for
+  the decision strategy of the ranges).
+  Not ported: the reductions with skolem functions (`str.to_int`,
+  `str.from_int`, `str.replace_all`, `str.replace_re`, `str.replace_re_all`): a
+  relevant term of these leaves a `sat` answer to the model check
+  (`State.extfUnchecked`).
+- the certificates of lemmas are made when a refutation uses them: `buildCert`
+  keeps the clauses that a backward pass of unit propagation uses
+  (`usedClauses`).
+  `STRINGS_CTN_TRANS`
   has no certificate (cvc5's has no proof either);
 - certificates of lemmas: from the lemma's explained premises, or else from the
   inference's own premises, each proven in the equality engine

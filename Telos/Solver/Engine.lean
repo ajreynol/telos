@@ -294,8 +294,8 @@ inductive SatSource where
   /-- The input formula of this index. -/
   | input (i : Nat)
   /-- A theory lemma, as given to the CNF stream, with a proof of `(F, true)`
-  (`Telos/Solver/DtLemma.lean`), if any. -/
-  | lemma (cert : Option (Node × EqProof))
+  (`Telos/Solver/DtLemma.lean`), if any, made when a refutation uses it. -/
+  | lemma (cert : Thunk (Option (Node × EqProof)))
   /-- The negation of a theory conflict, with its certificate, if any. -/
   | theory (cert : Option (Array Node × EqProof))
   /-- A conflict of linear arithmetic, or a lemma's clause, with its
@@ -483,7 +483,7 @@ structure State where
   satLiterals : Array (Node × Nat) := #[]
   /-- The lemmas and conflicts (`true`, with a certificate) to give to the CNF
   stream. -/
-  satLemmaQueue : Array (Node × Bool × Option Pending × Option EqProof) := #[]
+  satLemmaQueue : Array (Node × Bool × Option Pending × Thunk (Option EqProof)) := #[]
   /-- The sources of the formulas given to the CNF stream. -/
   satSources : Array SatSource := #[]
   /-- The formulas given to the decision engine since it last took them (the
@@ -631,7 +631,7 @@ def assertShared (T : Theory) (lit : Node) : EngineM Unit := do
       -- (explained by the shared solver, as cvc5 marks it propagated by it:
       -- its receiver may have propagated the literal too)
       let (exp, _) ← runEE (EE.explainLit lit)
-      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (EE.mkAnd exp, true, kind, none),
+      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (EE.mkAnd exp, true, kind, Thunk.pure none),
                                outputUsed := true, lemmasAdded := true }
     return
   let norm := lit
@@ -693,7 +693,7 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
         let (exp, _) ← runEE (EE.explainLit (Node.eqNode a b))
         emit (.conflict (← level) .THEORY_BUILTIN "EQ_CONSTANT_MERGE" (EE.mkAnd exp))
         if (← read).satMode then
-          modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (EE.mkAnd exp, true, some (.constants a b), none),
+          modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (EE.mkAnd exp, true, some (.constants a b), Thunk.pure none),
                                    outputUsed := true, lemmasAdded := true }
       modify fun s => { s with inConflict := true, theoryConflict := true }
     | .fact T id lit exp => emit (.fact (← level) T id lit exp)
@@ -704,17 +704,18 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
         let ord := (← read).order
         let fresh := (← get).ee.freshIds
         let ee := (← get).ee
-        let proof := if T == .THEORY_SETS then SetsLemma.prove id lem ord
-          else if T == .THEORY_STRINGS then
-            -- the order in which the theory rewrote the lemma's parts
-            -- (else from the inference's premises, as the engine explains them)
-            match StringsLemma.prove id lem { ord with fresh } with
-            | some p => some p
-            | none =>
-              match ee.strings.lemmaPremises.get? ⟨lem⟩ with
-              | some ps => (EE.lemmaOfStrings ee lem id ps).toOption
-              | none => none
-          else DtLemma.prove id lem
+        -- (made when a refutation uses the lemma)
+        let proof : Thunk (Option EqProof) ←
+          if T == .THEORY_STRINGS then do
+            -- the order in which the theory rewrote the lemma's parts; else
+            -- from the inference's premises, as the engine explains them
+            match ee.strings.lemmaPremises.get? ⟨lem⟩ with
+            | some ps => pure (Thunk.mk fun _ => match StringsLemma.prove id lem { ord with fresh } with
+              | some p => some p
+              | none => (EE.lemmaOfStrings ee lem id ps).toOption)
+            | none => pure (Thunk.mk fun _ => StringsLemma.prove id lem { ord with fresh })
+          else if T == .THEORY_SETS then pure (Thunk.mk fun _ => SetsLemma.prove id lem ord)
+          else pure (Thunk.mk fun _ => DtLemma.prove id lem)
         modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lem, false, none, proof),
                                  outputUsed := true, lemmasAdded := true }
       else
@@ -741,7 +742,7 @@ def processNotes (notes : Array EE.Note) : EngineM Unit := do
         let exp := if T == .THEORY_SETS then
             (ee.sets.conflict.map fun (_, _, a) => EE.mkAnd a).getD exp
           else exp
-        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (exp, true, kind, none),
+        modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (exp, true, kind, Thunk.pure none),
                                  outputUsed := true, lemmasAdded := true }
       let why := s!"a conflict of {T.name}, which is not certified yet"
       modify fun s => { s with inConflict := true, theoryConflict := true, cert := .error why }
@@ -754,6 +755,41 @@ def withEE (x : EE.EEM α) : EngineM α := do
   let (a, notes) ← runEE x
   processNotes notes
   return a
+
+/-- The value of a term in the model of the engine's state (cvc5's
+`TheoryModel`, at last call): that of its class (a Boolean's, if constant) or
+of the linear solver, else its operator's on its children's. -/
+partial def modelEval (ee : EE.EqualityEngine) (vals : Std.HashMap Nat MVal) (arith : Std.HashMap Key Rat)
+    (t : Node) (top : Bool := false) : Option MVal :=
+  let own : Option MVal := if top then none else
+    match t.typeHint with
+    | some .boolean => (ee.nodeIds.get? ⟨t⟩).bind fun i => match ee.nodes[EE.find ee i]! with
+      | .const (.boolean b) => some (.bool b)
+      | _ => none
+    | T =>
+      let byClass := (ee.nodeIds.get? ⟨t⟩).bind fun i => vals.get? (EE.find ee i)
+      byClass <|> (arith.get? ⟨t⟩).map fun q => if T == some .integer then .int q.floor else .rat q
+  match own with
+  | some v => some v
+  | none => match t with
+    | .const (.boolean b) => some (.bool b)
+    | .const (.integer i) => some (.int i)
+    | .const (.rational q) => some (.rat q)
+    | .const (.string w) => some (.str w)
+    | .skolem .PURIFY #[u] => modelEval ee vals arith u
+    | .app (.kind k) cs => do
+      let vs ← cs.mapM (modelEval ee vals arith ·)
+      Model.combine k cs vs.toList
+    | .app (.indexed k is) cs => do
+      let vs ← cs.mapM (modelEval ee vals arith ·)
+      Model.combineIdx k is.toList vs.toList
+    | _ => none
+
+/-- The values of the model of the engine's state, made once. -/
+def modelThunk (s : State) : Thunk (Std.HashMap Nat MVal × Std.HashMap Key Rat) :=
+  Thunk.mk fun _ =>
+    let arith := Arith.modelValues s.arith
+    (classValues s.ee arith, arith.foldl (fun m (t, q) => m.insert ⟨t⟩ q) {})
 
 /-- What the quantifiers engine sees of the rest: the equality engine (its
 terms, representatives, (dis)equalities and classes, in its order), cvc5's
@@ -783,7 +819,15 @@ def quantCtx : EngineM Quant.Ctx := do
       j := ee.enodes[j]!.next
       if j == i then break
     return out
-  return { hasTerm := fun t => ee.nodeIds.contains ⟨t⟩, rep, areEqual, areDisequal, members,
+  let model := modelThunk s
+  let value (t : Node) : Option MVal := modelEval ee model.get.1 model.get.2 t
+  return { modelInt := fun t => match value t with
+             | some (.int i) => some i
+             | _ => none
+           modelBool := fun t => match value t with
+             | some (.bool b) => some b
+             | _ => none
+           hasTerm := fun t => ee.nodeIds.contains ⟨t⟩, rep, areEqual, areDisequal, members,
            order := c.order, rewriteAt := fun o t => Telos.rewrite t o,
            lt := fun a b => match ord.id? a, ord.id? b with
              | some i, some j => i < j
@@ -813,7 +857,7 @@ def quantRun (x : Quant.EM α) (flush : EngineM Unit := pure ()) : EngineM α :=
   for l in out.lemmas do
     emit (.lemma (← level) .THEORY_QUANTIFIERS l.id l.lem)
     if (← read).satMode then
-      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (l.lem, false, some .quant, QuantLemma.prove l),
+      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (l.lem, false, some .quant, Thunk.mk fun _ => QuantLemma.prove l),
                                outputUsed := true, lemmasAdded := true }
     else
       modify fun s => { s with lemmaSent := true, lemmaQueue := s.lemmaQueue.push l.lem, lemmasAdded := true }
@@ -857,7 +901,8 @@ def arithOutput (o : Arith.Output) : EngineM Unit := do
     if (← read).satMode then
       let ao := (← read).arith.order
       let fr := (← get).ee.freshIds
-      let proof := if id == "ARITH_EQUIV_ATOM" then equivAtomProof { ao with fresh := fr } lem else none
+      let proof : Thunk (Option EqProof) :=
+        Thunk.mk fun _ => if id == "ARITH_EQUIV_ATOM" then equivAtomProof { ao with fresh := fr } lem else none
       modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (lem, false, cert.map .arith, proof),
                                outputUsed := true, lemmasAdded := true }
     else
@@ -866,7 +911,7 @@ def arithOutput (o : Arith.Output) : EngineM Unit := do
     -- `TheoryEngine::conflict`: each conflict is printed and is a clause
     emit (.conflict (← level) .THEORY_ARITH id exp)
     if (← read).satMode then
-      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (exp, true, cert.map .arith, none),
+      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (exp, true, cert.map .arith, Thunk.pure none),
                                outputUsed := true, lemmasAdded := true }
     let why := s!"a conflict of THEORY_ARITH, which is not certified yet"
     modify fun s => { s with inConflict := true, theoryConflict := true, cert := .error why }
@@ -1603,7 +1648,7 @@ partial def notifySatLiteral (atom : Node) : EngineM Unit := do
 
 /-- Give a lemma (rewritten, as cvc5's `TheoryPreprocessor` does), or the
 negation of a conflict's explanation, to the CNF stream. -/
-partial def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (proof : Option EqProof := none) :
+partial def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (proof : Thunk (Option EqProof) := Thunk.pure none) :
     EngineM Unit := do
   let c ← read
   if isConflict then
@@ -1684,10 +1729,10 @@ partial def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (p
           newSatSource (.derived (#[main] ++ (rel.filterMap id).map fun (d, j) => (d, some j)))
       | _ =>
         -- through the preprocessing, if any: `(= lem lemF)` by its CPC proof
-        let cert := proof.bind (DtLemma.forFormula lem₀ lem) |>.bind fun q =>
-          if lemF == lem then some (lem, q)
-          else tppCmds.map fun cs => (lemF, .trans (.symm (.valid (Node.eqNode lem lemF) cs)) q)
-        newSatSource (.lemma cert)
+        newSatSource (.lemma (Thunk.mk fun _ =>
+          proof.get.bind (DtLemma.forFormula lem₀ lem) |>.bind fun q =>
+            if lemF == lem then some (lem, q)
+            else tppCmds.map fun cs => (lemF, .trans (.symm (.valid (Node.eqNode lem lemF) cs)) q)))
     let lbl := ((← get).lemmaIds.get? ⟨lem₀⟩).getD "a theory lemma"
     modify fun s => { s with srcLabels := s.srcLabels.insert src lbl }
     withCnf (Cnf.convertAndAssert (cnfHostWith notifySatLiteral c) lemF false (src := src))
@@ -1695,7 +1740,7 @@ partial def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (p
     -- the skolems' lemmas (`assertLemmasInternal`): skolem definitions of the
     -- decision engine, which waits until they are relevant
     for (F, q) in skLems do
-      let ssrc ← newSatSource (.lemma (q.map (F, ·)))
+      let ssrc ← newSatSource (.lemma (Thunk.pure (q.map (F, ·))))
       modify fun s => { s with srcLabels := s.srcLabels.insert ssrc s!"{lbl} (a skolem's lemma)" }
       withCnf (Cnf.convertAndAssert (cnfHostWith notifySatLiteral c) F false (src := ssrc))
       match skolemOfDefinition F with
@@ -1849,6 +1894,23 @@ def stringsPostCheck (full : Bool) : EngineM Unit := do
       if c.satMode then withCnf (Cnf.preferPhase n pol) }
   Strings.postCheck ops full relevant (do return (← get).outputUsed || (← get).lemmasAdded)
 
+/-- The theory of strings' `postCheck` at last call. -/
+def stringsLastCall : EngineM Unit := do
+  let c ← read
+  let relevant ← stringsRelevant
+  let s ← get
+  let model := modelThunk s
+  let holds (n : Node) : Option Bool := match modelEval s.ee model.get.1 model.get.2 n true with
+    | some (.bool b) => some b
+    | _ => none
+  let ops : Strings.Ops EngineM := {
+    run := fun x => do let a ← withEE x; flushLemmas; pure a
+    hasSatValue := hasSatValue
+    phase := fun n pol => do
+      emit (.phase (← level) n pol)
+      if c.satMode then withCnf (Cnf.preferPhase n pol) }
+  Strings.lastCall ops relevant holds
+
 /-! ## The nonlinear extension -/
 
 /-- The classes of the equality engine (`EqClassesIterator`), each with its
@@ -1901,7 +1963,7 @@ def nlSend (l : Arith.Nl.Lemma) : EngineM Bool := do
   emit (.lemma (← level) .THEORY_ARITH l.id l.lem)
   if c.satMode then
     let cl := (← get).nl.compareLits
-    let pf := NlLemma.prove (fun n => cl.get? ⟨n⟩) l
+    let pf : Thunk (Option EqProof) := Thunk.mk fun _ => NlLemma.prove (fun n => cl.get? ⟨n⟩) l
     modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (l.lem, false, none, pf),
                              outputUsed := true, lemmasAdded := true }
   else
@@ -2194,7 +2256,7 @@ def combineTheories : EngineM Unit := do
     emit (.lemma (← level) .THEORY_BUILTIN "COMBINATION_SPLIT" lem)
     if c.satMode then
       -- (excluded middle: `split`)
-      satLemma lem false none (some (.valid lem [DT.argStep .split eq]))
+      satLemma lem false none (Thunk.pure (some (.valid lem [DT.argStep .split eq])))
       -- `ensureLiteral`, and `PropEngine::preferPhase` (no event)
       let e := Telos.rewrite eq c.order
       let e := if c.cvc5Order then orientEqs ids e c.declOrder else e
@@ -2229,8 +2291,11 @@ def check (e : Effort) : EngineM Unit := do
   let st ← get
   let lastCall := e == .full && !st.inConflict && !(st.outputUsed || st.lemmasAdded)
   if lastCall && (← read).nlSolver then nlFlushPending
+  if lastCall && (← read).stringsSolver && (← get).ee.strings.hasExtf && !(← get).inConflict then
+    emit (.check (← level) .THEORY_STRINGS .lastCall)
+    stringsLastCall
   let st ← get
-  if lastCall && (← read).quantSolver && !st.inConflict then
+  if lastCall && (← read).quantSolver && !st.inConflict && !(st.outputUsed || st.lemmasAdded) then
     let ee := st.ee
     let mut all : Array Node := #[]
     for i in [0:ee.nodes.size] do

@@ -905,6 +905,10 @@ def rewriteForall (rw : (m : Node) → Rw m) (n : Node) : RewriteResponse n :=
     | some ipl => rewriteForallPats rw n ipl
     | none => .done n
   | some (_, _, body) =>
+    -- one the theory of strings made is not standard (`isStandard`)
+    if n.isBoundedForall then
+      respond .REWRITE_AGAIN_FULL <| firstOf [fun _ => congrBody? n Nnf.nnf, fun _ => condSplit n]
+    else
     match mergePrenex n with
     | some ⟨m, h⟩ => ⟨.REWRITE_AGAIN_FULL, m, h⟩
     | none =>

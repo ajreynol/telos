@@ -604,7 +604,8 @@ def ematchResetRound (rd : Round) : EM Round := do
 /-- `InstantiationEngine::check` at the standard effort of the modules
 (`doInstantiationRound`). -/
 def ematchCheck (rd : Round) (lastCall : Bool) : EM Round := do
-  let quants ← orderedAsserted
+  -- (`shouldProcess`: not the bounded ones of the theory of strings)
+  let quants := (← orderedAsserted).filter (!·.isBoundedForall)
   if quants.isEmpty then return rd
   let lastWaiting := (← getThe Out).lemmas.size
   let eLimit := if lastCall then 10 else 2

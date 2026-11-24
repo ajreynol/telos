@@ -40,7 +40,13 @@ def intConst (k : Int) : Node := .const (.integer k)
 /-- The rewrite of a node the theory built, in cvc5's node order (its nodes
 created after those numbered). -/
 def rw (n : Node) : EEM Node := do
-  return Telos.rewrite n (← numbered n)
+  if let some r := (← st).rwCache.get? ⟨n⟩ then return r
+  let r := Telos.rewrite n (← numbered n)
+  modifyStrings fun s =>
+    let m := s.rwCache
+    let s := { s with rwCache := {} }
+    { s with rwCache := m.insert ⟨n⟩ r }
+  return r
 
 /-- `utils::flattenOp` for `AND`: the conjuncts of `n` added to `acc`, left to
 right, without duplicates. -/
