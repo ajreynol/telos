@@ -1069,6 +1069,13 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
       | some q => some q
       | none =>
         match t with
+        -- a variable that only terms of the engine have below them: its value
+        -- in the arithmetic solver, or the default (`buildModel`)
+        | .var _ T =>
+          if (id? t).isSome then none
+          else match arithVals.get? ⟨t⟩ with
+            | some q => some q
+            | none => if T == .integer || T == .real then some 0 else none
         | .app (.kind k) cs => do
           let vs ← cs.toList.mapM (evalArith vals fuel)
           match k, vs with

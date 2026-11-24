@@ -524,7 +524,14 @@ def arithModelOf (c : Config) (e : State) : Array (Node × Rat) :=
   | some nl =>
     let lin := (lin.filter fun (n, _) => !Arith.Nl.isNlMult n).map fun (n, q) =>
       ((nl.find? (·.1 == n)).map (·)).getD (n, q)
-    lin ++ nl.filter fun (n, _) => !lin.any (·.1 == n)
+    -- (a value the extension made up, for a term with none, stands only if the
+    -- term is one of the set, and its
+    -- class has no other)
+    let rep? := fun (n : Node) => (e.ee.nodeIds.get? ⟨n⟩).map (EE.find e.ee)
+    let reps : Std.HashSet Nat := lin.foldl (fun s (n, _) => match rep? n with
+      | some r => s.insert r
+      | none => s) {}
+    lin ++ nl.filter fun (n, _) => termSet.contains ⟨n⟩ && !lin.any (·.1 == n) && !((rep? n).map reps.contains).getD false
 
 /-- **Solve formulas** with the SAT solver and the theory engine. A `sat`
 answer comes with the engine's state, from which the caller builds a model

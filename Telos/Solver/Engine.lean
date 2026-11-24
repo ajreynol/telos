@@ -2132,7 +2132,8 @@ def eeAreDisequal (a b : Node) : EngineM Bool := return (← runEE (EE.areDisequ
 /-- `TheoryEngine::getEqualityStatus` (`SharedSolverDistributed`): by the
 shared terms database (the central equality engine), for two shared terms;
 otherwise by the theory of their type (arithmetic's model, or UF's equality
-engine, which takes the others as disequal in the model). -/
+engine, which takes the others as disequal in the model; `unknown` for the
+types whose theories do not implement it). -/
 def equalityStatus (a b : Node) : EngineM Arith.EqStatus := do
   let s ← get
   if s.notified.contains ⟨a⟩ && s.notified.contains ⟨b⟩ then
@@ -2147,6 +2148,10 @@ def equalityStatus (a b : Node) : EngineM Arith.EqStatus := do
         if let (some x, some y) := (Arith.valueIn vals a, Arith.valueIn vals b) then
           return if x == y then .trueInModel else .falseInModel
     return ← withArith (Arith.equalityStatus a b)
+  -- (the theories of sets, strings and Booleans do not say)
+  match a.typeHint with
+  | some (.set _) | some .string | some (.sequence _) | some .boolean => return .unknown
+  | _ => pure ()
   if ← eeAreEqual a b then return .isTrue
   if ← eeAreDisequal a b then return .isFalse
   return .falseInModel
@@ -2210,6 +2215,9 @@ def carePairsOf {κ : Type} [BEq κ] [Inhabited κ] (T : Theory) (terms : Array 
           let (x, y) := (xs[k]!, ys[k]!)
           if let (some xr, some yr) := (eeTriggerRep? ee x tag, eeTriggerRep? ee y tag) then
             if !(← eeAreEqual x y) then out := out.push (xr, yr)
+          -- (`SETS_CG_SPLIT`: elements that are sets, shared or not)
+          else if T == .THEORY_SETS && k == 0 && (match x.typeHint with | some (.set _) => true | _ => false) then
+            if !(← eeAreEqual x y) then out := out.push (x, y)
   return out
 
 /-- `TheoryUF::computeCareGraph`: its applications (registered), by function. -/
@@ -2242,8 +2250,7 @@ declarations). -/
 def idLt (c : Config) (ids : Std.HashMap Key Nat) (a b : Node) : Bool := EE.ageLt ids a b c.declOrder
 
 /-- `TheorySetsPrivate::computeCareGraph`: the memberships and singletons of
-the last full-effort check (`d_op_list`), by operator and element type. The
-splits on elements that are sets (`SETS_CG_SPLIT`) are not ported. -/
+the last full-effort check (`d_op_list`), by operator and element type. -/
 def setsCarePairs : EngineM (Array (Node × Node)) := do
   carePairsOf .THEORY_SETS (← get).ee.sets.check.careTerms (fun
     | .app (.kind .SET_MEMBER) #[_, s] => some (Kind.SET_MEMBER, s.typeHint)
