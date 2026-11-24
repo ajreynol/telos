@@ -59,6 +59,90 @@ noncomputable def toVal : MVal → SmtValue
     else .NotValue
   | .str w => .Seq (native_pack_string (w.map MVal.clampChar))
   | .re r => .RegLan r.toS
+  | .qempty T => .Seq (.empty T)
+  | .qcons e s =>
+    if s.isSeqV then
+      match toVal s with
+      | .Seq q => .Seq (.cons (toVal e) q)
+      | _ => .Seq (.cons (toVal e) (.empty .None))
+    else .Seq (.cons (toVal e) (.empty .None))
+
+/-! ### Sequences -/
+
+omit [LogosFacts] in
+/-- A sequence's Logos value is one. -/
+theorem toVal_seq (v : MVal) (h : v.isSeqV = true) : ∃ q, toVal v = .Seq q := by
+  cases v <;> simp [MVal.isSeqV] at h
+  · exact ⟨_, rfl⟩
+  · rename_i e s
+    simp only [toVal]
+    split
+    · split <;> exact ⟨_, rfl⟩
+    · exact ⟨_, rfl⟩
+
+/-- The Logos sequence that follows an element. -/
+noncomputable def tailSeq (s : MVal) : SmtSeq :=
+  if s.isSeqV then (match toVal s with | .Seq q => q | _ => .empty .None) else .empty .None
+
+omit [LogosFacts] in
+theorem toVal_qcons (e s : MVal) : toVal (.qcons e s) = .Seq (.cons (toVal e) (tailSeq s)) := by
+  simp only [toVal, tailSeq]
+  split
+  · split <;> rfl
+  · rfl
+
+omit [LogosFacts] in
+theorem toVal_tail {s : MVal} (h : s.isSeqV = true) : toVal s = .Seq (tailSeq s) := by
+  obtain ⟨q, hq⟩ := toVal_seq s h
+  simp [tailSeq, h, hq]
+
+omit [LogosFacts] in
+/-- The Logos value of the sequence of some elements. -/
+theorem toVal_mkSeq (T : SmtType) : ∀ l : List MVal, toVal (.mkSeq T l) = .Seq (native_pack_seq T (l.map toVal)) ∧
+    (MVal.mkSeq T l).isSeqV = true
+  | [] => ⟨rfl, rfl⟩
+  | e :: l => by
+    obtain ⟨h1, h2⟩ := toVal_mkSeq T l
+    refine ⟨?_, rfl⟩
+    show toVal (.qcons e (.mkSeq T l)) = _
+    rw [toVal_qcons]
+    have := toVal_tail h2
+    rw [h1, SmtValue.Seq.injEq] at this
+    rw [← this]
+    rfl
+
+omit [LogosFacts] in
+theorem seqElems_eq : ∀ {v : MVal} {T : SmtType} {l : List MVal}, v.seqElems = some (T, l) → v = .mkSeq T l
+  | .qempty U, T, l, h => by simp [MVal.seqElems] at h; obtain ⟨rfl, rfl⟩ := h; rfl
+  | .qcons e s, T, l, h => by
+    simp only [MVal.seqElems, Option.map_eq_some_iff, Prod.mk.injEq, Prod.exists] at h
+    obtain ⟨U, m, hs, rfl, rfl⟩ := h
+    rw [seqElems_eq hs]; rfl
+  | .bool _, _, _, h | .uval .., _, _, h | .fn .., _, _, h | .dtc .., _, _, h | .app .., _, _, h | .int _, _, _, h
+  | .rat _, _, _, h | .sempty _, _, _, h | .sins .., _, _, h | .str _, _, _, h | .re _, _, _, h => by
+    simp [MVal.seqElems] at h
+
+omit [LogosFacts] in
+theorem toVal_seqElems {v : MVal} {T : SmtType} {l : List MVal} (h : v.seqElems = some (T, l)) :
+    toVal v = .Seq (native_pack_seq T (l.map toVal)) := by
+  rw [seqElems_eq h]; exact (toVal_mkSeq T l).1
+
+omit [LogosFacts] in
+/-- A sequence that is as the empty one of type `None` is it. -/
+theorem tailSeq_none {s : MVal} (h : s.isSeqV = true) : s = .qempty .None ↔ tailSeq s = .empty .None := by
+  cases s <;> simp [MVal.isSeqV] at h
+  · simp [tailSeq, MVal.isSeqV, toVal]
+  · rename_i e t
+    have := toVal_tail (s := .qcons e t) rfl
+    rw [toVal_qcons, SmtValue.Seq.injEq] at this
+    rw [← this]
+    simp
+
+omit [LogosFacts] in
+/-- No value is a character. -/
+theorem toVal_not_char (v : MVal) (c : native_Char) : toVal v ≠ .Char c := by
+  cases v <;> simp only [toVal, ne_eq, reduceCtorEq, not_false_eq_true] <;> repeat' split
+  all_goals simp
 
 /-! ### Strings -/
 
@@ -116,10 +200,17 @@ theorem pack_inj (T : SmtType) (l1 l2 : List SmtValue) : native_pack_seq T l1 = 
 omit [LogosFacts] in
 theorem concatV_sound {a b r : MVal} (h : Model.concatV a b = some r) :
     __smtx_model_eval_str_concat (toVal a) (toVal b) = toVal r := by
-  cases a <;> cases b <;> simp only [Model.concatV, reduceCtorEq, Option.some.injEq] at h
-  subst h
-  simp only [toVal, __smtx_model_eval_str_concat, native_pack_string, unpack_pack, elem_pack, native_seq_concat,
-    List.map_append]
+  unfold Model.concatV at h
+  split at h
+  · cases h
+    simp only [toVal, __smtx_model_eval_str_concat, native_pack_string, unpack_pack, elem_pack, native_seq_concat,
+      List.map_append]
+  · split at h
+    · rename_i T l U m ha hb
+      cases h
+      simp only [toVal_seqElems ha, toVal_seqElems hb, (toVal_mkSeq _ _).1, __smtx_model_eval_str_concat, unpack_pack,
+        elem_pack, native_seq_concat, List.map_append]
+    · cases h
 
 omit [LogosFacts] in
 theorem unpack_pack_string (l : List Nat) : native_unpack_string (native_pack_string l) = l := by
@@ -224,6 +315,28 @@ theorem toVal_props : ∀ v : MVal,
       exact pack_chars_typeof _ (clamp_all w)
     · simp only [toVal, __smtx_value_canonical, native_pack_string]
       exact pack_chars_canonical _ _ (clamp_all w)
+  | .qempty T => by
+    refine ⟨rfl, ?_, fun _ h => by simp [MVal.isSet] at h⟩
+    simp [toVal, __smtx_value_canonical, __smtx_seq_canonical]
+  | .qcons e s => by
+    obtain ⟨he1, he2, -⟩ := toVal_props e
+    obtain ⟨hs1, hs2, -⟩ := toVal_props s
+    have ht : __smtx_typeof_seq_value (tailSeq s) = (if s.isSeqV then s.ty else .Seq .None) := by
+      by_cases h : s.isSeqV = true
+      · rw [toVal_tail h] at hs1
+        simpa [h, __smtx_typeof_value] using hs1
+      · simp [tailSeq, h, __smtx_typeof_seq_value]
+    have hc : __smtx_seq_canonical univ (tailSeq s) = true := by
+      by_cases h : s.isSeqV = true
+      · rw [toVal_tail h] at hs2
+        simpa [__smtx_value_canonical] using hs2
+      · simp [tailSeq, h, __smtx_seq_canonical]
+    refine ⟨?_, ?_, fun _ h => by simp [MVal.isSet] at h⟩
+    · rw [toVal_qcons]
+      simp only [__smtx_typeof_value, __smtx_typeof_seq_value, ht, he1, MVal.ty, native_ite, native_Teq,
+        beq_iff_eq, decide_eq_true_eq]
+    · rw [toVal_qcons]
+      simp [__smtx_value_canonical, __smtx_seq_canonical, he2, hc, native_and]
   | .uval .. | .fn .. => by
     refine ⟨?_, ?_, fun _ h => by simp [MVal.isSet] at h⟩ <;>
       simp [toVal, MVal.ty, __smtx_typeof_value, __smtx_value_canonical, native_usort_mem]
@@ -554,12 +667,16 @@ theorem toVal_set_shape (v : MVal) (h : v.isSet = true) :
 
 theorem toVal_nonset_shape (v : MVal) (h : v.isSet = false) :
     (∀ m, toVal v ≠ .Set m) ∧ toVal v ≠ .NotValue := by
-  cases v <;> simp_all [MVal.isSet, toVal]
+  cases v
+  case qcons e s => rw [toVal_qcons]; simp
+  all_goals simp_all [MVal.isSet, toVal]
 
 theorem toVal_not_reglan (v : MVal) (hv : v.isRe = false) (r : SmtRegLan) : toVal v ≠ .RegLan r := by
   by_cases h : v.isSet = true
   · rcases toVal_set_shape v h with ⟨m, hm⟩ | hm <;> rw [hm] <;> simp
-  · cases v <;> simp_all [MVal.isSet, MVal.isRe, toVal]
+  · cases v
+    case qcons e s => rw [toVal_qcons]; simp
+    all_goals simp_all [MVal.isSet, MVal.isRe, toVal]
 
 /-- A set's type is a set type, or none. -/
 theorem set_ty_shape (v : MVal) (h : v.isSet = true) : (∃ T, v.ty = .Set T) ∨ v.ty = .None := by
@@ -711,7 +828,52 @@ theorem veq_iff (a b : MVal) : MVal.veq a b = true ↔ toVal a = toVal b := by
       rw [MVal.veq.eq_def]
       simp only [MVal.isSet, Bool.or_self, Bool.false_eq_true, ↓reduceIte, toVal, SmtValue.RegLan.injEq]
       exact TRe.ceq_iff x y
-    all_goals (rw [MVal.veq.eq_def]; simp [MVal.isSet, toVal])
+    case str.qempty w T =>
+      rw [MVal.veq.eq_def]
+      cases w with
+      | nil =>
+        simp only [MVal.isSet, toVal, native_pack_string, native_pack_seq, Bool.or_self, Bool.false_eq_true,
+          ↓reduceIte, List.isEmpty_nil, Bool.true_and, beq_iff_eq, List.map_nil, SmtValue.Seq.injEq, SmtSeq.empty.injEq]
+        exact ⟨fun h => h.symm, fun h => h.symm⟩
+      | cons c w => simp [MVal.isSet, toVal, native_pack_string, native_pack_seq]
+    case qempty.str T w =>
+      rw [MVal.veq.eq_def]
+      cases w <;> simp [MVal.isSet, toVal, native_pack_string, native_pack_seq]
+    case str.qcons w e s =>
+      rw [MVal.veq.eq_def, toVal_qcons]
+      cases w with
+      | nil => simp [MVal.isSet, toVal, native_pack_string, native_pack_seq]
+      | cons c w =>
+        have := toVal_not_char e (MVal.clampChar c)
+        simp [MVal.isSet, toVal, native_pack_string, native_pack_seq, Ne.symm this]
+    case qcons.str e s w =>
+      rw [MVal.veq.eq_def, toVal_qcons]
+      cases w with
+      | nil => simp [MVal.isSet, toVal, native_pack_string, native_pack_seq]
+      | cons c w =>
+        have := toVal_not_char e (MVal.clampChar c)
+        simp [MVal.isSet, toVal, native_pack_string, native_pack_seq, this]
+    case qempty.qcons T e s => rw [MVal.veq.eq_def, toVal_qcons]; simp [MVal.isSet, toVal]
+    case qcons.qempty e s T => rw [MVal.veq.eq_def, toVal_qcons]; simp [MVal.isSet, toVal]
+    case qcons.qcons e s f t =>
+      rw [MVal.veq.eq_def, toVal_qcons, toVal_qcons]
+      simp only [MVal.isSet, Bool.or_self, Bool.false_eq_true, ↓reduceIte, Bool.and_eq_true, SmtValue.Seq.injEq,
+        SmtSeq.cons.injEq]
+      rw [veq_iff e f]
+      refine and_congr Iff.rfl ?_
+      by_cases hs : s.isSeqV = true <;> by_cases ht : t.isSeqV = true
+      · simp only [hs, ht, ↓reduceIte]
+        rw [veq_iff s t, toVal_tail hs, toVal_tail ht, SmtValue.Seq.injEq]
+      · simp only [hs, ht, ↓reduceIte, Bool.false_eq_true, beq_iff_eq]
+        rw [tailSeq_none hs]
+        simp [tailSeq, ht]
+      · simp only [hs, ht, ↓reduceIte, Bool.false_eq_true, beq_iff_eq]
+        rw [eq_comm (a := tailSeq s), tailSeq_none ht]
+        simp [tailSeq, hs]
+      · simp [hs, ht, tailSeq]
+    all_goals first
+      | (rw [MVal.veq.eq_def, toVal_qcons]; simp [MVal.isSet, toVal])
+      | (rw [MVal.veq.eq_def]; simp [MVal.isSet, toVal])
 termination_by sizeOf a + sizeOf b
 decreasing_by
   all_goals simp_wf
@@ -1112,12 +1274,25 @@ theorem eval_typedNil_concat (N : SmtModel) (x : Node) (nv : MVal)
   revert h
   cases __smtx_typeof x.toSmt <;> simp only [Model.chainNil, reduceCtorEq, false_implies]
   rename_i E
-  cases E <;> simp only [reduceCtorEq, false_implies, Option.some.injEq]
-  intro h
-  subst h
-  simp only [typedNilOfType]
-  rw [show __eo_to_smt (Term.String []) = SmtTerm.String [] from rfl, __smtx_model_eval.eq_def]
-  rfl
+  by_cases hE : E = .Char
+  · subst hE
+    simp only [Option.some.injEq]
+    intro h
+    subst h
+    simp only [typedNilOfType]
+    rw [show __eo_to_smt (Term.String []) = SmtTerm.String [] from rfl, __smtx_model_eval.eq_def]
+    rfl
+  · intro h
+    have h' : (match __eo_to_smt (typedNilOfType UserOp.str_concat (.Seq E)) with
+        | .seq_empty T => some (MVal.qempty T)
+        | _ => none) = some nv := by
+      cases E <;> first | exact absurd rfl hE | exact h
+    split at h'
+    · rename_i T hn
+      cases h'
+      rw [hn, __smtx_model_eval.eq_def]
+      rfl
+    · cases h'
 
 omit [LogosFacts] in
 theorem toSmt_bin {k : Kind} {op : UserOp} (hk : k.eoShape = .spine (Term.UOp op) (.exactly 2))
@@ -2029,6 +2204,9 @@ theorem toVal_head (v : MVal) : __smtx_apply_head_value (toVal v) = toVal v.head
   | sins e s =>
     rcases toVal_set_shape (.sins e s) rfl with ⟨m, hm⟩ | hm <;> simp only [MVal.head, hm, __smtx_apply_head_value]
   | str w => simp [toVal, MVal.head, __smtx_apply_head_value]
+  | qempty T => simp [toVal, MVal.head, __smtx_apply_head_value]
+  | qcons e s _ _ =>
+    rw [show (MVal.qcons e s).head = .qcons e s from rfl, toVal_qcons]; simp [__smtx_apply_head_value]
   | _ => rfl
 
 omit [LogosFacts] in
@@ -2215,6 +2393,39 @@ def EvOk (M : Model) (n : Nat) : Prop :=
   ∀ env t S, MemoOk M env S → MemoOk M env (M.ev env n t S).2 ∧ ∀ v, (M.ev env n t S).1 = some v → __smtx_model_eval (toSmtModelE M env) t.toSmt = toVal v
 
 omit [LogosFacts] in
+omit [LogosFacts] in
+theorem seq_len_eq {v : MVal} {T : SmtType} {l : List MVal} (h : v.seqElems = some (T, l)) :
+    __smtx_model_eval_str_len (toVal v) = .Numeral l.length := by
+  rw [toVal_seqElems h]
+  simp [__smtx_model_eval_str_len, unpack_pack, native_seq_len]
+
+omit [LogosFacts] in
+theorem seq_extract_eq {v : MVal} {T : SmtType} {l : List MVal} (h : v.seqElems = some (T, l)) (i n : Int) :
+    __smtx_model_eval_str_substr (toVal v) (.Numeral i) (.Numeral n) = toVal (.mkSeq T (Model.seqExtract l i n)) := by
+  rw [toVal_seqElems h, (toVal_mkSeq _ _).1]
+  simp only [__smtx_model_eval_str_substr, unpack_pack, elem_pack, native_seq_extract, Model.seqExtract, List.length_map]
+  split <;> simp [List.map_take, List.map_drop]
+
+omit [LogosFacts] in
+theorem isRe_seqElems {v : MVal} {T : SmtType} {l : List MVal} (h : v.seqElems = some (T, l)) : v.isRe = false := by
+  rw [seqElems_eq h]; cases l <;> rfl
+
+omit [LogosFacts] in
+theorem seq_nth_eq (T : SmtType) : ∀ (l : List MVal) (i : Int) (d : SmtValue) {r : MVal}, 0 ≤ i →
+    l[i.toNat]? = some r → __smtx_seq_value_nth (native_pack_seq T (l.map toVal)) i d = toVal r
+  | [], i, d, r, _, h => by simp at h
+  | e :: l, i, d, r, hi, h => by
+    simp only [List.map_cons, native_pack_seq]
+    rcases eq_or_lt_of_le hi with rfl | hi
+    · simp at h; subst h; rw [__smtx_seq_value_nth]
+    · have hne : i ≠ 0 := by omega
+      rw [__smtx_seq_value_nth]
+      · refine seq_nth_eq T l _ d (by simp [native_zplus, native_zneg]; omega) ?_
+        have : i.toNat = (native_zplus i (native_zneg 1)).toNat + 1 := by simp [native_zplus, native_zneg]; omega
+        rw [this] at h
+        simpa using h
+      · exact hne
+
 theorem evList_sound (M : Model) (n : Nat) (IH : EvOk M n) : ∀ (l : List Node) (S : Model.Memo),
     MemoOk M env S → MemoOk M env (M.evList env n l S).2 ∧ ∀ vs, (M.evList env n l S).1 = some vs → Vals M env l vs
   | [], S, hS => by
@@ -2269,6 +2480,127 @@ theorem eval_exists_cons (N : SmtModel) (s : native_String) (T : SmtType) (b : S
 
 /-- The goal of the witnesses: the body, or its negation. -/
 def witnessGoal (pol : Bool) (body : Node) : SmtTerm := if pol then body.toSmt else SmtTerm.not body.toSmt
+
+/-- **An operator of sequences has its value.** -/
+theorem combineSeq_sound (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List MVal} {r : MVal}
+    (hv : ValsIn N cs.toList vs) (h : Model.combineSeq k vs = some r) :
+    __smtx_model_eval N (Node.app (.kind k) cs).toSmt = toVal r := by
+  have hlen : cs.size = vs.length := by simpa using hv.length_eq
+  unfold Model.combineSeq at h
+  split at h
+  · -- `seq.unit`
+    obtain rfl := Option.some.inj h
+    have hs : cs.size = 1 := by simpa using hlen
+    rw [toList_one hs] at hv
+    obtain ⟨h0, -⟩ := List.forall₂_cons.1 hv
+    rw [toSmt_un (op := UserOp.seq_unit) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.seq_unit) x)
+      = SmtTerm.seq_unit (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+    simp only; rw [← Node.toSmt, h0, toVal_qcons, typeof_toVal]
+    rfl
+  · -- `seq.len`
+    simp only [Option.map_eq_some_iff, Prod.exists] at h
+    obtain ⟨T, l, hl, rfl⟩ := h
+    have hs : cs.size = 1 := by simpa using hlen
+    rw [toList_one hs] at hv
+    obtain ⟨h0, -⟩ := List.forall₂_cons.1 hv
+    rw [toSmt_un (op := UserOp.str_len) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.str_len) x)
+      = SmtTerm.str_len (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+    simp only; rw [← Node.toSmt, h0, toVal_seqElems hl]
+    simp [__smtx_model_eval_str_len, unpack_pack, native_seq_len, toVal]
+  · -- `seq.rev`
+    simp only [Option.map_eq_some_iff, Prod.exists] at h
+    obtain ⟨T, l, hl, rfl⟩ := h
+    have hs : cs.size = 1 := by simpa using hlen
+    rw [toList_one hs] at hv
+    obtain ⟨h0, -⟩ := List.forall₂_cons.1 hv
+    rw [toSmt_un (op := UserOp.str_rev) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.str_rev) x)
+      = SmtTerm.str_rev (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+    simp only; rw [← Node.toSmt, h0, toVal_seqElems hl, (toVal_mkSeq _ _).1]
+    simp only [__smtx_model_eval_str_rev, unpack_pack, elem_pack, native_seq_rev, List.map_reverse]
+  · -- `seq.nth`
+    simp only [Option.bind_eq_some_iff, Prod.exists] at h
+    obtain ⟨T, l, hl, h⟩ := h
+    split at h
+    · rename_i i hi
+      have hs : cs.size = 2 := by simpa using hlen
+      rw [toList_two hs] at hv
+      obtain ⟨h0, hv⟩ := List.forall₂_cons.1 hv
+      obtain ⟨h1, -⟩ := List.forall₂_cons.1 hv
+      rw [toSmt_bin (op := UserOp.seq_nth) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.seq_nth) x) y)
+        = SmtTerm.seq_nth (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+      simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1, toVal_seqElems hl]
+      simp only [toVal, __smtx_seq_nth]
+      exact seq_nth_eq _ _ _ _ hi h
+    · cases h
+  · -- `seq.extract`
+    simp only [Option.map_eq_some_iff, Prod.exists] at h
+    obtain ⟨T, l, hl, rfl⟩ := h
+    have hs : cs.size = 3 := by simpa using hlen
+    rw [toList_three hs] at hv
+    obtain ⟨h0, hv⟩ := List.forall₂_cons.1 hv
+    obtain ⟨h1, hv⟩ := List.forall₂_cons.1 hv
+    obtain ⟨h2, -⟩ := List.forall₂_cons.1 hv
+    rw [toSmt_tern (op := UserOp.str_substr) rfl hs, show ∀ x y z,
+      __eo_to_smt (Term.Apply (Term.Apply (Term.Apply (Term.UOp UserOp.str_substr) x) y) z)
+        = SmtTerm.str_substr (__eo_to_smt x) (__eo_to_smt y) (__eo_to_smt z) from fun _ _ _ => rfl, __smtx_model_eval.eq_def]
+    simp only; rw [← Node.toSmt, ← Node.toSmt, ← Node.toSmt, h0, h1, h2]
+    exact seq_extract_eq hl _ _
+  · -- `seq.at`
+    simp only [Option.map_eq_some_iff, Prod.exists] at h
+    obtain ⟨T, l, hl, rfl⟩ := h
+    have hs : cs.size = 2 := by simpa using hlen
+    rw [toList_two hs] at hv
+    obtain ⟨h0, hv⟩ := List.forall₂_cons.1 hv
+    obtain ⟨h1, -⟩ := List.forall₂_cons.1 hv
+    rw [toSmt_bin (op := UserOp.str_at) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.str_at) x) y)
+      = SmtTerm.str_at (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+    simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+    exact seq_extract_eq hl _ 1
+  · -- `seq.update`
+    simp only [Option.bind_eq_some_iff, Option.map_eq_some_iff, Prod.exists] at h
+    obtain ⟨T, l, hl, U, m, hm, rfl⟩ := h
+    have hs : cs.size = 3 := by simpa using hlen
+    rw [toList_three hs] at hv
+    obtain ⟨h0, hv⟩ := List.forall₂_cons.1 hv
+    obtain ⟨h1, hv⟩ := List.forall₂_cons.1 hv
+    obtain ⟨h2, -⟩ := List.forall₂_cons.1 hv
+    rw [toSmt_tern (op := UserOp.str_update) rfl hs, show ∀ x y z,
+      __eo_to_smt (Term.Apply (Term.Apply (Term.Apply (Term.UOp UserOp.str_update) x) y) z)
+        = SmtTerm.str_update (__eo_to_smt x) (__eo_to_smt y) (__eo_to_smt z) from fun _ _ _ => rfl, __smtx_model_eval.eq_def]
+    simp only; rw [← Node.toSmt, ← Node.toSmt, ← Node.toSmt, h0, h1, h2, toVal_seqElems hl, toVal_seqElems hm,
+      (toVal_mkSeq _ _).1]
+    simp only [toVal, __smtx_model_eval_str_update, unpack_pack, elem_pack, native_seq_update, Model.seqUpdate,
+      List.length_map]
+    congr 2
+    split <;> simp [List.map_take, List.map_drop]
+  · -- `seq.prefixof`
+    simp only [Option.bind_eq_some_iff, Option.map_eq_some_iff, Prod.exists] at h
+    obtain ⟨T, l, hl, U, m, hm, rfl⟩ := h
+    have hs : cs.size = 2 := by simpa using hlen
+    rw [toList_two hs] at hv
+    obtain ⟨h0, hv⟩ := List.forall₂_cons.1 hv
+    obtain ⟨h1, -⟩ := List.forall₂_cons.1 hv
+    rw [toSmt_bin (op := UserOp.str_prefixof) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.str_prefixof) x) y)
+      = SmtTerm.str_prefixof (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+    simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+    simp only [__smtx_model_eval_str_prefixof, seq_len_eq hl, seq_extract_eq hm]
+    rw [eval_eq_toVal _ _ (by simp [isRe_seqElems hl])]
+    rfl
+  · -- `seq.suffixof`
+    simp only [Option.bind_eq_some_iff, Option.map_eq_some_iff, Prod.exists] at h
+    obtain ⟨T, l, hl, U, m, hm, rfl⟩ := h
+    have hs : cs.size = 2 := by simpa using hlen
+    rw [toList_two hs] at hv
+    obtain ⟨h0, hv⟩ := List.forall₂_cons.1 hv
+    obtain ⟨h1, -⟩ := List.forall₂_cons.1 hv
+    rw [toSmt_bin (op := UserOp.str_suffixof) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.str_suffixof) x) y)
+      = SmtTerm.str_suffixof (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
+    simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
+    simp only [__smtx_model_eval_str_suffixof, seq_len_eq hl, seq_len_eq hm, __smtx_model_eval__, native_zplus, native_zneg,
+      seq_extract_eq hm]
+    rw [eval_eq_toVal _ _ (by simp [isRe_seqElems hl])]
+    rfl
+  · cases h
 
 theorem witness_sound (M : Model) (n : Nat) (IH : EvOk M n) (pol : Bool) (body : Node) :
     ∀ (vs : List Node) (env env' : Model.Env), M.witness env n pol body vs = some env' →
@@ -2387,6 +2719,14 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
       rw [e, __smtx_model_eval.eq_def]
       simp only [toVal, hid]
     · cases h
+  · -- an empty sequence
+    split
+    · rename_i U hU
+      exact ⟨hS, fun v h => by
+        cases h
+        rw [hU, __smtx_model_eval.eq_def]
+        rfl⟩
+    · exact ⟨hS, fun v h => by cases h⟩
   · rename_i T
     refine ⟨hS, fun v h => ?_⟩
     dsimp only at h
@@ -2448,16 +2788,21 @@ theorem evNode_sound (M : Model) (n : Nat) (IH : EvOk M n) (t : Node) (S : Model
     cases r1 with
     | none => exact ⟨hS1, fun v h => by cases h⟩
     | some vs =>
-      refine ⟨hS1, fun v h => ?_⟩
-      dsimp only at h
-      cases hd : M.divMod? k vs with
+      dsimp only
+      cases hq : Model.combineSeq k vs with
+      | some r =>
+        exact ⟨hS1, fun v h => by cases h; exact combineSeq_sound _ (hv1 vs rfl) hq⟩
       | none =>
-        rw [hd] at h
-        exact combine_sound M (hv1 vs rfl) h
-      | some o =>
-        rw [hd] at h
-        simp only [Option.getD_some] at h
-        exact divMod_sound M (hv1 vs rfl) (by rw [hd, h])
+        refine ⟨hS1, fun v h => ?_⟩
+        dsimp only at h
+        cases hd : M.divMod? k vs with
+        | none =>
+          rw [hd] at h
+          exact combine_sound M (hv1 vs rfl) h
+        | some o =>
+          rw [hd] at h
+          simp only [Option.getD_some] at h
+          exact divMod_sound M (hv1 vs rfl) (by rw [hd, h])
   · rename_i k is cs
     obtain ⟨hS1, hv1⟩ := evList_sound M n IH cs.toList S hS
     rcases e1 : M.evList env n cs.toList S with ⟨r1, S1⟩

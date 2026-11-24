@@ -65,6 +65,7 @@ def getConcat (n : Node) : List Node :=
 
 def word? : Node → Option (List Nat)
   | .const (.string cs) => some cs
+  | .const (.emptySeq _) => some []
   | _ => none
 
 def mkWord (cs : List Nat) : Node := .const (.string cs)

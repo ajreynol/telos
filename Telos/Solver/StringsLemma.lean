@@ -119,6 +119,8 @@ def prove (id : String) (lem : Node) (o : NodeOrder := {}) : Option EqProof := d
   | "STRINGS_REGISTER_TERM", l@(.app (.kind .AND) #[.app (.kind .OR) _, _]) =>
     let t ← eagerTerm? l
     checked lem (.valid lem [DT.argStep .string_eager_reduction t])
+  | "STRINGS_DEQ_EXTENSIONALITY", .app (.kind .IMPLIES) #[h, c] =>
+    checked lem (← underAssumption h c .string_ext [])
   | "STRINGS_RE_UNFOLD_POS", .app (.kind .IMPLIES) #[h, c] =>
     checked lem (← underAssumption h c .re_unfold_pos [])
   | "STRINGS_RE_UNFOLD_NEG", .app (.kind .IMPLIES)

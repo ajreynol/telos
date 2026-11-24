@@ -1014,7 +1014,7 @@ theorem smtTypeR_eq (t : Node) : t.smtTypeR = t.smtType := by
   | .const (.boolean b) => rw [smtType_bool, smtTypeR]
   | .const (.integer n) => rw [smtType_int, smtTypeR]
   | .const (.rational q) => rw [smtType_rat, smtTypeR]
-  | .const (.bitVector _ _) | .const (.string _) | .const (.emptySet _) | .const (.dtCons _ _)
+  | .const (.bitVector _ _) | .const (.string _) | .const (.emptySet _) | .const (.emptySeq _) | .const (.dtCons _ _)
   | .const (.dtSel _ _ _) => rw [smtTypeR] <;> first | exact termTyF_eq _ | (intros; simp_all)
   | .var x T =>
     cases T

@@ -1,0 +1,7 @@
+sat
+(
+(define-fun x () (Seq Int) (seq.++ (seq.unit 6) (seq.unit 7) (seq.unit 4)))
+(define-fun y () (Seq Int) (seq.++ (seq.unit 5) (seq.unit 7) (seq.unit 4)))
+(define-fun b () (Seq (Seq Bool)) (seq.unit (seq.++ (seq.unit true) (seq.unit false))))
+(define-fun i () Int 7)
+)

@@ -62,6 +62,9 @@ inductive SkolemId where
   /-- `@strings_replace_re_all_result`, as `STRINGS_REPLACE_ALL_RESULT`, of a
   regular expression. -/
   | STRINGS_REPLACE_RE_ALL_RESULT
+  /-- `@strings_deq_diff`, of two sequences `s` and `t`: a position where they
+  differ. -/
+  | STRINGS_DEQ_DIFF
   deriving DecidableEq, Repr, Inhabited, Hashable, Ord
 
 namespace SkolemId
@@ -76,13 +79,15 @@ def all : List SkolemId := [.PURIFY, .INT_DIV_BY_ZERO, .MOD_BY_ZERO, .DIV_BY_ZER
   .STRINGS_OCCUR_INDEX,
   .STRINGS_OCCUR_INDEX_RE,
   .STRINGS_REPLACE_ALL_RESULT,
-  .STRINGS_REPLACE_RE_ALL_RESULT]
+  .STRINGS_REPLACE_RE_ALL_RESULT,
+  .STRINGS_DEQ_DIFF]
 
 /-- The number of cache values of a skolem with this identifier. -/
 def numCacheVals : SkolemId → Nat
   | .PURIFY => 1
   | .INT_DIV_BY_ZERO | .MOD_BY_ZERO | .DIV_BY_ZERO => 0
   | .SETS_DEQ_DIFF => 2
+  | .STRINGS_DEQ_DIFF => 2
   | .QUANTIFIERS_SKOLEMIZE => 2
   | .RE_UNFOLD_POS_COMPONENT => 3
   | .STRINGS_STOI_RESULT => 1
@@ -109,6 +114,7 @@ def name : SkolemId → String
   | .MOD_BY_ZERO => "@mod_by_zero"
   | .DIV_BY_ZERO => "@div_by_zero"
   | .SETS_DEQ_DIFF => "@sets_deq_diff"
+  | .STRINGS_DEQ_DIFF => "@strings_deq_diff"
   | .QUANTIFIERS_SKOLEMIZE => "@quantifiers_skolemize"
   | .RE_UNFOLD_POS_COMPONENT => "@re_unfold_pos_component"
   | .STRINGS_STOI_RESULT => "@strings_stoi_result"

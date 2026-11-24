@@ -40,6 +40,7 @@ def Const.toSmtLib : Const → String
     "#b" ++ String.ofList ((List.range w.toNat).reverse.map fun i => if v.toNat.testBit i then '1' else '0')
   | .string s => "\"" ++ String.ofList (s.map Char.ofNat) ++ "\""
   | .emptySet T => s!"(as set.empty {(TypeNode.set T).toSmtLib})"
+  | .emptySeq T => s!"(as seq.empty {(TypeNode.sequence T).toSmtLib})"
   | .dtCons _ i => s!"<constructor {i}>"
   | .dtSel _ i j => s!"<selector {i} {j}>"
 
@@ -122,6 +123,8 @@ def Kind.smtLibName : Kind → String
   | .STRING_TO_LOWER => "str.to_lower"
   | .STRING_TO_UPPER => "str.to_upper"
   | .STRING_REV => "str.rev"
+  | .SEQ_UNIT => "seq.unit"
+  | .SEQ_NTH => "seq.nth"
   | .STRING_TO_REGEXP => "str.to_re"
   | .STRING_IN_REGEXP => "str.in_re"
   | .REGEXP_NONE => "re.none"
@@ -285,6 +288,7 @@ def Node.toSmtLibTop (N : DtNames) (pc : Node → String) : Node → String
   -- SMT-LIB's indexed `((_ divisible k) t)`
   | .app (.kind .DIVISIBLE) #[.const (.integer k), t] => s!"((_ divisible {k}) {pc t})"
   | .const (.emptySet T) => s!"(as set.empty {(TypeNode.set T).toSmtLibWith N})"
+  | .const (.emptySeq T) => s!"(as seq.empty {(TypeNode.sequence T).toSmtLibWith N})"
   | .const c => c.toSmtLib
   | .var n _ | .boundVar n _ => n
   | .skolem id #[] => id.name

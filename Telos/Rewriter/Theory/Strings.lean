@@ -10,7 +10,7 @@ import Telos.Core.Proof.Emit
 
 A port of cvc5's `SequencesRewriter` and `StringsRewriter`
 (`src/theory/strings/sequences_rewriter.cpp`, `strings_rewriter.cpp`) for
-strings. cvc5 rewrites strings only in post-rewriting (`preRewrite` is the
+strings and sequences. cvc5 rewrites strings only in post-rewriting (`preRewrite` is the
 identity), and every change is `REWRITE_AGAIN_FULL`.
 
 Ported so far: `rewriteConcat`, `rewriteLength`, `rewriteEquality`,
@@ -30,7 +30,7 @@ The strings rewriter is given the full rewriter (`rw`), which cvc5's
 does not (`premiseProver`).
 
 Not ported yet: `IDOF_NORM_PREFIX`, the length of `str.to_lower` and
-`str.to_upper` (CPC has no rule), and sequences.
+`str.to_upper` (CPC has no rule).
 -/
 
 namespace Telos
@@ -75,9 +75,82 @@ def len (t : Node) : Node := mkNode .STRING_LENGTH #[t]
 /-- The code points of a string constant. -/
 def word? : Node → Option (List Nat)
   | .const (.string cs) => some cs
+  | .const (.emptySeq _) => some []
   | _ => none
 
 def mkWord (cs : List Nat) : Node := .const (.string cs)
+
+/-- The empty word of the type of `t` (`Word::mkEmptyWord`). -/
+def emptyOf (t : Node) : Node :=
+  match t.typeHint with
+  | some (.sequence T) => .const (.emptySeq T)
+  | _ => mkWord []
+
+/-- A term of the theory whose sequence type is not `String` (by its first
+child, for the operators that return something else). -/
+def isSeqOp (n : Node) : Bool :=
+  let seq := fun (t : Node) => match t.typeHint with | some (.sequence _) => true | _ => false
+  seq n || (n.getChildren[0]?.map seq).getD false
+
+/-- The components of `t` are units (or it is empty). -/
+def isUnits (t : Node) : Bool :=
+  match t with
+  | .const (.emptySeq _) => true
+  | .app (.kind .SEQ_UNIT) _ => true
+  | .app (.kind .STRING_CONCAT) cs => cs.all fun c => c.getKind == .SEQ_UNIT
+  | _ => false
+
+/-- The evaluation of an operator of sequences on units (`seq-eval-op`), which
+Logos computes. -/
+def seqEval (n : Node) : Option (Rw n) :=
+  if !isSeqOp n then none else
+  let c := n.getChildren[0]?.getD n
+  let cs := if c.getKind == .STRING_CONCAT then c.getChildren else #[c]
+  let units := match n.getKind with
+    | .STRING_LENGTH | .STRING_REV | .SEQ_NTH | .STRING_INDEXOF => isUnits c
+    | .STRING_SUBSTR | .STRING_CHARAT => (cs[0]?.map fun c => c.getKind == .SEQ_UNIT || c.isConst).getD false
+    | .STRING_CONTAINS | .STRING_REPLACE | .STRING_REPLACE_ALL | .STRING_PREFIX | .STRING_SUFFIX =>
+      isUnits c && (n.getChildren[1]?.map isUnits).getD false
+    | _ => false
+  if !units then none else
+  match Node.ofEo [] (Eo.__seq_eval n.toEo) with
+  | some v => if v == n then none else checkBy .seq_eval_op n v
+  | none => none
+
+/-- A sequence of values: units of constants. -/
+def isSeqValue (t : Node) : Bool :=
+  isUnits t && match t with
+    | .app (.kind .SEQ_UNIT) cs => cs.all (·.isConst)
+    | .app (.kind .STRING_CONCAT) cs => cs.all fun c => c.getChildren.all (·.isConst)
+    | _ => true
+
+/-- The equality of two different sequences of values is false. -/
+def seqValuesDistinct (n : Node) : Option (Rw n) :=
+  match n.getChildren with
+  | #[a, b] =>
+    if a != b && isSeqValue a && isSeqValue b && isSeqOp n then
+      byRuleWithPremises .false_intro [] [stepCmd .distinct_values [a, b]] n
+    else none
+  | _ => none
+
+/-- cvc5's `rewriteSeqNth`. -/
+def rewriteSeqNth (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
+  match n.getChildren with
+  | #[s, i] =>
+    if i == ArithEntail.zero && s.getKind == .SEQ_UNIT then byRule "seq-nth-unit" n else
+    (seqEval n).orElse fun _ =>
+      let cs := if s.getKind == .STRING_CONCAT then s.getChildren.toList else []
+      -- the unit at the position that is the length of the components before it
+      (List.range cs.length).findSome? fun k =>
+        let pre := cs.take k
+        if (cs[k]?.map Node.getKind) != some .SEQ_UNIT then none else
+        let l := match pre with
+          | [] => ArithEntail.zero
+          | [c] => (rw (len c)).1
+          | cs => (rw (len (mkNode .STRING_CONCAT cs.toArray))).1
+        if !ArithEntail.checkEq (rw i).1 l then none else
+        firstOf [fun _ => byRuleE rw "seq-nth-concat-unit" n, fun _ => byRuleE rw "seq-nth-concat-unit-gen" n]
+  | _ => none
 
 /-- cvc5's `utils::mkConcat`: the empty string, the child itself, or the
 concatenation. -/
@@ -110,8 +183,10 @@ run of constants into a concatenation of its own, `evaluate` for each group,
 and `aci_norm` to drop the empty constants. -/
 def rewriteConcat (n : Node) : Option (Rw n) := do
   let cs := n.getChildren.toList
-  let target := mkConcat (concatNormChildren cs)
+  let norm := concatNormChildren cs
+  let target := if norm.isEmpty then emptyOf n else mkConcat norm
   if target == n then none
+  if isSeqOp n then return ← aci n target
   if cs.all (·.isConst) then return ← byEvaluate n
   -- The flattened children, with each run of two or more constants grouped.
   let flat := cs.flatMap fun c => if c.getKind == .STRING_CONCAT then c.getChildren.toList else [c]
@@ -138,8 +213,10 @@ def rewriteConcat (n : Node) : Option (Rw n) := do
 def rewriteLength (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
   match n.getChildren with
   | #[c] =>
-    if c.isConst then byEvaluate n
+    if isSeqOp n && c.isConst then seqEval n
+    else if c.isConst then byEvaluate n
     else match c.getKind with
+      | .SEQ_UNIT => byRule "seq-len-unit" n
       | .STRING_CONCAT => byRule "str-len-concat-rec" n
       | .STRING_REPLACE | .STRING_REPLACE_ALL =>
         -- `LEN_REPL_INV`, when `ArithEntail::checkEq` shows that the pattern and
@@ -161,6 +238,7 @@ def rewriteEquality (o : NodeOrder) (n : Node) : Option (Rw n) :=
   match n.getChildren with
   | #[a, b] =>
     if a == b then byRule "eq-refl" n
+    else if isSeqValue a && isSeqValue b && isSeqOp n then seqValuesDistinct n
     else if a.isConst && b.isConst then byEvaluate n
     else if o.lt b a then byRule "eq-symm" n
     else none
@@ -971,8 +1049,10 @@ partial def minscopeConcat (rule : String) (m : Node) : Option (Rw m) :=
 def rewriteStrReverse (n : Node) : Option (Rw n) :=
   match n.getChildren with
   | #[x] =>
+    if isSeqOp n && isUnits x then seqEval n else
     if x.isConst then byEvaluate n else
     match x.getKind, x.getChildren with
+    | .SEQ_UNIT, _ => byRule "seq-rev-unit" n
     | .STRING_CONCAT, cs =>
       -- `seq-rev-concat` peels off the last component
       let target := mkNode .STRING_CONCAT (cs.reverse.map fun c => mkNode .STRING_REV #[c])
@@ -1574,7 +1654,13 @@ def postRewrite (rw : (m : Node) → Rw m) (o : NodeOrder) (n : Node) : RewriteR
     | .REGEXP_STAR => rewriteStar n
     | .REGEXP_CONCAT => rewriteConcatRe n
     | .STRING_IN_REGEXP => rewriteMembership n
+    | .SEQ_NTH => rewriteSeqNth rw n
+    | .SEQ_UNIT => none
     | _ => evalConst n
+  let r := match n.getKind with
+    | .STRING_SUBSTR | .STRING_CHARAT | .STRING_CONTAINS | .STRING_REPLACE | .STRING_REPLACE_ALL
+    | .STRING_PREFIX | .STRING_SUFFIX | .STRING_INDEXOF => (seqEval n).orElse fun _ => r
+    | _ => r
   match r with
   | some ⟨m, h⟩ =>
     if m == n then .done n

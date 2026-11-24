@@ -210,6 +210,8 @@ structure State where
   extActive : Std.HashMap Key Bool := {}
   /-- `ExtfSolver::d_extfInferCache` (context dependent). -/
   extfInferCache : Std.HashSet Key := {}
+  /-- `CoreSolver::d_extDeq` (user context). -/
+  extDeq : Std.HashSet Key := {}
   /-- `ExtTheory::d_ci_inactive` (user context): the terms inactive
   independently of the SAT context. -/
   ciInactive : Std.HashSet Key := {}

@@ -107,6 +107,14 @@ partial def valueStr (C : PrintCtx) (T : TypeNode) (v : MVal) : String :=
     | [] => s!"(as set.empty {T.toSmtLibWith C.N})"
     | [e] => e
     | es => es.tail.foldl (fun acc e => s!"(set.union {acc} {e})") es.head!
+  | .qempty _, T => s!"(as seq.empty {T.toSmtLibWith C.N})"
+  | v@(.qcons ..), T =>
+    let E := match T with
+      | .sequence E => E
+      | _ => .boolean
+    match ((v.seqElems.map (·.2)).getD []).map fun e => s!"(seq.unit {valueStr C E e})" with
+    | [e] => e
+    | es => "(seq.++ " ++ " ".intercalate es ++ ")"
   | v@(.dtc ..), T | v@(.app ..), T =>
     match v.head with
     | .dtc _ _ i =>

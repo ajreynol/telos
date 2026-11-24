@@ -21,6 +21,8 @@ inductive Kind where
   | CONST_STRING
   /-- The empty set (cvc5's `SET_EMPTY`, a constant whose payload is its type). -/
   | SET_EMPTY
+  /-- The empty sequence (cvc5's `CONST_SEQUENCE` of no elements). -/
+  | SEQ_EMPTY
   /-- A datatype constructor or selector symbol (`Const.dtCons`, `Const.dtSel`),
   the operator of `APPLY_CONSTRUCTOR`, `APPLY_SELECTOR`, … -/
   | DT_SYMBOL
@@ -148,6 +150,8 @@ inductive Kind where
   | STRING_TO_LOWER
   | STRING_TO_UPPER
   | STRING_REV
+  | SEQ_UNIT
+  | SEQ_NTH
   | STRING_TO_REGEXP
   | STRING_IN_REGEXP
   | REGEXP_NONE
@@ -227,6 +231,7 @@ def Kind.theoryId : Kind → TheoryId
   | .CONST_BITVECTOR => .THEORY_BV
   | .CONST_STRING => .THEORY_STRINGS
   | .SET_EMPTY => .THEORY_SETS
+  | .SEQ_EMPTY => .THEORY_STRINGS
   | .DT_SYMBOL => .THEORY_DATATYPES
   | .VARIABLE | .BOUND_VARIABLE | .SKOLEM | .EQUAL => .THEORY_BUILTIN
   | .NOT | .AND | .IMPLIES | .OR | .XOR | .ITE => .THEORY_BOOL
@@ -315,6 +320,8 @@ def Kind.theoryId : Kind → TheoryId
   | .STRING_TO_LOWER => .THEORY_STRINGS
   | .STRING_TO_UPPER => .THEORY_STRINGS
   | .STRING_REV => .THEORY_STRINGS
+  | .SEQ_UNIT => .THEORY_STRINGS
+  | .SEQ_NTH => .THEORY_STRINGS
   | .STRING_TO_REGEXP => .THEORY_STRINGS
   | .STRING_IN_REGEXP => .THEORY_STRINGS
   | .REGEXP_NONE => .THEORY_STRINGS

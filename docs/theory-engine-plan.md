@@ -1616,7 +1616,16 @@ Stages, each with its fuzz generator, events, models and certificates:
    evaluation, lazy reductions, model-based reduction at last call.
 3. **Regular expressions** (`regexp_solver.cpp`, `regexp_operation.cpp`): the
    unfolding of memberships, intersection and inclusion.
-4. **Sequences**: `seq.unit`, `seq.nth`, `seq.update` (`array_solver.cpp`).
+4. **Sequences** (ported, `seq-array=none` as in safe mode): `seq.unit`,
+   `seq.nth`, `seq.update`, over any element type. There are no sequence constants
+   (cvc5's `CONST_SEQUENCE`): a sequence of values is a concatenation of units, as
+   in CPC, evaluated by `seq-eval-op`; only the empty one is a constant
+   (`Const.emptySeq`). So events differ from cvc5's on such inputs.
+   `STRINGS_UNIT_INJ` (`string_seq_unit_inj`), the reduction of `seq.nth`, and
+   disequalities by extensionality (`STRINGS_DEQ_EXTENSIONALITY`, `string_ext`).
+   Models: `MVal.qempty`/`qcons`. Not yet: the cardinality of finite element types
+   (`checkCardinality`), and in the model evaluator `seq.nth` out of bounds,
+   `seq.contains`, `seq.indexof` and `seq.replace(_all)`.
 
 **Status of stage 1.** Ported (`Telos/Solver/Theory/Strings.lean`, the term
 registry and the eager solver; `StringsSolver.lean`, the full-effort check;

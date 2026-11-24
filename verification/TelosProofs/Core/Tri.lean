@@ -178,6 +178,7 @@ theorem closed_const {c : Const} (h : c.groundOk = true) : ClosedT c.toEo := by
     cases T <;> simp [Const.groundOk] at h
     simp only [Const.toEo]; unfold ClosedT; rw [__eo_is_closed_rec.eq_def]
   | emptySet T => simp [Const.groundOk] at h
+  | emptySeq T => simp [Const.groundOk] at h
   | _ => simp only [Const.toEo]; unfold ClosedT; rw [__eo_is_closed_rec.eq_def]
 
 variable [LogosFacts]

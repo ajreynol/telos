@@ -105,6 +105,7 @@ def toEo : Const → Term
   | .bitVector w v => Term.Binary w v
   | .string s => Term.String s
   | .emptySet T => Term.UOp1 UserOp1.set_empty (TypeNode.set T).toEo
+  | .emptySeq T => Term.UOp1 UserOp1.seq_empty (TypeNode.sequence T).toEo
   | .dtCons (.datatype s d) i => Term.DtCons (native_string_lit s) d.toEo i
   | .dtSel (.datatype s d) i j => Term.DtSel (native_string_lit s) d.toEo i j
   | .dtCons .. | .dtSel .. => Term.Stuck
@@ -304,6 +305,8 @@ def Kind.eoShape : Kind → AppShape
   | .STRING_TO_LOWER => .spine (Term.UOp UserOp.str_to_lower) (.exactly 1)
   | .STRING_TO_UPPER => .spine (Term.UOp UserOp.str_to_upper) (.exactly 1)
   | .STRING_REV => .spine (Term.UOp UserOp.str_rev) (.exactly 1)
+  | .SEQ_UNIT => .spine (Term.UOp UserOp.seq_unit) (.exactly 1)
+  | .SEQ_NTH => .spine (Term.UOp UserOp.seq_nth) (.exactly 2)
   | .STRING_TO_REGEXP => .spine (Term.UOp UserOp.str_to_re) (.exactly 1)
   | .STRING_IN_REGEXP => .spine (Term.UOp UserOp.str_in_re) (.exactly 2)
   | .REGEXP_NONE => .spine (Term.UOp UserOp.re_none) (.exactly 0)
@@ -478,6 +481,7 @@ def _root_.Telos.SkolemId.eoShape : SkolemId → AppShape
   | .MOD_BY_ZERO => .spine (Term.UOp UserOp._at_mod_by_zero) (.exactly 0)
   | .DIV_BY_ZERO => .spine (Term.UOp UserOp._at_div_by_zero) (.exactly 0)
   | .SETS_DEQ_DIFF => .spine (Term.UOp UserOp._at_sets_deq_diff) (.exactly 2)
+  | .STRINGS_DEQ_DIFF => .spine (Term.UOp UserOp._at_strings_deq_diff) (.exactly 2)
   -- (a binary operator, `SkolemId.toEo`)
   | .QUANTIFIERS_SKOLEMIZE => .none
   | .RE_UNFOLD_POS_COMPONENT => .none

@@ -71,7 +71,7 @@ drop the outer parentheses and run
 **The rewriter.** For each `(simplify t)` in an SMT-LIB script, telos prints
 the rewrite of `t`, as cvc5 does. Ported so far, in part: Booleans,
 arithmetic, equality and `distinct` over uninterpreted sorts, bit-vectors,
-arrays, strings, finite sets (cvc5's safe mode: no `set.card` or relations),
+arrays, strings and sequences, finite sets (cvc5's safe mode: no `set.card` or relations),
 inductive datatypes and tuples, and quantifiers as far as they are Boolean.
 Other operators are reported as unsupported. See
 [`docs/theory-rewriters.md`](docs/theory-rewriters.md) to port another theory.

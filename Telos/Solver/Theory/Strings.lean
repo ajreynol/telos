@@ -27,11 +27,30 @@ def stringsTheory : Theory := .THEORY_STRINGS
 
 def st : EEM State := return (← get).strings
 
-/-- A term of string type. -/
-def isStringLike (n : Node) : Bool := n.typeHint == some .string
+/-- A term of type `String` or of a sequence type. -/
+def isStringLike (n : Node) : Bool :=
+  match n.typeHint with
+  | some .string | some (.sequence _) => true
+  | _ => false
 
 /-- The empty string (`Word::mkEmptyWord`). -/
 def emptyWord : Node := .const (.string [])
+
+/-- The empty word of the type of `t` (`Word::mkEmptyWord`). -/
+def emptyOf (t : Node) : Node :=
+  match t.typeHint with
+  | some (.sequence T) => .const (.emptySeq T)
+  | _ => emptyWord
+
+/-- An empty word. -/
+def isEmptyWord (n : Node) : Bool :=
+  match n with
+  | .const (.string []) | .const (.emptySeq _) => true
+  | _ => false
+
+/-- `utils::isConstantLike`: a constant, or a unit. (A sequence of values of more
+than one element, a constant of cvc5's, is a concatenation of units here.) -/
+def isConstLike (n : Node) : Bool := n.isConst || n.getKind == .SEQ_UNIT
 
 def mkLen (n : Node) : Node := Node.mkNode .STRING_LENGTH #[n]
 
@@ -77,6 +96,7 @@ bounds clash is a conflict, pending until the fact asserted is processed
 
 def word? : Node → Option (List Nat)
   | .const (.string w) => some w
+  | .const (.emptySeq _) => some []
   | _ => none
 
 def intValue? : Node → Option Int
@@ -115,6 +135,8 @@ the length of a string term. -/
 partial def constantBoundLength (s : Node) (isLower : Bool) : Option Int :=
   let r : Option Int := match s with
     | .const (.string w) => some w.length
+    | .const (.emptySeq _) => some 0
+    | .app (.kind .SEQ_UNIT) _ => some 1
     | .app (.kind .STRING_CONCAT) cs => Id.run do
       let mut sum : Int := 0
       for c in cs do
@@ -273,15 +295,14 @@ def onNote (c : Ctx) (n : Note) (ee : EqualityEngine) : EqualityEngine :=
   if ee.strings.enabled then (((handle n).run c).run ee).2 else ee
 
 /-- The kinds the theory adds to the equality engine (`finishInit`), all with
-eager evaluation (`stringEagerEval`). The sequence kinds (`seq.unit`,
-`seq.nth`, the second not evaluated) come with sequences (stage 4). -/
+eager evaluation (`stringEagerEval`) but `seq.nth`. -/
 def congruenceKind (k : Kind) : Bool :=
   k == .STRING_LENGTH || k == .STRING_CONCAT || k == .STRING_IN_REGEXP || k == .STRING_TO_CODE ||
     k == .STRING_CONTAINS || k == .STRING_LEQ ||
     k == .STRING_SUBSTR || k == .STRING_UPDATE || k == .STRING_ITOS || k == .STRING_STOI ||
     k == .STRING_INDEXOF || k == .STRING_INDEXOF_RE || k == .STRING_REPLACE ||
     k == .STRING_REPLACE_ALL || k == .STRING_REPLACE_RE || k == .STRING_REPLACE_RE_ALL ||
-    k == .STRING_TO_LOWER || k == .STRING_TO_UPPER || k == .STRING_REV
+    k == .STRING_TO_LOWER || k == .STRING_TO_UPPER || k == .STRING_REV || k == .SEQ_UNIT || k == .SEQ_NTH
 
 /-- The kinds of the extended functions (`ExtfSolver`'s function kinds). -/
 def extfKind (k : Kind) : Bool :=
@@ -289,10 +310,10 @@ def extfKind (k : Kind) : Bool :=
     k == .STRING_ITOS || k == .STRING_STOI || k == .STRING_REPLACE || k == .STRING_REPLACE_ALL ||
     k == .STRING_REPLACE_RE || k == .STRING_REPLACE_RE_ALL || k == .STRING_CONTAINS ||
     k == .STRING_IN_REGEXP || k == .STRING_LEQ || k == .STRING_TO_CODE || k == .STRING_TO_LOWER ||
-    k == .STRING_TO_UPPER || k == .STRING_REV
+    k == .STRING_TO_UPPER || k == .STRING_REV || k == .SEQ_UNIT || k == .SEQ_NTH
 
 /-- The kinds whose applications to constants the engine evaluates. -/
-def interpretedKind (k : Kind) : Bool := congruenceKind k
+def interpretedKind (k : Kind) : Bool := congruenceKind k && k != .SEQ_NTH
 
 /-! ## Facts -/
 
@@ -352,14 +373,14 @@ def registerTermAtomic (n : Node) (s : LengthStatus) : m Unit := do
   if s == .ignore || n.isConst then return
   let len := mkLen n
   if s == .geqOne then
-    let lem := Node.mkNode .AND #[Node.notNode (Node.eqNode n emptyWord), Node.mkNode .GT #[len, intConst 0]]
+    let lem := Node.mkNode .AND #[Node.notNode (Node.eqNode n (emptyOf n)), Node.mkNode .GT #[len, intConst 0]]
     let _ ← ops.run (trustedLemma lem "STRINGS_REGISTER_TERM_ATOMIC")
     return
   if s == .one then
     let _ ← ops.run (trustedLemma (Node.eqNode len (intConst 1)) "STRINGS_REGISTER_TERM_ATOMIC")
     return
   let lenZ := Node.eqNode len (intConst 0)
-  let emp := Node.eqNode n emptyWord
+  let emp := Node.eqNode n (emptyOf n)
   let lem := Node.mkNode .OR #[Node.mkNode .AND #[lenZ, emp], Node.mkNode .GT #[len, intConst 0]]
   let caseEmpty ← ops.run (rw (Node.mkNode .AND #[lenZ, emp]))
   -- the preferred phases, in the order of node ids (`std::map`)
@@ -438,9 +459,15 @@ mutual
   partial def registerType (T : TypeNode) : m Unit := do
     if (← ops.run st).registeredTypes.contains T then return
     ops.run (modifyStrings fun s => { s with registeredTypes := s.registeredTypes.push T })
-    if T == .string then
+    match T with
+    | .string =>
       preRegisterTerm emptyWord
       registerTerm ops emptyWord
+    | .sequence E =>
+      let e : Node := .const (.emptySeq E)
+      preRegisterTerm e
+      registerTerm ops e
+    | _ => pure ()
 
   /-- `preRegisterTerm`: registered (eagerly), its type registered, then added
   to the equality engine (an equality as a trigger predicate). -/
@@ -458,7 +485,8 @@ mutual
     -- (another predicate is not added: it is when it is asserted)
     match n with
     | .app (.kind k) _ =>
-      if k == .EQUAL || k == .STRING_CONTAINS || k == .STRING_LEQ then
+      if k == .EQUAL || k == .STRING_CONTAINS || k == .STRING_LEQ ||
+          (k == .SEQ_NTH && n.typeHint == some .boolean) then
         if ← ops.hasSatValue n then ops.run (addTerm n) else ops.run (UF.addTriggerPredicate n)
       else if n.typeHint != some .boolean then ops.run (addTerm n)
     | _ => ops.run (addTerm n)

@@ -6,7 +6,7 @@ import Telos.Rewriter.Rules.Pattern
 namespace Telos
 
 /-- The rewrite rules of CPC whose left-hand sides telos can match:
-449 of the signature's 630 rules. -/
+454 of the signature's 630 rules. -/
 def generatedRules : List RuleSpec := [
   { name := "arith-div-total-zero-real", rule := .arith_div_total_zero_real, numVars := 1,
     args := [0],
@@ -2146,6 +2146,31 @@ def generatedRules : List RuleSpec := [
     lhs := .app .EQUAL [.app .STRING_REPLACE [.var 0, .var 1, .var 0], .var 1],
     premises := [],
     varTypes := [none, none] },
+  { name := "seq-len-unit", rule := .seq_len_unit, numVars := 1,
+    args := [0],
+    lhs := .app .STRING_LENGTH [.app .SEQ_UNIT [.var 0]],
+    premises := [],
+    varTypes := [none] },
+  { name := "seq-nth-unit", rule := .seq_nth_unit, numVars := 1,
+    args := [0],
+    lhs := .app .SEQ_NTH [.app .SEQ_UNIT [.var 0], .const (.integer (0))],
+    premises := [],
+    varTypes := [none] },
+  { name := "seq-nth-concat-unit", rule := .seq_nth_concat_unit, numVars := 2,
+    args := [0, 1],
+    lhs := .app .SEQ_NTH [.app .STRING_CONCAT [.app .SEQ_UNIT [.var 0], .listVar 1], .const (.integer (0))],
+    premises := [],
+    varTypes := [none, none] },
+  { name := "seq-nth-concat-unit-gen", rule := .seq_nth_concat_unit_gen, numVars := 5,
+    args := [0, 1, 2, 3, 4],
+    lhs := .app .SEQ_NTH [.app .STRING_CONCAT [.var 0, .listVar 1, .app .SEQ_UNIT [.var 2], .listVar 3], .var 4],
+    premises := [{ expr := .app .STRING_LENGTH [.app .STRING_CONCAT [.var 0, .var 0, .listVar 1]], value := .const (.boolean true), symm := false, other := some (.app .ADD [.app .STRING_LENGTH [.var 0], .var 4]) }],
+    varTypes := [none, none, none, none, some .integer] },
+  { name := "seq-rev-unit", rule := .seq_rev_unit, numVars := 1,
+    args := [0],
+    lhs := .app .STRING_REV [.app .SEQ_UNIT [.var 0]],
+    premises := [],
+    varTypes := [none] },
   { name := "re-in-empty", rule := .re_in_empty, numVars := 1,
     args := [0],
     lhs := .app .STRING_IN_REGEXP [.var 0, .app .REGEXP_NONE []],

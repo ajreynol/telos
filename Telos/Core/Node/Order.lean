@@ -28,8 +28,9 @@ private def rank : Const → Nat
   | .bitVector .. => 3
   | .string _ => 4
   | .emptySet _ => 5
-  | .dtCons .. => 6
-  | .dtSel .. => 7
+  | .emptySeq _ => 6
+  | .dtCons .. => 7
+  | .dtSel .. => 8
 
 private def cmpOfLt {α} [LT α] [DecidableEq α] [DecidableLT α] (a b : α) : Ordering :=
   if a = b then .eq else if a < b then .lt else .gt
@@ -41,6 +42,7 @@ def cmp : Const → Const → Ordering
   | .bitVector w v, .bitVector w' v' => (compare w w').then (compare v v')
   | .string a, .string b => compare a b
   | .emptySet T, .emptySet U => compare T U
+  | .emptySeq T, .emptySeq U => compare T U
   | .dtCons T i, .dtCons U j => (compare T U).then (compare i j)
   | .dtSel T i j, .dtSel U k l => ((compare T U).then (compare i k)).then (compare j l)
   | a, b => compare a.rank b.rank

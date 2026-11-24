@@ -712,7 +712,7 @@ The uses at run time now, to replace:
      disagreements; the 89 differences are the order of `store`s and of
      children. Ethos accepts all proofs.
 8. **Strings (stage 1).** Kinds for the string and regular expression
-   operators (not sequences yet), with their CPC shapes: `str.++` with a typed
+   operators, with their CPC shapes: `str.++` with a typed
    nil (its congruence is proved like that of the bit-vector operators, with
    Logos's well-formedness of `Seq` types), `re.++`, `re.inter` and `re.union`
    with constant nils (`translation_rest_re`). The rule generator reads the

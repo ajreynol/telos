@@ -38,6 +38,8 @@ def intC (i : Int) : Node := .const (.integer i)
 /-- The length of a string constant. -/
 def wordLen? : Node → Option Nat
   | .const (.string cs) => some cs.length
+  | .const (.emptySeq _) => some 0
+  | .app (.kind .SEQ_UNIT) _ => some 1
   | _ => none
 
 /-- The children of a concatenation, flattened, without empty constants (cvc5's
@@ -56,7 +58,7 @@ partial def lengthIntro (n : Node) : Node :=
     let n' := Node.app op (cs.map lengthIntro)
     match n'.getKind, n'.getChildren with
     | .STRING_LENGTH, #[a] =>
-      if a.getKind == .STRING_CONCAT || a.isConst then
+      if a.getKind == .STRING_CONCAT || a.isConst || a.getKind == .SEQ_UNIT then
         let parts := (concatChildren a).map fun c =>
           match wordLen? c with
           | some l => intC l
@@ -256,7 +258,9 @@ partial def lengthIntroRw (n : Node) : Rw n :=
   r.next fun m =>
     match m.getKind, m.getChildren with
     | .STRING_LENGTH, #[a] =>
-      if a.isConst then byEvaluate m
+      if a.getKind == .SEQ_UNIT then byRule "seq-len-unit" m
+      else if a.getKind == .SEQ_EMPTY then checkBy .seq_eval_op m zero
+      else if a.isConst then byEvaluate m
       else if a.getKind == .STRING_CONCAT then
         (byRule "str-len-concat-rec" m).map fun r => r.next fun k => some (lengthIntroRw k)
       else none

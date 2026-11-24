@@ -63,6 +63,10 @@ inductive Const where
   /-- The empty set whose elements have type `elem` (cvc5's `EmptySet`, of type
   `(Set elem)`). -/
   | emptySet (elem : TypeNode)
+  /-- The empty sequence whose elements have type `elem`, which is not `Char` (the
+  empty string is `string []`). cvc5 has constants for all sequences of values
+  (`CONST_SEQUENCE`); here the others are concatenations of units, as in CPC. -/
+  | emptySeq (elem : TypeNode)
   /-- Constructor `index` of the datatype `dt` (Logos's `Term.DtCons`). It is the
   operator of `APPLY_CONSTRUCTOR` and `APPLY_TESTER` applications. -/
   | dtCons (dt : TypeNode) (index : Nat)
@@ -81,6 +85,7 @@ def kind : Const → Kind
   | .bitVector _ _ => .CONST_BITVECTOR
   | .string _ => .CONST_STRING
   | .emptySet _ => .SET_EMPTY
+  | .emptySeq _ => .SEQ_EMPTY
   | .dtCons .. | .dtSel .. => .DT_SYMBOL
 
 /-- A string constant from a Lean string. -/

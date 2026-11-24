@@ -122,12 +122,13 @@ def concatList (t : Node) : Array Node :=
   | .app (.kind .STRING_CONCAT) cs => cs
   | _ => #[t]
 
-def mkConcat (cs : Array Node) : Node :=
-  if h : cs.size = 1 then cs[0] else if cs.isEmpty then emptyStr else Node.mkNode .STRING_CONCAT cs
+def mkConcat (cs : Array Node) (like : Node := emptyStr) : Node :=
+  if h : cs.size = 1 then cs[0] else if cs.isEmpty then Strings.emptyOf like else Node.mkNode .STRING_CONCAT cs
 
 def word? (t : Node) : Option (List Nat) :=
   match t with
   | .const (.string w) => some w
+  | .const (.emptySeq _) => some []
   | _ => none
 
 def mkWord (w : List Nat) : Node := .const (.string w)
@@ -371,9 +372,9 @@ def nonEmptyLengths : M Unit := do
   for i in [0:A.size] do
     match A[i]! with
     | .app (.kind .NOT) #[.app (.kind .EQUAL) #[s, t]] =>
-      if t == emptyStr && s.typeHint == some .string then
+      if Strings.isEmptyWord t && Strings.isStringLike s then
         let _ ← rule .string_length_non_empty [] [i]
-      else if s == emptyStr && t.typeHint == some .string then
+      else if Strings.isEmptyWord s && Strings.isStringLike t then
         -- `(not (= t ""))` first: the two equalities have the same rewrite
         let e := Node.eqNode s t
         let e' := Node.eqNode t s
@@ -733,7 +734,7 @@ def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M
     return i
   let some (.app (.kind .EQUAL) #[a, b]) := A[m]? | throw "a main equality that is not one"
   let R := ((List.range n).filter fun i => i != m && match A[i]! with
-    | .app (.kind .EQUAL) #[x, _] => x.typeHint == some .string
+    | .app (.kind .EQUAL) #[x, _] => Strings.isStringLike x
     | _ => false).toArray
   nonEmptyLengths
   -- the main equality, with the substitution and rewritten
@@ -889,6 +890,19 @@ def proveReInter (P : Array Node) (conc : Node) : Option (Node × List CCmd) := 
 /-- **A CPC proof of `(=> (premiseFormula P) conc)`** for the core inference
 `id`, which Logos checks. -/
 def prove (id : String) (P : Array Node) (conc : Node) : Option (Node × List CCmd) := do
+  -- the injectivity of `seq.unit`
+  if id == "STRINGS_UNIT_INJ" then
+    let #[h] := P | none
+    let act : EmitM Unit := do
+      let p ← push ⟨.refl, [.node h], [], .assume⟩
+      let c ← push ⟨.string_seq_unit_inj, [], [p], .step⟩
+      let _ ← push ⟨.scope, [], [c], .pop⟩
+    match act.run {} with
+    | .ok ((), st) =>
+      let F := Node.mkNode .IMPLIES #[h, conc]
+      let cs := toCmds st.steps
+      return ← if (EqProof.check #[] (.valid F cs)).isSome then some (F, cs) else none
+    | .error _ => none
   if id == "STRINGS_RE_INTER_INCLUDE" || id == "STRINGS_RE_INTER_CONF" || id == "STRINGS_RE_INTER_INFER" then
     return ← proveReInter P conc
   let k ← kindOf id
@@ -920,7 +934,7 @@ def prove (id : String) (P : Array Node) (conc : Node) : Option (Node × List CC
     return out
   let total := P.size + unfolds.foldl (fun a (_, isAnd) => a + (if isAnd then 2 else 1)) 0
   let mains := ((List.range P.size).filter fun i => match P[i]! with
-    | .app (.kind .EQUAL) #[x, _] => x.typeHint == some .string
+    | .app (.kind .EQUAL) #[x, _] => Strings.isStringLike x
     | _ => false) ++ derived.toList
   let tries := mains.flatMap fun m => [false, true].flatMap fun rev => [false, true].map fun flip => (k, m, rev, flip)
   -- (substitution and rewriting: for a conflict, each main equality; else once)

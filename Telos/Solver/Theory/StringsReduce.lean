@@ -92,11 +92,11 @@ def reduceExtf (t : Node) : m (Option Node) := do
     let body := Reduce.and #[Node.eqNode s (concat #[k1, k, k2]), Node.eqNode (mkLen k1) n,
       Node.mkNode .OR #[Node.eqNode (mkLen k2) (sub (mkLen s) e), Node.eqNode (mkLen k2) zero],
       Node.mkNode .LEQ #[mkLen k, l]]
-    return conclude (ite cond body (Node.eqNode k emptyWord)) k
+    return conclude (ite cond body (Node.eqNode k (emptyOf s))) k
   | .app (.kind .STRING_UPDATE) #[s, n, r] =>
     let k ← purifySkolem ops t
     let rs := match r with
-      | .const (.string [_]) => r
+      | .const (.string [_]) | .app (.kind .SEQ_UNIT) _ => r
       | _ => substr r zero (sub (mkLen s) n)
     let k1 ← prefix_ ops s n
     let k2 ← suffixRem ops s (add n (mkLen rs))
@@ -105,6 +105,15 @@ def reduceExtf (t : Node) : m (Option Node) := do
     let body := Reduce.and #[Node.eqNode k (concat #[k1, rs, k2]), Node.eqNode s (concat #[k1, k3, k2]),
       Node.eqNode (mkLen k1) n, Node.eqNode (mkLen rs) (mkLen k3)]
     return conclude (ite cond body (Node.eqNode k s)) k
+  | .app (.kind .SEQ_NTH) #[s, n] =>
+    let k ← purifySkolem ops t
+    let n1 := add n (intConst 1)
+    let k1 ← prefix_ ops s n
+    let k2 ← suffixRem ops s n1
+    let cond := Reduce.and #[Node.mkNode .GEQ #[n, zero], Node.mkNode .GT #[mkLen s, n]]
+    let body := Reduce.and #[Node.eqNode s (concat #[k1, Node.mkNode .SEQ_UNIT #[k], k2]), Node.eqNode (mkLen k1) n,
+      Node.eqNode (mkLen k2) (sub (mkLen s) n1)]
+    return conclude (Node.mkNode .IMPLIES #[cond, body]) k
   | .app (.kind .STRING_INDEXOF) #[x, y, n] =>
     let k ← purifySkolem ops t
     let xn := substr x n (sub (mkLen x) n)
@@ -114,13 +123,13 @@ def reduceExtf (t : Node) : m (Option Node) := do
     let body := Reduce.and #[Node.eqNode xn (concat #[k1, y, k2]), firstOccurrence k1 y,
       Node.eqNode k (add n (mkLen k1))]
     return conclude (ite cond (Node.eqNode k (intConst (-1)))
-      (ite (Node.eqNode y emptyWord) (Node.eqNode k n) body)) k
+      (ite (Node.eqNode y (emptyOf y)) (Node.eqNode k n) body)) k
   | .app (.kind .STRING_REPLACE) #[x, y, z] =>
     let (k1, k2) ← firstCtn ops x y
     let k ← purifySkolem ops t
     let body := Reduce.and #[Node.eqNode x (concat #[k1, y, k2]), Node.eqNode k (concat #[k1, z, k2]),
       firstOccurrence k1 y]
-    return conclude (ite (Node.eqNode y emptyWord) (Node.eqNode k (concat #[z, x]))
+    return conclude (ite (Node.eqNode y (emptyOf y)) (Node.eqNode k (concat #[z, x]))
       (ite (contains x y) body (Node.eqNode k x))) k
   | .app (.kind .STRING_CONTAINS) #[x, s] =>
     -- (the negative one)
@@ -200,7 +209,7 @@ def reduceExtf (t : Node) : m (Option Node) := do
       Reduce.and #[Node.notNode (Node.eqNode ii (intConst (-1))),
         Node.eqNode (us i) (concat #[substr x (uf i) (sub ii (uf i)), z, us i1]),
         Node.eqNode (uf i1) (add ii (mkLen y))]]
-    return conclude (ite (Node.eqNode y emptyWord) (Node.eqNode k x)
+    return conclude (ite (Node.eqNode y (emptyOf y)) (Node.eqNode k x)
       (Reduce.and #[Node.mkNode .GEQ #[num, zero], Node.eqNode k (us zero),
         Node.eqNode (us num) (substr x (uf num) (mkLen x)), Node.eqNode (uf zero) zero,
         Node.eqNode (idx (uf num)) (intConst (-1)), Node.mkBoundedForall #[i] body])) k
@@ -327,6 +336,16 @@ def reduceContainsPos (x y : Node) : m Node := do
   return Node.eqNode x (concat #[k1, y, k2])
 
 end
+
+/-- `utils::getExtensionalityConclusion`, with the skolem `k` (CPC's
+`string_ext`). -/
+def extensionalityConclusion (a b k : Node) : Node :=
+  let at_ := fun (t : Node) => match t.typeHint with
+    | some (.sequence _) => Node.mkNode .SEQ_NTH #[t, k]
+    | _ => Reduce.substr t k (intConst 1)
+  Node.mkNode .OR #[Node.notNode (Node.eqNode (mkLen a) (mkLen b)),
+    Reduce.and #[Node.notNode (Node.eqNode (at_ a) (at_ b)), Node.mkNode .LEQ #[intConst 0, k],
+      Node.mkNode .LT #[k, mkLen a]]]
 
 /-- The operations of CPC's form: no rewriting. -/
 def cpcSkolems : SkolemOps Id := { rw := fun t => t, purify := fun t => Node.mkPurifySkolem t }

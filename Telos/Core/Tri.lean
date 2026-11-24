@@ -86,7 +86,7 @@ def Op.substOk (op : Op) : Bool :=
 
 /-- The constants whose translation is closed and not stuck. -/
 def Const.groundOk : Const → Bool
-  | .emptySet _ => false
+  | .emptySet _ | .emptySeq _ => false
   | .dtCons (.datatype ..) _ | .dtSel (.datatype ..) _ _ => true
   | .dtCons .. | .dtSel .. => false
   | _ => true

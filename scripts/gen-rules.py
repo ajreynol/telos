@@ -130,6 +130,8 @@ KINDS = {
     "str.to_lower": "STRING_TO_LOWER",
     "str.to_upper": "STRING_TO_UPPER",
     "str.rev": "STRING_REV",
+    "seq.unit": "SEQ_UNIT",
+    "seq.nth": "SEQ_NTH",
     "str.to_re": "STRING_TO_REGEXP",
     "str.in_re": "STRING_IN_REGEXP",
     "re.none": "REGEXP_NONE",

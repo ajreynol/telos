@@ -121,11 +121,11 @@ def mkAndN (xs : Array Node) : Node :=
   if xs.isEmpty then Node.mkTrue else if xs.size == 1 then xs[0]! else Node.mkNode .AND xs
 
 /-- `utils::mkConcat`. -/
-def mkConcatA (cs : Array Node) : Node :=
-  if cs.size == 1 then cs[0]! else if cs.isEmpty then emptyWord else Node.mkNode .STRING_CONCAT cs
+def mkConcatA (cs : Array Node) (like : Node := emptyWord) : Node :=
+  if cs.size == 1 then cs[0]! else if cs.isEmpty then emptyOf like else Node.mkNode .STRING_CONCAT cs
 
 /-- `TermRegistry::mkNConcat`. -/
-def mkNConcat (cs : Array Node) : EEM Node := rw (mkConcatA cs)
+def mkNConcat (cs : Array Node) (like : Node := emptyWord) : EEM Node := rw (mkConcatA cs like)
 
 def wordLen (n : Node) : Nat := ((word? n).getD []).length
 
@@ -226,7 +226,7 @@ def getLength (t : Node) (exp : Array Node) (minExp : Bool := true) : EEM (Node 
 
 /-- `SolverState::explainNonEmpty`. -/
 def explainNonEmpty (s : Node) : EEM (Option Node) := do
-  if ← areDiseq s emptyWord then return some (Node.notNode (Node.eqNode s emptyWord))
+  if ← areDiseq s (emptyOf s) then return some (Node.notNode (Node.eqNode s (emptyOf s)))
   let sLen ← rw (mkLen s)
   if ← areDiseq sLen (intConst 0) then return some (Node.notNode (Node.eqNode sLen (intConst 0)))
   return none
@@ -276,7 +276,7 @@ def concatSplitConclusion (x y : Node) (isRev lprop : Bool) : EEM (Node × Node)
   let cc (b : Node) := if isRev then Node.mkNode .STRING_CONCAT #[sk, b] else Node.mkNode .STRING_CONCAT #[b, sk]
   let eq1 := Node.eqNode x (cc y)
   let conc := if lprop then eq1 else Node.mkNode .OR #[eq1, Node.eqNode y (cc x)]
-  let conc := Node.mkNode .AND #[conc, Node.notNode (Node.eqNode sk emptyWord),
+  let conc := Node.mkNode .AND #[conc, Node.notNode (Node.eqNode sk (emptyOf x)),
     Node.mkNode .GT #[mkLen sk, intConst 0]]
   return (conc, sk)
 
@@ -434,7 +434,7 @@ def signature (n : Node) : EEM (Node × Array Node) := do
   let mut c : Array Node := #[]
   for a in cs do
     let r ← rep a
-    if isConcat && r == emptyWord then continue
+    if isConcat && isEmptyWord r then continue
     c := c.push r
   return (.app op c, c)
 
@@ -451,13 +451,23 @@ def checkInit : EEM Unit := do
     let isString := isStringLike eqc
     if isString then modifyChk fun c => { c with stringLikeEqc := c.stringLikeEqc.push eqc }
     let mut var : Option Node := none
-    let mut prevConstLike : Bool := false
+    let mut prevConstLike : Option Node := none
     for n in ← classTerms eqc do
-      -- the constant-like terms (constants: `str.unit` comes with sequences)
-      if n.isConst then
-        if !prevConstLike || n.isConst then
+      -- the constant-like terms
+      if isConstLike n then
+        if let some prev := prevConstLike then
+          -- `processConstantLike`
+          match prev, n with
+          | .app (.kind .SEQ_UNIT) #[a], .app (.kind .SEQ_UNIT) #[b] =>
+            if !(← areEq b a) then
+              let _ ← sendInference #[Node.eqNode n prev] (Node.eqNode b a) "STRINGS_UNIT_INJ"
+              return
+          | _, _ =>
+            let _ ← sendInference #[Node.eqNode n prev] Node.mkFalse "STRINGS_UNIT_CONST_CONFLICT"
+            return
+        if prevConstLike.isNone || n.isConst then
           setBaseInfo eqc { bestContent := some n, bestScore := 0, base := some n, exp := none }
-        prevConstLike := true
+        if prevConstLike.isNone || n.isConst then prevConstLike := some n
       if eqc.typeHint == some .integer then continue
       if ← isCongruent n then continue
       match n with
@@ -490,8 +500,8 @@ def checkInit : EEM Unit := do
                 let mut ct := if t == 0 then c0 else c1
                 while ct < nn.size do
                   let x := nn[ct]!
-                  if x == emptyWord || (← areEq x emptyWord) then
-                    if x != emptyWord then exp := exp.push (Node.eqNode x emptyWord)
+                  if isEmptyWord x || (← areEq x (emptyOf x)) then
+                    if !isEmptyWord x then exp := exp.push (Node.eqNode x (emptyOf x))
                     ct := ct + 1
                   else break
                 if t == 0 then c0 := ct else c1 := ct
@@ -528,8 +538,8 @@ def checkInit : EEM Unit := do
                 let mut exp : Array Node := #[]
                 let mut ns := n
                 for x in cs do
-                  if ← areEq x emptyWord then
-                    if x != emptyWord then exp := exp.push (Node.eqNode x emptyWord)
+                  if ← areEq x (emptyOf x) then
+                    if !isEmptyWord x then exp := exp.push (Node.eqNode x (emptyOf x))
                   else ns := x
                 let _ ← sendInference exp (Node.eqNode n ns) "STRINGS_I_NORM_S"
               addCongruent n
@@ -568,7 +578,7 @@ partial def checkConstEqcIndex (path : Array Node) (vecc : Array (Option Node)) 
     EEM Unit := do
   let sig := Node.app (.kind .STRING_CONCAT) path
   if let some n := (← chk).termIndex.get? ⟨sig⟩ then
-    let c ← if isConst then pure (some (← mkNConcat (vecc.map (·.getD emptyWord)))) else pure none
+    let c ← if isConst then pure (some (← mkNConcat (vecc.map (·.getD (emptyOf n))) n)) else pure none
     let skip ← match c with
       | some c => areEq n c
       | none => pure false
@@ -600,7 +610,7 @@ partial def checkConstEqcIndex (path : Array Node) (vecc : Array (Option Node)) 
           let bei := (← baseInfo? nr).getD {}
           let bc := bei.bestContent
           if !(bc.map (·.isConst)).getD false && (bc.isNone || contentSize > bei.bestScore) then
-            let nct ← mkNConcat vecnc
+            let nct ← mkNConcat vecnc n
             setBaseInfo nr { bestContent := some nct, bestScore := contentSize, base := some n,
                              exp := if exp.isEmpty then bei.exp else some (mkAndU exp) }
             -- `(= x (str.++ "A" x))` is a conflict
@@ -610,7 +620,7 @@ partial def checkConstEqcIndex (path : Array Node) (vecc : Array (Option Node)) 
                 return
           else setBaseInfo nr bei
       else
-        let c := c.getD emptyWord
+        let c := c.getD (emptyOf n)
         if ← hasTerm c then
           let _ ← sendInference exp (Node.eqNode n c) "STRINGS_I_CONST_MERGE"
           return
@@ -725,18 +735,18 @@ partial def checkCyclesRec (eqc : Node) (curr exp : Array Node) : EEM (Option No
     if !rlv.contains ⟨n⟩ then continue
     hasRlv := true
     if n.getKind != .STRING_CONCAT || (← isCongruent n) then continue
-    if eqc != emptyWord then
+    if !isEmptyWord eqc then
       modifyChk fun c => { c with eqcConcats := c.eqcConcats.insert ⟨eqc⟩ (((c.eqcConcats.get? ⟨eqc⟩).getD #[]).push n) }
     let cs := n.getChildren
     for i in [0:cs.size] do
       let nc := cs[i]!
       let nr ← rep nc
-      if eqc == emptyWord then
-        if nr != emptyWord then
-          let _ ← sendInference #[Node.eqNode n emptyWord] (Node.eqNode nc emptyWord) "STRINGS_I_CYCLE_E"
+      if isEmptyWord eqc then
+        if !isEmptyWord nr then
+          let _ ← sendInference #[Node.eqNode n (emptyOf n)] (Node.eqNode nc (emptyOf n)) "STRINGS_I_CYCLE_E"
           return (none, exp)
       else
-        if nr != emptyWord then
+        if !isEmptyWord nr then
           modifyChk fun c => { c with
             flatForm := c.flatForm.insert ⟨n⟩ (((c.flatForm.get? ⟨n⟩).getD #[]).push nr)
             flatFormIndex := c.flatFormIndex.insert ⟨n⟩ (((c.flatFormIndex.get? ⟨n⟩).getD #[]).push i) }
@@ -747,8 +757,8 @@ partial def checkCyclesRec (eqc : Node) (curr exp : Array Node) : EEM (Option No
           exp := addToExplanation nr nc exp
           if ncy == eqc then
             for j in [0:cs.size] do
-              if j != i && !(← areEq cs[j]! emptyWord) then
-                let _ ← sendInference exp (Node.eqNode cs[j]! emptyWord) "STRINGS_I_CYCLE"
+              if j != i && !(← areEq cs[j]! (emptyOf n)) then
+                let _ ← sendInference exp (Node.eqNode cs[j]! (emptyOf n)) "STRINGS_I_CYCLE"
                 return (none, exp)
             return (none, exp)
           else return (some ncy, exp)
@@ -787,7 +797,7 @@ def checkFlatForm (eqc : Array Node) (start : Nat) (isRev : Bool) : EEM Unit := 
         if count < bsize then
           let fb ← ffi b
           let cc := (List.range (bsize - count)).toArray.map fun j =>
-            Node.eqNode b.getChildren[fb[count + j]!]! emptyWord
+            Node.eqNode b.getChildren[fb[count + j]!]! (emptyOf b)
           conc := some (mkAndU cc)
           infType := "STRINGS_F_ENDPOINT_EMP"
           a := eqc[i]!
@@ -807,7 +817,7 @@ def checkFlatForm (eqc : Array Node) (start : Nat) (isRev : Bool) : EEM Unit := 
           inelig := inelig.push b
           let fa ← ffi a
           let cc := (List.range (asize - count)).toArray.map fun j =>
-            Node.eqNode a.getChildren[fa[count + j]!]! emptyWord
+            Node.eqNode a.getChildren[fa[count + j]!]! (emptyOf a)
           conc := some (mkAndU cc)
           infType := "STRINGS_F_ENDPOINT_EMP"
           break
@@ -852,7 +862,7 @@ def checkFlatForm (eqc : Array Node) (start : Nat) (isRev : Bool) : EEM Unit := 
         let mut j := startj
         while j < endj do
           let x := c.getChildren[j.toNat]!
-          if ← areEq x emptyWord then exp := addToExplanation x emptyWord exp
+          if ← areEq x (emptyOf x) then exp := addToExplanation x (emptyOf x) exp
           j := j + 1
       exp := addToExplanation a b exp
       if let some l := lant then exp := exp.push l
@@ -902,7 +912,7 @@ def getNormalForms (eqc : Node) : EEM (Array NormalForm × Std.HashMap Key Nat) 
   let rlv := (← chk).relevant
   for n in ← classTerms eqc do
     if !(n.isConst || (!(← isCongruent n) && rlv.contains ⟨n⟩)) then continue
-    let isCLike := n.isConst
+    let isCLike := isConstLike n
     if !(isCLike || n.getKind == .STRING_CONCAT) then
       eqcNonC := n
       continue
@@ -922,7 +932,7 @@ def getNormalForms (eqc : Node) : EEM (Array NormalForm × Std.HashMap Key Nat) 
           cur := cur.addExp (Node.eqNode x nfr.base) origSize (origSize + addSize)
       let total := cur.nf.size
       cur := { cur with expDep := cur.expDep.fold (fun m k (f, r) => m.insert k (f, total - r)) {} }
-    if cur.nf.size > 1 || (cur.nf.size == 1 && cur.nf[0]!.isConst) then
+    if cur.nf.size > 1 || (cur.nf.size == 1 && isConstLike cur.nf[0]!) then
       idx := idx.insert ⟨n⟩ nfs.size
       nfs := nfs.push cur
   if nfs.isEmpty then nfs := #[NormalForm.init eqcNonC]
@@ -935,13 +945,13 @@ def processLoop (nfi nfj : NormalForm) (loopIndex index : Nat) (info : CoreInfer
     EEM (Option (Option CoreInferInfo)) := do
   let veci := nfi.nf
   let vecoi := nfj.nf
-  let tYz ← mkNConcat (veci.extract index loopIndex)
-  let sZy ← mkNConcat (vecoi.extract (index + 1) vecoi.size)
-  let r ← mkNConcat (veci.extract (loopIndex + 1) veci.size)
+  let tYz ← mkNConcat (veci.extract index loopIndex) nfi.base
+  let sZy ← mkNConcat (vecoi.extract (index + 1) vecoi.size) nfi.base
+  let r ← mkNConcat (veci.extract (loopIndex + 1) veci.size) nfi.base
   let mut info := info
   let mut sZy := sZy
   let mut r := r
-  if sZy.isConst && r.isConst && r != emptyWord then
+  if sZy.isConst && r.isConst && !isEmptyWord r then
     -- `String::tailcmp`
     let x := (word? sZy).getD []
     let y := (word? r).getD []
@@ -966,7 +976,7 @@ def processLoop (nfi nfj : NormalForm) (loopIndex index : Nat) (info : CoreInfer
       return some none
   for i in [0, 1] do
     let t := if i == 0 then veci[loopIndex]! else tYz
-    let splitEq := Node.eqNode t emptyWord
+    let splitEq := Node.eqNode t (emptyOf t)
     let splitEqr ← rw splitEq
     if !splitEqr.isConst then
       match ← explainNonEmpty t with
@@ -998,7 +1008,7 @@ def processSimpleNEq (nfi nfj : NormalForm) (index : Nat) (isRev : Bool) (rproc 
       let currExp := NormalForm.explainPrefixEq nfi nfj (-1) (-1) #[]
       let mut k := index
       while !(← inConflict) && k < nfkv.size - rproc do
-        let _ ← sendInference currExp (Node.eqNode nfkv[k]! emptyWord) "STRINGS_N_ENDPOINT_EMP" isRev
+        let _ ← sendInference currExp (Node.eqNode nfkv[k]! (emptyOf nfi.base)) "STRINGS_N_ENDPOINT_EMP" isRev
         k := k + 1
       break
     let x := nfiv[index]!
@@ -1022,7 +1032,7 @@ def processSimpleNEq (nfi nfj : NormalForm) (index : Nat) (isRev : Bool) (rproc 
         let mut eqnc : Array Node := #[]
         for i in [index : v.size - rproc] do
           eqnc := if isRev then #[v[i]!] ++ eqnc else eqnc.push v[i]!
-        eqn := eqn.push (← mkNConcat eqnc)
+        eqn := eqn.push (← mkNConcat eqnc nfi.base)
       if !(← areEq eqn[0]! eqn[1]!) then
         let antec := NormalForm.explainPrefixEq nfi nfj (-1) (-1) #[]
         let _ ← sendInference antec (Node.eqNode eqn[0]! eqn[1]!) "STRINGS_N_ENDPOINT_EQ" isRev true
@@ -1079,11 +1089,11 @@ def processSimpleNEq (nfi nfj : NormalForm) (index : Nat) (isRev : Bool) (rproc 
       let nc := nfnc.nf[index]!
       match ← explainNonEmpty nc with
       | none =>
-        let eq ← rw (Node.eqNode nc emptyWord)
+        let eq ← rw (Node.eqNode nc (emptyOf nc))
         if eq.isConst then
           let p := Node.mkPurifySkolem nc
           note (.skolem p)
-          let pEq := Node.eqNode p emptyWord
+          let pEq := Node.eqNode p (emptyOf nc)
           let conc := Node.mkNode .AND #[Node.eqNode p nc, if eq != Node.mkTrue then Node.notNode pEq else pEq]
           pushPinfer (info.upd fun ii => { ii with id := "STRINGS_INFER_EMP", conc := conc })
         else
@@ -1093,7 +1103,7 @@ def processSimpleNEq (nfi nfj : NormalForm) (index : Nat) (isRev : Bool) (rproc 
         let (nextConstStr, ncIndex) := nfnc.collectConstantStringAt (index + 1)
         if let some ncs := nextConstStr then
           let (stra, cIndex) := nfc.collectConstantStringAt index
-          let stra ← rw (stra.getD emptyWord)
+          let stra ← rw (stra.getD (emptyOf nc))
           let strb ← rw ncs
           let p := sufficientNonEmptyOverlap stra strb isRev
           if p > 1 then
@@ -1128,7 +1138,7 @@ def processSimpleNEq (nfi nfj : NormalForm) (index : Nat) (isRev : Bool) (rproc 
       match ← explainNonEmpty t with
       | some tnz => lcVec := lcVec.push tnz
       | none =>
-        let tnz := Node.notNode (Node.eqNode x emptyWord)
+        let tnz := Node.notNode (Node.eqNode x (emptyOf x))
         lcVec := lcVec.push tnz
         noExplain := noExplain.push tnz
     let (id, conc, sk) ← match lentTest with
@@ -1168,7 +1178,7 @@ def processNEqc (eqc : Node) (nfs : Array NormalForm) : EEM (Array NormalForm) :
   let mut hasConstIndex := false
   for i in [0:nfs.size] do
     let nfi := nfs[i]!
-    let ni ← mkNConcat nfi.nf
+    let ni ← mkNConcat nfi.nf nfi.base
     if nfCache.any (·.1 == ni) then continue
     if let some c := c then
       if !canConstantContainList c nfi.nf then
@@ -1211,8 +1221,8 @@ def processNEqc (eqc : Node) (nfs : Array NormalForm) : EEM (Array NormalForm) :
 
 /-- `normalizeEquivalenceClass`. -/
 def normalizeEquivalenceClass (eqc : Node) : EEM Unit := do
-  if ← areEq eqc emptyWord then
-    modifyChk fun c => { c with normalForms := c.normalForms.insert ⟨eqc⟩ (NormalForm.init emptyWord) }
+  if ← areEq eqc (emptyOf eqc) then
+    modifyChk fun c => { c with normalForms := c.normalForms.insert ⟨eqc⟩ (NormalForm.init (emptyOf eqc)) }
     return
   let (nfs, idx) ← getNormalForms eqc
   if ← hasProcessed then return
@@ -1231,7 +1241,7 @@ def checkNormalFormsEqProp : EEM Unit := do
     if ← hasProcessed then return
     if !(← chk).pinfers.isEmpty then return
     let nfe ← normalForm eqc
-    let nfTerm ← mkNConcat nfe.nf
+    let nfTerm ← mkNConcat nfe.nf nfe.base
     match nfToEqc.get? ⟨nfTerm⟩ with
     | some e =>
       let nfeEq ← normalForm e
@@ -1285,7 +1295,7 @@ def processSimpleDeq (nfi nfj : Array Node) (ni nj : Node) (index : Nat) (isRev 
       let (njLen, ant) ← getLengthExp nj ant nfnj.base false
       let ant := (ant.push (Node.eqNode niLen njLen)) ++ nfni.exp ++ nfnj.exp
       let nfk := if index >= nfi.size then nfj else nfi
-      let cc := (nfk.extract index nfk.size).map fun x => Node.eqNode x emptyWord
+      let cc := (nfk.extract index nfk.size).map fun x => Node.eqNode x (emptyOf x)
       let _ ← sendInference ant (mkAndN cc) "STRINGS_DEQ_NORM_EMP" isRev true
       return (true, nfi, nfj, index)
     let x := nfi[index]!
@@ -1310,6 +1320,17 @@ def processSimpleDeq (nfi nfj : Array Node) (ni nj : Node) (index : Nat) (isRev 
       nfi := ((nfi.extract 0 (index + 1)).set! index nfj[index]!) ++ #[rem] ++ nfi.extract (index + 1) nfi.size
     index := index + 1
   return (false, nfi, nfj, index)
+
+/-- `processDeqExtensionality`, for sequences (`getExtensionalityConclusion`). -/
+def processDeqExtensionality (n1 n2 : Node) : EEM Unit := do
+  let (n1, n2) := if ← nodeLt n1 n2 then (n1, n2) else (n2, n1)
+  let eq := Node.eqNode n1 n2
+  if (← st).extDeq.contains ⟨eq⟩ then return
+  modifyStrings fun s => { s with extDeq := s.extDeq.insert ⟨eq⟩ }
+  let k := Node.skolem .STRINGS_DEQ_DIFF #[n1, n2]
+  note (.skolem k)
+  let deq := Node.notNode eq
+  let _ ← sendInference #[deq] (extensionalityConclusion n1 n2 k) "STRINGS_DEQ_EXTENSIONALITY" false true #[deq]
 
 /-- `processDeq`: the disequality of the classes `ni` and `nj`, of equal
 lengths. -/
@@ -1349,7 +1370,7 @@ def processDeq (ni nj : Node) : EEM Unit := do
         let nckLen := if x.isConst then yLen else xLen
         match ← explainNonEmpty nck with
         | none =>
-          let _ ← sendSplit nck emptyWord "STRINGS_DEQ_DISL_EMP_SPLIT"
+          let _ ← sendSplit nck (emptyOf nck) "STRINGS_DEQ_DISL_EMP_SPLIT"
           return
         | some _ =>
           let ckw := (word? ck).getD []
@@ -1403,6 +1424,9 @@ def checkNormalFormsDeq : EEM Unit := do
   if ← hasProcessed then return
   for eq in rlvDeq do
     let .app (.kind .EQUAL) #[a, b] := eq | continue
+    if let some (.sequence _) := a.typeHint then
+      processDeqExtensionality a b
+      continue
     processDeq (← rep a) (← rep b)
     if ← hasProcessed then return
 
@@ -1414,7 +1438,7 @@ def checkLengthsEqc : EEM Unit := do
     let some ei := (← st).getEqcInfo? eqc | continue
     let some llt := ei.lengthTerm | continue
     if ei.normalizedLength.isSome then continue
-    let nf ← mkNConcat nfi.nf
+    let nf ← mkNConcat nfi.nf nfi.base
     let .app (.kind .STRING_LENGTH) #[lltArg] := llt | continue
     let ant := nfi.exp.push (Node.eqNode lltArg nfi.base)
     let lc := mkLen nf
@@ -1445,7 +1469,7 @@ partial def getNormalString (x : Node) (exp : Array Node) : EEM (Node × Array N
   let xr ← rep x
   match (← chk).normalForms.get? ⟨xr⟩ with
   | some nf =>
-    let ret ← mkNConcat nf.nf
+    let ret ← mkNConcat nf.nf nf.base
     return (ret, addToExplanation x nf.base (exp ++ nf.exp))
   | none =>
     if let .app (.kind .STRING_CONCAT) cs := x then
@@ -1455,7 +1479,7 @@ partial def getNormalString (x : Node) (exp : Array Node) : EEM (Node × Array N
         let (v, e) ← getNormalString c exp
         exp := e
         vs := vs.push v
-      return (← mkNConcat vs, exp)
+      return (← mkNConcat vs x, exp)
     return (x, exp)
 
 /-- `BaseSolver::explainBestContentEqc`. -/
@@ -1482,7 +1506,7 @@ def currentSubstitution (effort : Nat) (n : Node) (exp : Array Node) : EEM (Node
           let (nsc, e) ← getNormalString nfc.base exp
           exp := addToExplanation c nfc.base e
           vec := vec.push nsc
-        return (← mkNConcat vec, exp)
+        return (← mkNConcat vec n, exp)
     let (ns, exp) ← getNormalString nf.base exp
     return (ns, addToExplanation n nf.base exp)
   let (c, cexp) ← explainBestContentEqc n nr #[]
@@ -1497,7 +1521,7 @@ def currentSubstitution (effort : Nat) (n : Node) (exp : Array Node) : EEM (Node
         let (cc, e) ← explainBestContentEqc nc ncr cexp
         cexp := e
         vec := vec.push (cc.getD nc)
-      c := some (← mkNConcat vec)
+      c := some (← mkNConcat vec n)
   match c with
   | some cc => return (cc, exp ++ cexp)
   | none => return (n, exp)

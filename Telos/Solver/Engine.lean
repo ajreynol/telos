@@ -2252,7 +2252,10 @@ def setsCarePairs : EngineM (Array (Node × Node)) := do
 
 /-- `TheoryStrings::computeCareGraph`: its function terms, by operator. -/
 def stringsCarePairs : EngineM (Array (Node × Node)) := do
-  carePairsOf .THEORY_STRINGS (← get).ee.strings.functionTerms fun t => some (t.getOperator?, t.getChildren.size)
+  -- (by operator, and owner type, `getOwnerStringType`)
+  carePairsOf .THEORY_STRINGS (← get).ee.strings.functionTerms fun t =>
+    let owner := if t.getKind == .SEQ_UNIT then t.typeHint else (t.getChildren[0]?.bind Node.typeHint)
+    some (t.getOperator?, owner, t.getChildren.size)
 
 /-- `CombinationCareGraph::combineTheories`: the care pairs of the parametric
 theories (UF and datatypes: arithmetic is not parametric, its model only

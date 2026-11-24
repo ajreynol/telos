@@ -1,0 +1,37 @@
+(str.++ x y)
+1
+(+ 1 (str.len x) (str.len y))
+0
+i
+1
+j
+(= (seq.unit i) (seq.unit j))
+false
+(= (str.++ (seq.unit 1) x) (str.++ (seq.unit 2) y))
+(= (as seq.empty (Seq Int)) x)
+(= (as seq.empty (Seq Int)) (str.++ x y))
+x
+(seq.unit 2)
+(as seq.empty (Seq Int))
+(as seq.empty (Seq Int))
+(str.substr x 0 1)
+true
+true
+false
+false
+(= x (str.substr y 0 (str.len x)))
+(= (as seq.empty (Seq Int)) x)
+(= (str.substr x (+ -1 (str.len x)) 1) (seq.unit i))
+(str.update x 0 (seq.unit i))
+(seq.unit i)
+(str.++ (seq.unit i) (str.rev x))
+(seq.unit i)
+(str.++ y x)
+(str.++ (seq.unit 0) (seq.unit 5) (seq.unit 2))
+(str.indexof x y 0)
+(str.replace_all x (as seq.empty (Seq Int)) y)
+(str.replace (as seq.empty (Seq Int)) x y)
+(str.len x)
+(= x (str.++ x y))
+(seq.nth x i)
+true

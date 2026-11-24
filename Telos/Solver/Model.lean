@@ -98,6 +98,11 @@ inductive MVal where
   | sins (e s : MVal)
   /-- A string, of code points (Logos's `Seq` of `Char`s). -/
   | str (w : List Nat)
+  /-- The empty sequence of elements of Logos type `T` (Logos's `Seq`). -/
+  | qempty (T : SmtType)
+  /-- The sequence of the element `e`, then the sequence `s` (anything else in its
+  place is as the empty sequence of type `None`). -/
+  | qcons (e s : MVal)
   /-- A regular expression (Logos's `RegLan`). Two are compared structurally
   (`TRe.ceq`), as Logos's values are, but `=` on them is not evaluated: Logos's
   is the equality of their languages. -/
@@ -118,6 +123,11 @@ def MVal.isSet : MVal → Bool
   | .sempty _ | .sins .. => true
   | _ => false
 
+/-- Whether a value is a sequence (but a string). -/
+def MVal.isSeqV : MVal → Bool
+  | .qempty _ | .qcons .. => true
+  | _ => false
+
 /-- The Logos type of a value; a set whose elements are not all of its element
 type has none. -/
 def MVal.ty : MVal → SmtType
@@ -130,6 +140,10 @@ def MVal.ty : MVal → SmtType
   | .rat _ => .Real
   | .str _ => .Seq .Char
   | .re _ => .RegLan
+  | .qempty T => .Seq T
+  | .qcons e s =>
+    let U := if s.isSeqV then s.ty else .Seq .None
+    if SmtType.Seq e.ty == U then U else .None
   | .sempty T => .Set T
   | .sins e s =>
     if s.isSet then
@@ -150,7 +164,7 @@ theorem MVal.sizeOf_lt_of_mem_elems : ∀ {s e : MVal}, e ∈ s.elems → sizeOf
     · simp; omega
     · have := MVal.sizeOf_lt_of_mem_elems h; simp; omega
   | .sempty _, _, h | .bool _, _, h | .uval .., _, h | .fn .., _, h | .dtc .., _, h | .app .., _, h
-  | .int _, _, h | .rat _, _, h | .str _, _, h | .re _, _, h => by simp [MVal.elems] at h
+  | .int _, _, h | .rat _, _, h | .str _, _, h | .re _, _, h | .qempty _, _, h | .qcons .., _, h => by simp [MVal.elems] at h
 
 /-- **Equality of values, as Logos's** (`native_veq` of their Logos values):
 two well-typed sets are equal when they have the same element type and the
@@ -170,6 +184,11 @@ def MVal.veq (a b : MVal) : Bool :=
     | .app f x, .app g y => MVal.veq f g && MVal.veq x y
     | .str x, .str y => x.map MVal.clampChar == y.map MVal.clampChar
     | .re x, .re y => x.ceq y
+    | .qempty T, .qempty U => T == U
+    | .qcons e s, .qcons f t => MVal.veq e f &&
+      (if s.isSeqV then (if t.isSeqV then MVal.veq s t else s == .qempty .None)
+       else if t.isSeqV then t == .qempty .None else true)
+    | .str w, .qempty T | .qempty T, .str w => w.isEmpty && T == .Char
     | a, b => a == b
 termination_by sizeOf a + sizeOf b
 decreasing_by
@@ -190,6 +209,15 @@ def MVal.notValue (v : MVal) : Bool := v.isSet && v.ty == .None
 
 /-- The set with the elements `es` added to `s`. -/
 def MVal.insAll (s : MVal) (es : List MVal) : MVal := es.foldr .sins s
+
+/-- The element type and the elements of a sequence. -/
+def MVal.seqElems : MVal → Option (SmtType × List MVal)
+  | .qempty T => some (T, [])
+  | .qcons e s => s.seqElems.map fun (T, l) => (T, e :: l)
+  | _ => none
+
+/-- The sequence of the elements `l`, of type `T`. -/
+def MVal.mkSeq (T : SmtType) (l : List MVal) : MVal := l.foldr .qcons (.qempty T)
 
 /-- Constructor `i` of `s` applied to `args`. -/
 def MVal.mkDt (s : native_String) (dd : SmtDatatypeDecl) (i : Nat) (args : List MVal) : MVal :=
@@ -386,6 +414,10 @@ def chainNil : Kind → SmtType → Option MVal
   | .MULT, .Int => some (.int 1)
   | .MULT, .Real => some (.rat 1)
   | .STRING_CONCAT, .Seq .Char => some (.str [])
+  | .STRING_CONCAT, .Seq E =>
+    match __eo_to_smt (typedNilOfType UserOp.str_concat (.Seq E)) with
+    | .seq_empty T => some (.qempty T)
+    | _ => none
   | _, _ => none
 
 /-- `str.substr`, as Logos's `native_seq_extract`. -/
@@ -404,10 +436,13 @@ def strCode : List Nat → Int
   | [c] => Int.ofNat (MVal.clampChar c)
   | _ => -1
 
-/-- The concatenation of two strings. -/
+/-- The concatenation of two strings, or of two sequences. -/
 def concatV : MVal → MVal → Option MVal
   | .str a, .str b => some (.str (a ++ b))
-  | _, _ => none
+  | a, b =>
+    match a.seqElems, b.seqElems with
+    | some (T, l), some (_, m) => some (.mkSeq T (l ++ m))
+    | _, _ => none
 
 /-- The concatenation, union and intersection of two regular expressions. -/
 def reConcatV : MVal → MVal → Option MVal
@@ -503,6 +538,35 @@ def combineStr (k : Kind) (vs : List MVal) : Option MVal :=
   | .STRING_FROM_CODE, [.int i] => validStr (if 0 ≤ i && decide (i.toNat < 196608) then [i.toNat] else [])
   | .STRING_STOI, [.str w] => some (.int (strToInt (w.map MVal.clampChar)))
   | .STRING_ITOS, [.int i] => validStr (if i < 0 then [] else native_string_lit (toString i))
+  | _, _ => none
+
+/-- `native_seq_extract`. -/
+def seqExtract (l : List MVal) (i n : Int) : List MVal :=
+  let len : Int := Int.ofNat l.length
+  if i < 0 || n <= 0 || i >= len then []
+  else (l.drop (Int.toNat i)).take (Int.toNat (min n (len - i)))
+
+/-- `native_seq_update`. -/
+def seqUpdate (l : List MVal) (i : Int) (m : List MVal) : List MVal :=
+  if i < 0 || Int.ofNat l.length <= i then l
+  else l.take i.toNat ++ m.take (l.length - i.toNat) ++ l.drop (i.toNat + m.length)
+
+/-- The value of an operator of sequences of kind `k` on the values `vs` of its
+children; `none` for strings, and for the others (`seq.nth` out of bounds too). -/
+def combineSeq (k : Kind) (vs : List MVal) : Option MVal :=
+  match k, vs with
+  | .SEQ_UNIT, [x] => some (.qcons x (.qempty x.ty))
+  | .STRING_LENGTH, [s] => s.seqElems.map fun (_, l) => .int l.length
+  | .STRING_REV, [s] => s.seqElems.map fun (T, l) => .mkSeq T l.reverse
+  | .SEQ_NTH, [s, .int i] => s.seqElems.bind fun (_, l) => if 0 ≤ i then l[i.toNat]? else none
+  | .STRING_SUBSTR, [s, .int i, .int n] => s.seqElems.map fun (T, l) => .mkSeq T (seqExtract l i n)
+  | .STRING_CHARAT, [s, .int i] => s.seqElems.map fun (T, l) => .mkSeq T (seqExtract l i 1)
+  | .STRING_UPDATE, [s, .int i, u] => s.seqElems.bind fun (T, l) => u.seqElems.map fun (_, m) =>
+      .mkSeq T (seqUpdate l i m)
+  | .STRING_PREFIX, [u, w] => u.seqElems.bind fun (_, m) => w.seqElems.map fun (T, l) =>
+      .bool (u.veq (.mkSeq T (seqExtract l 0 m.length)))
+  | .STRING_SUFFIX, [u, w] => u.seqElems.bind fun (_, m) => w.seqElems.map fun (T, l) =>
+      .bool (u.veq (.mkSeq T (seqExtract l (l.length + -(m.length : Int)) m.length)))
   | _, _ => none
 
 /-- The value of a connective (or equality, or `ite`, or an arithmetic, string,
@@ -632,6 +696,10 @@ mutual
     | .const (.integer i) => (some (.int i), S)
     | .const (.rational q) => (some (.rat q), S)
     | .const (.string w) => (if w.all (fun c => decide (c < 196608)) then some (.str w) else none, S)
+    | .const (.emptySeq _) =>
+      match t.toSmt with
+      | .seq_empty U => (some (.qempty U), S)
+      | _ => (none, S)
     | .const (.emptySet T) => (if tyS T == .None then none else some (.sempty (tyS T)), S)
     | .var x T => (M.const x T, S)
     | .boundVar x T => (env.lookup (native_string_lit x) (tyS T), S)
@@ -650,7 +718,10 @@ mutual
       if k == .FORALL || k == .EXISTS then (quant M env n (k == .EXISTS) cs, S) else
       match evList M env n cs.toList S with
       | (none, S) => (none, S)
-      | (some vs, S) => ((M.divMod? k vs).getD (combine k cs vs), S)
+      | (some vs, S) =>
+        match combineSeq k vs with
+        | some r => (some r, S)
+        | none => ((M.divMod? k vs).getD (combine k cs vs), S)
     | .app (.indexed k is) cs =>
       match evList M env n cs.toList S with
       | (none, S) => (none, S)
@@ -814,6 +885,7 @@ def valueAt : Nat → SmtType → Nat → Option MVal
   | _ + 1, .Int, k => some (.int k)
   | _ + 1, .Real, k => some (.rat k)
   | _ + 1, .Seq .Char, k => some (.str (List.replicate k 97))
+  | f + 1, .Seq E, k => (valueAt f E 0).map fun v => .mkSeq E (List.replicate k v)
   | f + 1, T@(.Datatype s dd), k =>
     let cs := (consesOf s dd).zipIdx
     match cs.find? (fun (fs, _) => fs.contains T) with
@@ -861,6 +933,7 @@ def defaultValue (T : SmtType) : Option MVal :=
   | .Datatype .. => groundValue 16 T
   | .Set E => some (.sempty E)
   | .Seq .Char => some (.str [])
+  | .Seq E => some (.qempty E)
   | _ => none
 
 /-- The function and arguments of an application of a declared function. -/
@@ -1166,6 +1239,22 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
         if let (some xr, some sr) := (id? x, id? S) then
           let ms := members.getD sr []
           if !ms.contains xr then members := members.insert sr (ms ++ [xr])
+  -- the sequences: an atomic class (its normal form is one component that is
+  -- not a unit, or it has none) has a value of its own
+  let isSeqTy (T : SmtType) : Bool := match T with
+    | .Seq .Char => false
+    | .Seq _ => true
+    | _ => false
+  let tyOf (r : Nat) : SmtType := (ee.nodes[r]!.typeHint.map tyS).getD .None
+  let emptySeqs : Array Nat := Id.run do
+    let mut out := #[]
+    for h : i in [0:n] do
+      if let .const (.emptySeq _) := ee.nodes[i] then out := out.push (find i)
+    return out
+  let seqAtomic (r : Nat) : Bool :=
+    !emptySeqs.contains r && match strNf r with
+      | none => true
+      | some nf => nf.size == 1 && nf[0]!.getKind != .SEQ_UNIT && id? nf[0]! == some r
   -- the values, from those of the classes without constructor terms (`fresh`)
   let rec value (fuel : Nat) (fresh : Std.HashMap Nat MVal) (r : Nat) : Option MVal :=
     match fuel with
@@ -1186,6 +1275,17 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
         | some (.Datatype ..) => fresh.get? r
         | some .Real | some .Int => arithOf.get? r
         | some (.Seq .Char) => (strOf.get? r).map .str
+        | some (.Seq E) =>
+          -- a sequence: the values of the components of its normal form (units,
+          -- and atomic classes), or one of its own
+          if seqAtomic r then fresh.get? r else
+          let parts : Option (List (List MVal)) := ((strNf r).getD #[]).toList.mapM fun c =>
+            match c with
+            | .app (.kind .SEQ_UNIT) #[x] => ((id? x).bind (value fuel fresh)).map ([·])
+            | .const (.emptySeq _) => some []
+            | _ => (id? c).bind fun rc =>
+              if rc == r then none else (value fuel fresh rc).bind fun v => v.seqElems.map (·.2)
+          parts.map fun ps => .mkSeq E ps.flatten
         | some (.Set E) =>
           -- a set: the values of its members (`collectModelValues`)
           ((members.getD r []).mapM (value fuel fresh)).map (MVal.sempty E).insAll
@@ -1195,10 +1295,46 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
     match ee.nodes[r]!.typeHint.map fun T => __eo_to_smt_type T.toEo with
     | some (.Datatype s dd) => some (s, dd)
     | _ => none
+  -- the atomic sequences: of their length, of new elements if their type is
+  -- infinite, else the first sequence of elements that no class has
+  let mut seqFresh : Std.HashMap Nat MVal := {}
+  let seqReps := reps.filter fun r => isSeqTy (tyOf r)
+  let mut usedSeq : Array MVal := (seqReps.filterMap (value 64 {})).toArray
+  let mut counter := 0
+  for r in seqReps do
+    if !seqAtomic r then continue
+    let .Seq E := tyOf r | continue
+    let L := (lenOf r).getD 0
+    if L > 100000 then continue
+    if infiniteType 16 E then
+      let mut es : List MVal := []
+      for _ in [0:L] do
+        -- (a number the arithmetic classes do not have)
+        let mut ev := valueAt 16 E counter
+        if E == .Int || E == .Real then
+          let mk := fun (k : Nat) => if E == .Int then MVal.int k else MVal.rat (k : Int)
+          while usedArith.contains (mk counter) do counter := counter + 1
+          ev := some (mk counter)
+        else if let .USort s := E then ev := some (.uval s (n + counter))
+        counter := counter + 1
+        if let some x := ev then es := es ++ [x]
+      let sv := MVal.mkSeq E es
+      seqFresh := seqFresh.insert r sv
+      usedSeq := usedSeq.push sv
+    else
+      let base := ((List.range 16).filterMap (valueAt 16 E)).eraseDups
+      let m := base.length
+      if m == 0 then continue
+      for k in [0 : min (m ^ (min L 20)) 4096] do
+        let v := MVal.mkSeq E ((List.range L).map fun j => base[(k / m ^ j) % m]!)
+        if !usedSeq.contains v then
+          seqFresh := seqFresh.insert r v
+          usedSeq := usedSeq.push v
+          break
   -- the values that do not depend on fresh ones are taken
   let mut used : Array MVal := #[]
   for r in reps do
-    if let some v := value 64 {} r then
+    if let some v := value 64 seqFresh r then
       if (dtRep r).isSome then used := used.push v
   -- a fresh value for each class without a constructor term, which makes no
   -- two classes equal that were not (the classes whose values depend on it,
@@ -1211,7 +1347,7 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
     for v in vs do
       if seen.contains v then k := k + 1 else seen := seen.push v
     return k
-  let mut fresh : Std.HashMap Nat MVal := {}
+  let mut fresh : Std.HashMap Nat MVal := seqFresh
   let mut base := collisions fresh
   for r in reps do
     if cons.contains r || virtual.contains r then continue

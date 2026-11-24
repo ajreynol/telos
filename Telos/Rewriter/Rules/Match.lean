@@ -178,9 +178,26 @@ def Premise.boolValue? (p : Premise) : Option Node :=
   | .const (.boolean b) => some (.const (.boolean b))
   | _ => none
 
-/-- The prover's proof of the premise, when evaluation does not give `true`. -/
+/-- The length of a sequence of units (or of none), which `evaluate` does not
+reduce. -/
+def unitsLength? : Node → Option Nat
+  | .app (.kind .STRING_LENGTH) #[.const (.emptySeq _)] => some 0
+  | .app (.kind .STRING_LENGTH) #[.app (.kind .SEQ_UNIT) _] => some 1
+  | .app (.kind .STRING_LENGTH) #[.app (.kind .STRING_CONCAT) cs] =>
+    if cs.all fun c => c.getKind == .SEQ_UNIT then some cs.size else none
+  | _ => none
+
+/-- The proof of a premise that evaluation does not discharge: the length of
+units (`seq-eval-op`), else the prover's, when evaluation does not give `true`. -/
 def proverSteps (prove : Option PremiseProver) (σ : Subst) (p : Premise) (a : Node) :
     Option (List CCmd) :=
+  let units : Option (List CCmd) := do
+    let l ← unitsLength? a
+    if p.symm || p.other.isSome then none
+    let .const (.integer k) := p.value | none
+    if k != l then none
+    return [CCmd.step .seq_eval_op (.cons (eqFormula a (.const (.integer l))) .nil) .nil]
+  if let some cs := units then some cs else
   match prove with
   | none => none
   | some f =>

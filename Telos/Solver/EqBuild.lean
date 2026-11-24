@@ -432,6 +432,7 @@ mutual
         let P := match exp with
           | .app (.kind .AND) ps => ps
           | e => if e == Node.mkTrue then #[] else #[e]
+        let P := P.filter (· != Node.mkTrue)
         let ps ← P.mapM (proveLitTrue C)
         let some q := StringsCore.proveFrom id P ps conc | throw s!"an internal fact of {id} without a proof"
         return .fromTrue q
@@ -770,6 +771,7 @@ def lemmaOfStrings (ee : EqualityEngine) (lem : Node) (id : String) (premises : 
     | l => #[l]
   let C := buildCtx ee E E
   let (A, q) ← build E do
+    let premises := premises.filter (· != Node.mkTrue)
     let ps ← premises.mapM (proveLitTrue C)
     let some q := StringsCore.proveFrom id premises ps conc
       | throw s!"a lemma of {id} without a proof"
