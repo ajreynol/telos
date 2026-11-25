@@ -1,3 +1,4 @@
+import Telos.Solver.Theory.DtType
 import Std.Data.HashMap
 import Std.Data.HashSet
 import Telos.Core.Node.Key
@@ -151,6 +152,11 @@ def MVal.ty : MVal → SmtType
       | .Set T => if e.ty == T then .Set T else .None
       | _ => .None
     else .None
+
+/-- A Boolean or a number. -/
+def MVal.isPrim : MVal → Bool
+  | .bool _ | .int _ | .rat _ => true
+  | _ => false
 
 /-- The elements of a set (of `sins`), in order of insertion, last first. -/
 def MVal.elems : MVal → List MVal
@@ -569,6 +575,44 @@ def combineSeq (k : Kind) (vs : List MVal) : Option MVal :=
       .bool (u.veq (.mkSeq T (seqExtract l (l.length + -(m.length : Int)) m.length)))
   | _, _ => none
 
+/-! #### Tuples
+
+A tuple is a value of Logos's datatype `@Tuple`, with one constructor. -/
+
+/-- The name of the tuple datatypes and their constructor. -/
+def tupleName : native_String := native_string_lit "@Tuple"
+
+/-- `f` applied to the fields `0` to `n - 1` of the tuple `r`, which has `m`
+(`__eo_to_smt_tuple_prepend_rec`). -/
+def tupleRest (r : MVal) (m : Nat) : Nat → MVal → Option MVal
+  | 0, f => some f
+  | n + 1, f =>
+    (tupleRest r m n f).bind fun g => (r.argNth n m).bind fun x => if x.notValue then none else some (.app g x)
+
+/-- The tuple of the value `a`, of type `U`, and the fields of the tuple `r`, of
+type `T` (`__eo_to_smt_tuple_prepend`). -/
+def tupleV (U T : SmtType) (a r : MVal) : Option MVal :=
+  match T with
+  | .Datatype s (.cons s2 (.sum c .null) .nil) =>
+    if s == tupleName && s2 == tupleName &&
+        __smtx_type_wf (.Datatype tupleName (__eo_to_smt_tuple_decl (.sum (.cons U c) .null))) &&
+        r.head == .dtc tupleName (__eo_to_smt_tuple_decl (.sum c .null)) 0 && !a.notValue then
+      tupleRest r (__smtx_dt_num_sels (__smtx_dd_lookup tupleName (__eo_to_smt_tuple_decl (.sum c .null))) 0)
+        (__smtx_dt_num_sels (.sum c .null) 0)
+        (.app (.dtc tupleName (__eo_to_smt_tuple_decl (.sum (.cons U c) .null)) 0) a)
+    else none
+  | _ => none
+
+/-- The field `i` of the tuple `v`, of type `T` (`__eo_to_smt_tuple_select`). -/
+def tupleSel (T : SmtType) (i : Int) (v : MVal) : Option MVal :=
+  match T with
+  | .Datatype s (.cons s2 d .nil) =>
+    if s == tupleName && s2 == tupleName && decide (0 ≤ i) &&
+        v.head == .dtc tupleName (__eo_to_smt_tuple_decl d) 0 then
+      v.argNth i.toNat (__smtx_dt_num_sels (__smtx_dd_lookup tupleName (__eo_to_smt_tuple_decl d)) 0)
+    else none
+  | _ => none
+
 /-- The value of a connective (or equality, or `ite`, or an arithmetic, string,
 set or regular expression operation) of kind `k` on the values `vs` of its
 children `cs`. -/
@@ -618,6 +662,17 @@ def combine (k : Kind) (cs : Array Node) (vs : List MVal) : Option MVal :=
     match s.ty with
     | .Set _ => if s.isSet then some (.bool (s.elems.any (x.veq ·))) else none
     | _ => none
+  -- the element of a singleton, of a type whose values are canonical in any
+  -- model (Logos leaves the element chosen from a larger set open)
+  | .SET_CHOOSE, [s] =>
+    match s.elems with
+    | e :: es =>
+      if s.isSet && e.isPrim && es.all (e.veq ·) && s.ty == (cs[0]?.getD default).smtTypeF &&
+          s.ty == .Set e.ty then some e
+      else none
+    | [] => none
+  | .TUPLE, [a, r] => tupleV (cs[0]?.getD default).smtTypeF (cs[1]?.getD default).smtTypeF a r
+  | .TUPLE_UNIT, [] => some (.dtc tupleName (__eo_to_smt_tuple_decl (.sum .unit .null)) 0)
   -- `(divisible k t)`: `(= (mod_total t k) 0)`, as Logos evaluates it
   | .DIVISIBLE, [.int k, .int t] => some (.bool (native_mod_total t k == 0))
   | _, _ => none
@@ -629,9 +684,10 @@ where
     | _, _ => none
 
 /-- The value of an indexed operator of kind `k`, of indices `is`, on the
-values `vs` of its children. -/
-def combineIdx (k : Kind) (is : List Int) (vs : List MVal) : Option MVal :=
+values `vs` of its children `cs`. -/
+def combineIdx (k : Kind) (is : List Int) (cs : Array Node) (vs : List MVal) : Option MVal :=
   match k, is, vs with
+  | .TUPLE_SELECT, [i], [v] => tupleSel (cs[0]?.getD default).smtTypeF i v
   | .REGEXP_REPEAT, [i], [.re r] => some (.re (r.exp i.toNat))
   | .REGEXP_LOOP, [i, j], [.re r] => some (.re (TRe.loop i j r))
   | _, _, _ => none
@@ -725,7 +781,7 @@ mutual
     | .app (.indexed k is) cs =>
       match evList M env n cs.toList S with
       | (none, S) => (none, S)
-      | (some vs, S) => (combineIdx k is.toList vs, S)
+      | (some vs, S) => (combineIdx k is.toList cs vs, S)
     | .app (.node .APPLY_UF (.var f T)) cs =>
       match M.const f T with
       | none => (none, S)
@@ -1024,6 +1080,11 @@ constructor. -/
 def consTerm? : Node → Option (native_String × SmtDatatypeDecl × Nat × Array Node)
   | .app (.node .APPLY_CONSTRUCTOR f) cs => (Model.consOf? f).map fun (s, dd, i) => (s, dd, i, cs)
   | t@(.const (.dtCons ..)) => (Model.consOf? t).map fun (s, dd, i) => (s, dd, i, #[])
+  | t@(.app (.kind .TUPLE) _) | t@(.app (.kind .TUPLE_UNIT) _) => do
+    let (T, _, es) ← DT.consApp? t
+    match tyS T with
+    | .Datatype s dd => some (s, dd, 0, es)
+    | _ => none
   | _ => none
 
 /-- **The values of the classes** of the equality engine, by representative,

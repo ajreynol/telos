@@ -19,7 +19,9 @@ A lemma of the theory of sets is valid. `prove id lem` gives an `EqProof` of
 - `SETS_DOWN_CLOSURE`, `(=> exp r)` for `r` the rewrite of `(set.member x s)`:
   under `exp`, the membership from the literals of `exp`, then the rewrite;
 - `SETS_DEQ`, `(=> (not (= a b)) (not (= (set.member k a) (set.member k b))))`
-  for `k` the skolem `(@sets_deq_diff a b)`: `sets_ext`, under the assumption.
+  for `k` the skolem `(@sets_deq_diff a b)`: `sets_ext`, under the assumption;
+- `SETS_CHOOSE_MEMBER`, `(or (= A empty) (set.member (set.choose A) A))`:
+  `sets_choose_member`.
 
 The proofs are checked when they are made (`EqProof.check`, and Logos's checker
 for their CPC steps); a lemma without one is not certified, and a refutation
@@ -129,6 +131,8 @@ def prove (id : String) (lem : Node) (o : NodeOrder := {}) : Option EqProof := d
     let p1 : EqProof := .congAt lem #[none, some pk]
     let p2 := ruleEq .sets_member_singleton [e, e] (Node.mkNode .SET_MEMBER #[e, s]) (Node.eqNode e e)
     checked lem (.trans p1 (.trans p2 (.rw (Node.eqNode e e))))
+  | "SETS_CHOOSE_MEMBER", .app (.kind .OR) #[_, .app (.kind .SET_MEMBER) #[c, _]] =>
+    checked lem (.valid lem [DT.argStep .sets_choose_member c])
   | "SETS_DEQ", .app (.kind .IMPLIES) #[h, conc] =>
     let act : EmitM Unit := do
       let p ← push ⟨.refl, [.node h], [], .assume⟩

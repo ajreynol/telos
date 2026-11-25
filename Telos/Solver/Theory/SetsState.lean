@@ -61,7 +61,8 @@ structure Check where
   /-- `d_bop_index`: for each of union, intersection and minus (in that order,
   cvc5's `Kind` order), by the representatives of the arguments. -/
   bopIndex : Array (Kind × Array (Node × Array (Node × Node))) := #[]
-  /-- `d_op_list`, the memberships and singletons (for the care graph). -/
+  /-- `d_op_list`, the memberships, singletons and `set.choose`s (for the care
+  graph). -/
   careTerms : Array Node := #[]
   deriving Inhabited
 

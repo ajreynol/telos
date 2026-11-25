@@ -1,6 +1,7 @@
 import Telos.Core.Node.FastType
 import Telos.Core.Node.Key
 import Telos.Core.Node.ToEo
+import Telos.Rewriter.Theory.Datatypes
 import Cpc.Logos
 
 /-!
@@ -16,6 +17,11 @@ type (`DType`, `src/expr/dtype.cpp`) and the terms it builds
   `mkSplit`), with shared selectors off (safe mode with proofs);
 - the clash of two constructor terms (`checkClash`).
 
+Tuples are datatypes with one constructor, in Eunoia's form (`TUPLE`,
+`TUPLE_SELECT`): the functions below give their fields flat. They have no
+tester term; a tuple is instantiated without one (`DATATYPES_INST` with no
+explanation, CPC's `dt_inst` of `true`).
+
 Codatatypes and sygus datatypes are outside safe mode, so recursive singletons
 (a property of codatatypes) never arise.
 -/
@@ -23,6 +29,15 @@ Codatatypes and sygus datatypes are outside safe mode, so recursive singletons
 open Eo
 
 namespace Telos.Solver.DT
+
+/-- A tuple type. -/
+def isTupleType : TypeNode → Bool
+  | .tuple .. | .unitTuple => true
+  | _ => false
+
+/-- The field types of constructor `i` of a datatype or tuple type. -/
+def fieldTypes? (T : TypeNode) (i : Nat) : Option (List TypeNode) :=
+  if isTupleType T then (if i == 0 then T.tupleFields? else none) else T.dtFields? i
 
 /-- `CardinalityClass`, in cvc5's order. -/
 inductive CardClass where
@@ -63,6 +78,7 @@ mutual
         let base : CardClass := if cs.length == 1 then .one else .finite
         (List.range cs.length).foldl (fun c i => c.max (consInfo (T :: busy) T i).1) base
       | none => .infinite
+    | .tuple .. | .unitTuple => (consInfo busy T 0).1
     | .array i e =>
       let r := cardClass busy e
       if r == .finite || r == .interpretedFinite then r.max (cardClass busy i) else r
@@ -81,7 +97,7 @@ mutual
   constructor `i` of `T`, and whether it has an argument that is (interpreted)
   finite and not a datatype. -/
   partial def consInfo (busy : List TypeNode) (T : TypeNode) (i : Nat) : CardClass × Bool :=
-    let fields := (T.dtFields? i).getD []
+    let fields := (fieldTypes? T i).getD []
     fields.foldl (fun (c, ext) tc =>
       let cc := cardClass busy tc
       (c.max cc, ext || (cc != .infinite && !tc.isDatatype))) (.one, false)
@@ -96,19 +112,22 @@ def consCardClass (T : TypeNode) (i : Nat) : CardClass := (consInfo [T] T i).1
 /-- `DTypeConstructor::hasFiniteExternalArgType`. -/
 def hasFiniteExternalArgType (T : TypeNode) (i : Nat) : Bool := (consInfo [T] T i).2
 
-def numConstructors (T : TypeNode) : Nat := (T.dtConstructors?.map List.length).getD 0
+def numConstructors (T : TypeNode) : Nat :=
+  if isTupleType T then 1 else (T.dtConstructors?.map List.length).getD 0
 
-def numFields (T : TypeNode) (i : Nat) : Nat := ((T.dtFields? i).map List.length).getD 0
+def numFields (T : TypeNode) (i : Nat) : Nat := ((fieldTypes? T i).map List.length).getD 0
 
 /-! ## Terms -/
 
 /-- The constructor `i` of `T` applied to `args` (`mkApplyCons`). -/
 def mkCons (T : TypeNode) (i : Nat) (args : Array Node) : Node :=
-  .app (.node .APPLY_CONSTRUCTOR (.const (.dtCons T i))) args
+  if isTupleType T then DatatypesRewriter.mkTupleNode args.toList
+  else .app (.node .APPLY_CONSTRUCTOR (.const (.dtCons T i))) args
 
 /-- Selector `j` of constructor `i` of `T`, applied to `n`. -/
 def mkSel (T : TypeNode) (i j : Nat) (n : Node) : Node :=
-  .app (.node .APPLY_SELECTOR (.const (.dtSel T i j))) #[n]
+  if isTupleType T then .app (.indexed .TUPLE_SELECT #[Int.ofNat j]) #[n]
+  else .app (.node .APPLY_SELECTOR (.const (.dtSel T i j))) #[n]
 
 /-- The tester of constructor `i` of `T`, applied to `n` (`mkTester`). -/
 def mkTester (n : Node) (T : TypeNode) (i : Nat) : Node :=
@@ -128,15 +147,21 @@ def isTester? : Node → Option (Nat × Node)
   | .app (.node .APPLY_TESTER (.const (.dtCons _ i))) #[a] => some (i, a)
   | _ => none
 
-/-- A constructor application: its type, index and arguments. -/
+/-- A constructor application: its type, index and arguments (a tuple's are its
+fields). -/
 def consApp? : Node → Option (TypeNode × Nat × Array Node)
   | .app (.node .APPLY_CONSTRUCTOR (.const (.dtCons T i))) cs => some (T, i, cs)
+  | n@(.app (.kind .TUPLE) _) | n@(.app (.kind .TUPLE_UNIT) _) => do
+    let T ← n.typeHint
+    let es ← DatatypesRewriter.tupleElems? n
+    some (T, 0, es.toArray)
   | _ => none
 
 /-- A selector application: its type, constructor and field indices, and
 argument. -/
 def selApp? : Node → Option (TypeNode × Nat × Nat × Node)
   | .app (.node .APPLY_SELECTOR (.const (.dtSel T i j))) #[a] => some (T, i, j, a)
+  | .app (.indexed .TUPLE_SELECT #[j]) #[a] => (a.typeHint).map fun T => (T, 0, j.toNat, a)
   | _ => none
 
 /-- The arguments of a constructor term. -/
@@ -152,7 +177,7 @@ def argStep (r : CRule) (x : Node) : CCmd := .step r (.cons x.toEo .nil) .nil
 /-- The datatype type of a term, if it has one. -/
 def dtType? (n : Node) : Option TypeNode :=
   match n.typeHint with
-  | some T@(.datatype ..) => some T
+  | some T@(.datatype ..) | some T@(.tuple ..) | some T@.unitTuple => some T
   | _ => none
 
 /-- `checkClash` (with `checkNdtConst`): whether two terms are distinct for any

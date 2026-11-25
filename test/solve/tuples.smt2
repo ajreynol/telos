@@ -1,0 +1,10 @@
+; tuples: datatypes with one constructor, without testers
+(set-logic ALL)
+(declare-fun x () (Tuple Int Bool))
+(declare-fun f (Int) (Tuple Int Int))
+(declare-fun u () UnitTuple)
+(assert (not (= x (tuple 0 false))))
+(assert (= ((_ tuple.select 0) x) 5))
+(assert (= (f 5) (tuple 2 3)))
+(assert (= u tuple.unit))
+(check-sat)

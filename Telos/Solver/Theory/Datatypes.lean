@@ -235,15 +235,13 @@ def collapseSelector (s c : Node) : EEM Unit := do
 /-- `addSelector`. -/
 def addSelector (s n : Node) (assertFacts : Bool := true) : EEM Unit := do
   let k ← numSelApps n
-  let op := match s with
-    | .app (.node _ f) _ => some f
+  let opOf (t : Node) : Option Op := match t with
+    | .app op _ => some op
     | _ => none
+  let op := opOf s
   for j in [0:k] do
     let ss ← selAppAt n j
-    let op' := match ss with
-      | .app (.node _ f) _ => some f
-      | _ => none
-    if op == op' then return
+    if op == opOf ss then return
   modifyDt fun d => (d.setSelApps n (k + 1)).setSelAppData n k s
   setInfo n fun e => { e with selectors := true }
   if assertFacts then
@@ -534,6 +532,10 @@ def splitStep (n : Node) : EEM Bool := do
       match eqc with
       | some { selectors := true, .. } => pure ()
       | _ => return false
+  if isTupleType T then
+    -- (a tuple has no tester)
+    addPendingInference (Node.eqNode n (getInstCons n T 0)) "DATATYPES_INST" Node.mkTrue (hasFiniteExternalArgType T 0)
+    return false
   if numConstructors T == 1 then
     addPendingInference (mkTester n T 0) "DATATYPES_SPLIT" Node.mkTrue
     return false
@@ -582,6 +584,6 @@ def assertFact (fact : Node) : EEM Unit := do
 
 /-- The kinds the theory adds to the equality engine (`finishInit`). -/
 def congruenceKind (k : Kind) : Bool :=
-  k == .APPLY_CONSTRUCTOR || k == .APPLY_SELECTOR || k == .APPLY_TESTER
+  k == .APPLY_CONSTRUCTOR || k == .APPLY_SELECTOR || k == .APPLY_TESTER || k == .TUPLE || k == .TUPLE_SELECT
 
 end Telos.Solver.DT

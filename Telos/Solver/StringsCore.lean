@@ -596,6 +596,24 @@ def byOriginalForms (R : Array Nat) (conc : Node) : M Nat := do
   if F != conc then throw "a conclusion of another form"
   return i
 
+/-- The known equality `E` (at `e`) between terms whose heads are constants of
+different lengths that agree on the shorter, without it: the longer is split
+(`splice`), then `concat_eq`, in turn (`fuel` times). -/
+partial def stripConstants (E : Node) (e : Nat) (rev : Bool) (fuel : Nat) : M (Node × Nat) := do
+  if fuel == 0 then return (E, e)
+  let .app (.kind .EQUAL) #[t, s] := E | return (E, e)
+  let some wt := (head? t rev).bind word? | return (E, e)
+  let some ws := (head? s rev).bind word? | return (E, e)
+  let l := min wt.length ws.length
+  if l == 0 || wt.length == ws.length then return (E, e)
+  let pre (w : List Nat) := if rev then w.drop (w.length - l) else w.take l
+  if pre wt != pre ws then return (E, e)
+  let (_, e₁) ← splice e l rev
+  let (_, _, e₂) ← eqFact (.symm (.assume e₁))
+  let (_, e₃) ← splice e₂ l rev
+  let (E', e') ← rule .concat_eq [.node (Node.mkBool rev)] [e₃]
+  stripConstants E' e' rev (fuel - 1)
+
 /-- The steps of the inference from the known premises: the main equality
 `m` (oriented by `flip`), in the direction `rev`. The index of `conc`. -/
 def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M Nat := do
@@ -665,10 +683,35 @@ def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M
     throw "no length beyond its bound"
   if k == .eqRew then
     for m in (List.range n).reverse do
-      let .app (.kind .EQUAL) _ := A[m]! | continue
       let R := ((List.range n).filter fun i => i != m && match A[i]! with
         | .app (.kind .EQUAL) _ => true
         | _ => false).toArray
+      -- (a predicate, or a negated one, whose atom rewrites to the other value)
+      match A[m]! with
+      | .app (.kind .EQUAL) _ => pure ()
+      | l =>
+        if conc != Node.mkFalse then continue
+        let (atom, pol) := match l with
+          | .app (.kind .NOT) #[a] => (a, false)
+          | a => (a, true)
+        let (r, q) ← do
+          let (r, q) ← substRw R atom
+          if r.isConst then pure (r, q) else substRwEither R atom
+        -- (or to an equality whose extended rewrite is that value)
+        let (r, q) := match r with
+          | .app (.kind .EQUAL) _ => match Preprocess.strEqualityExt r with
+            | some e => match Proof.cmdsOf e with
+              | some cs =>
+                let (v, qv) := rwProof e.1
+                (v, compose (compose q (some (.valid (Node.eqNode r e.1) cs))) qv)
+              | none => (r, q)
+            | none => (r, q)
+          | _ => (r, q)
+        if r != Node.mkBool (!pol) then continue
+        let some q := q | continue
+        let contra : EqProof := .trans (.symm (atomProof l m)) q
+        let (_, i) ← litFact (if pol then .symm contra else contra)
+        return i
       let (t, qt) ← substRw R A[m]!
       let pt : EqProof := match qt with
         | some q => .trans (.symm q) (.eqTrue (.assume m))
@@ -702,9 +745,12 @@ def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M
     let l ← match (A[0]? : Option Node) with
       | some (Node.app (.kind .GEQ) #[_, l]) => pure l
       | _ => throw "no length premise"
-    let some q := EqProof.check A (.rw (Node.mkNode .GEQ #[l, zero])) | throw "unreachable"
-    if q.2 != Node.mkTrue then throw "a length that is not known to be nonnegative"
-    let (_, i) ← litFact (.rw (Node.mkNode .GEQ #[l, zero]))
+    let P := Node.mkNode .GEQ #[l, zero]
+    -- (the rewriter, or `arith_string_pred_entail`)
+    let nonneg : EqProof := if Telos.rewrite P == Node.mkTrue then .rw P
+      else .valid (Node.eqNode P Node.mkTrue) [DT.argStep .arith_string_pred_entail (Node.eqNode P Node.mkTrue)]
+    let some _ := EqProof.check A nonneg | throw "a length that is not known to be nonnegative"
+    let (_, i) ← litFact nonneg
     let (C, j) ← rule .string_decompose [.node (Node.mkBool false)] [i, 0]
     if C == conc then return j
     let some q := bridgeSkolems C conc | throw "a decomposition of another form"
@@ -768,6 +814,8 @@ def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M
         if let .ok i ← tryCatch (Except.ok <$> conclude cur.1 cur.2 conc R) (fun e => pure (.error e)) then
           return i
       throw err
+  -- (constants of different lengths at the heads agree on the shorter)
+  let (E, e) ← if k == .const then pure (E, e) else stripConstants E e rev 8
   let .app (.kind .EQUAL) #[t₁, s₁] := E | throw "concat_eq without an equality"
   let some ht := head? t₁ rev | throw "no head"
   let some hs := head? s₁ rev | throw "no head"

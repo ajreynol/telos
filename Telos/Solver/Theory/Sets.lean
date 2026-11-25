@@ -320,10 +320,20 @@ def assertFact (fact : Node) : EEM Unit := do
   | _ => let _ ← assertPredicate atom pol fact
   notifyFact atom pol
 
-/-- `preRegisterTerm`: equalities and memberships are trigger predicates. -/
+/-- `SetReduction::mkChooseMemberAxiom`: for `n = (set.choose A)`, `A` is empty
+or has `n`. -/
+def mkChooseMemberAxiom (n A : Node) (E : TypeNode) : Node :=
+  Node.orNode (Node.eqNode A (.const (.emptySet E))) (Node.mkNode .SET_MEMBER #[n, A])
+
+/-- `preRegisterTerm`: equalities and memberships are trigger predicates; the
+membership lemma of a `set.choose` is sent (`SETS_CHOOSE_MEMBER`). -/
 def preRegisterTerm (n : Node) : EEM Unit := do
   match n with
   | .app (.kind .EQUAL) _ | .app (.kind .SET_MEMBER) _ => UF.addTriggerPredicate n
+  | .app (.kind .SET_CHOOSE) #[A] =>
+    addTerm n
+    if let some (.set E) := A.typeHint then
+      let _ ← trustedLemma (mkChooseMemberAxiom n A E) "SETS_CHOOSE_MEMBER"
   | _ => addTerm n
 
 /-- The kinds the theory adds to the equality engine (`finishInit`). -/
@@ -432,6 +442,10 @@ def registerTerm (r n : Node) : EEM Unit := do
       let c := if c.eqcEmptyset.any (·.1 == .set T) then c
         else { c with eqcEmptyset := c.eqcEmptyset.push (.set T, r) }
       pure (c.addNvar r n)
+    | .app (.kind .SET_CHOOSE) _ =>
+      -- (for the care graph; a leaf otherwise)
+      let c := { c with careTerms := c.careTerms.push n }
+      pure (if isSet n then varOf c r n else c)
     | _ => pure (if isSet n then varOf c r n else c)
   modifySets fun s => { s with check := c }
 where

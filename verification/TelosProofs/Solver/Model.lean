@@ -1065,6 +1065,43 @@ theorem member_sound {x s r : MVal}
     · cases h
   · cases h
 
+/-- **The element of a singleton set** is what `set.choose` gives in any model. -/
+theorem choose_sound (N : SmtModel) {s r : MVal} {T : SmtType} (hs : s.isSet = true)
+    {e : MVal} {es : List MVal} (hel : s.elems = e :: es) (hp : e.isPrim = true)
+    (hes : es.all (e.veq ·) = true) (hT : s.ty = .Set T) (heT : e.ty = T) (hr : e = r) :
+    __smtx_map_diff N (toVal s) (.Set (SmtMap.default T (.Boolean false))) = toVal r := by
+  subst hr
+  obtain ⟨m, hm⟩ := (toVal_props s).2.2 T hs hT
+  have hall : ∀ f ∈ s.elems, toVal f = toVal e := by
+    intro f hf
+    rw [hel, List.mem_cons] at hf
+    rcases hf with rfl | hf
+    · rfl
+    · exact ((veq_iff e f).1 (List.all_eq_true.1 hes f hf)).symm
+  have hlk : ∀ i, __smtx_map_lookup m i = .Boolean (decide (toVal e = i)) := by
+    intro i
+    rw [hm.lookup]
+    congr 1
+    rw [decide_eq_decide]
+    constructor
+    · rintro ⟨f, hf, rfl⟩; exact (hall f hf).symm
+    · rintro rfl; exact ⟨e, by rw [hel]; exact List.mem_cons_self .., rfl⟩
+  have hcan : __smtx_value_canonical N.usortDom (toVal e) = true := by
+    cases e <;> simp_all [MVal.isPrim, toVal, __smtx_value_canonical]
+  have hex : ∃ i : SmtValue, __smtx_typeof_value i = T ∧ __smtx_value_canonical N.usortDom i = true ∧
+      native_veq (__smtx_map_lookup m i) (__smtx_map_lookup (SmtMap.default T (.Boolean false)) i) = false :=
+    ⟨toVal e, by rw [(toVal_props e).1, heT], hcan, by simp [hlk, __smtx_map_lookup, native_veq]⟩
+  rw [hm.val]
+  simp only [__smtx_map_diff, hm.typed, __smtx_typeof_map_value, __smtx_typeof_value]
+  simp only [native_Teq, native_and, native_ite, decide_true, Bool.and_self, ite_true]
+  rw [dite_eq_left hex]
+  have h3 := (Classical.choose_spec hex).2.2
+  rw [hlk] at h3
+  by_cases h4 : toVal e = Classical.choose hex
+  · exact h4.symm
+  · rw [decide_eq_false h4] at h3
+    simp [__smtx_map_lookup, native_veq] at h3
+
 /-- Only an ill-typed set is `NotValue`. -/
 theorem toVal_ne_notValue (v : MVal) (h : v.notValue = false) : toVal v ≠ .NotValue := by
   by_cases hs : v.isSet = true
@@ -1468,6 +1505,141 @@ theorem combineRe_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : Lis
           simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
           simp only [toVal, __smtx_model_eval_re_range, unpack_str, TRe.mkRange_toS]))
 
+theorem toVal_head (v : MVal) : __smtx_apply_head_value (toVal v) = toVal v.head := by
+  induction v with
+  | app f a ihf _ => simp only [toVal, __smtx_apply_head_value, MVal.head, ihf]
+  | sins e s =>
+    rcases toVal_set_shape (.sins e s) rfl with ⟨m, hm⟩ | hm <;> simp only [MVal.head, hm, __smtx_apply_head_value]
+  | str w => simp [toVal, MVal.head, __smtx_apply_head_value]
+  | qempty T => simp [toVal, MVal.head, __smtx_apply_head_value]
+  | qcons e s _ _ =>
+    rw [show (MVal.qcons e s).head = .qcons e s from rfl, toVal_qcons]; simp [__smtx_apply_head_value]
+  | _ => rfl
+
+omit [LogosFacts] in
+/-- Booleans are compared as Booleans. -/
+@[simp] theorem veq_bool (a b : Bool) : (MVal.bool a).veq (.bool b) = (a == b) := by
+  rw [MVal.veq.eq_def]; simp [MVal.isSet]
+
+/-- Comparing with a constructor is structural. -/
+theorem veq_dtc (v : MVal) (s : native_String) (dd : SmtDatatypeDecl) (i : Nat) :
+    v.veq (.dtc s dd i) = (v == .dtc s dd i) := by
+  rw [MVal.veq.eq_def]
+  cases v <;> simp [MVal.isSet]
+
+theorem veq_toVal (a b : MVal) : native_veq (toVal a) (toVal b) = a.veq b := by
+  by_cases h : a.veq b = true
+  · simp [native_veq, (veq_iff a b).1 h, h]
+  · have : toVal a ≠ toVal b := fun e => h ((veq_iff a b).2 e)
+    simp [native_veq, this, h]
+
+omit [LogosFacts] in
+theorem toVal_argNth : ∀ (v : MVal) (n npos : Nat) {w : MVal}, v.argNth n npos = some w →
+    __smtx_apply_arg_nth_value (toVal v) n npos = toVal w
+  | .app f a, n, k + 1, w, h => by
+    simp only [MVal.argNth] at h
+    simp only [toVal, __smtx_apply_arg_nth_value, native_ite, native_nateq]
+    by_cases e : n = k
+    · subst e; simp only [beq_self_eq_true, ↓reduceIte, Option.some.injEq] at h; subst h; simp
+    · simp only [e, decide_false, Bool.false_eq_true, ↓reduceIte]
+      have : (n == k) = false := by simpa using e
+      rw [this] at h
+      exact toVal_argNth f n k h
+  | .app _ _, _, 0, _, h => by simp [MVal.argNth] at h
+  | .bool _, _, _, _, h | .uval .., _, _, _, h | .fn .., _, _, _, h | .dtc .., _, _, _, h => by
+    simp [MVal.argNth] at h
+
+theorem eval_apply_cons_toVal (M : SmtModel) (hv a : MVal)
+    (h : (∃ s dd i, hv = .dtc s dd i) ∨ ∃ f x, hv = .app f x) (ha : a.notValue = false) :
+    __smtx_model_eval_apply M (toVal hv) (toVal a) = SmtValue.Apply (toVal hv) (toVal a) := by
+  have hnv := toVal_ne_notValue a ha
+  generalize toVal a = w at hnv ⊢
+  rcases h with ⟨_, _, _, rfl⟩ | ⟨_, _, rfl⟩ <;> cases w <;> simp_all [toVal, __smtx_model_eval_apply]
+
+/-! ### Tuples -/
+
+theorem eval_dtSel (N : SmtModel) {tail : SmtTerm} {v w : MVal} {s : native_String} {dd : SmtDatatypeDecl} {j : Nat}
+    (ht : __smtx_model_eval N tail = toVal v) (hh : v.head = .dtc s dd 0)
+    (hw : v.argNth j (__smtx_dt_num_sels (__smtx_dd_lookup s dd) 0) = some w) :
+    __smtx_model_eval N (SmtTerm.Apply (SmtTerm.DtSel s dd native_nat_zero j) tail) = toVal w := by
+  rw [__smtx_model_eval.eq_def]
+  simp only [__smtx_model_eval_dt_sel, ht, toVal_head, native_ite, hh]
+  rw [show toVal (.dtc s dd 0) = SmtValue.DtCons s dd native_nat_zero from rfl]
+  simp only [native_veq, decide_true, ↓reduceIte]
+  exact toVal_argNth _ _ _ hw
+
+theorem tupleRest_sound (N : SmtModel) {tail : SmtTerm} {v : MVal} {s : native_String} {dd : SmtDatatypeDecl}
+    {d : SmtDatatype} (hs : s = native_string_lit "@Tuple")
+    (ht : __smtx_model_eval N tail = toVal v) (hh : v.head = .dtc s dd 0) :
+    ∀ (n : Nat) (acc a b : SmtTerm) (f x r : MVal), acc = SmtTerm.Apply a b →
+      __smtx_model_eval N acc = toVal (.app f x) →
+      Model.tupleRest v (__smtx_dt_num_sels (__smtx_dd_lookup s dd) 0) n (.app f x) = some r →
+      __smtx_model_eval N (__eo_to_smt_tuple_prepend_rec dd d tail n acc) = toVal r ∧
+        (∃ a b, __eo_to_smt_tuple_prepend_rec dd d tail n acc = SmtTerm.Apply a b) ∧ ∃ f x, r = .app f x
+  | 0, acc, a, b, f, x, r, hacc, he, h => by
+    simp only [Model.tupleRest, Option.some.injEq] at h
+    subst h
+    exact ⟨he, ⟨a, b, hacc⟩, ⟨f, x, rfl⟩⟩
+  | n + 1, acc, a, b, f, x, r, hacc, he, h => by
+    simp only [Model.tupleRest, Option.bind_eq_some_iff] at h
+    obtain ⟨g, hg, y, hy, h⟩ := h
+    split at h
+    · cases h
+    rename_i hnv
+    cases h
+    obtain ⟨ih, ⟨a', b', hab⟩, f', x', rfl⟩ := tupleRest_sound N hs ht hh n acc a b f x g hacc he hg
+    refine ⟨?_, ⟨_, _, rfl⟩, ⟨_, _, rfl⟩⟩
+    have hsel := eval_dtSel N ht hh hy
+    subst hs
+    show __smtx_model_eval N (SmtTerm.Apply (__eo_to_smt_tuple_prepend_rec dd d tail n acc) _) = _
+    have e : ∀ z, __smtx_model_eval N (SmtTerm.Apply (__eo_to_smt_tuple_prepend_rec dd d tail n acc) z) =
+        __smtx_model_eval_apply N (__smtx_model_eval N (__eo_to_smt_tuple_prepend_rec dd d tail n acc))
+          (__smtx_model_eval N z) := by
+      intro z; rw [hab, __smtx_model_eval.eq_def]
+    rw [e, ih, hsel, eval_apply_cons_toVal _ _ _ (Or.inr ⟨_, _, rfl⟩) (by simpa using hnv)]
+    rfl
+
+theorem tupleV_sound (N : SmtModel) {h t : SmtTerm} {a r v : MVal}
+    (ha : __smtx_model_eval N h = toVal a) (ht : __smtx_model_eval N t = toVal r)
+    (hv : Model.tupleV (__smtx_typeof h) (__smtx_typeof t) a r = some v) :
+    __smtx_model_eval N (__eo_to_smt_tuple_prepend h (__smtx_typeof h) t) = toVal v := by
+  unfold Model.tupleV at hv
+  split at hv
+  · rename_i s s2 c hT
+    split at hv
+    · rename_i hc
+      simp only [Bool.and_eq_true, beq_iff_eq, Bool.not_eq_true', Model.tupleName] at hc
+      obtain ⟨⟨⟨⟨rfl, rfl⟩, hwf⟩, hh⟩, hnv⟩ := hc
+      unfold __eo_to_smt_tuple_prepend
+      rw [hT]
+      simp only [__eo_to_smt_tuple_prepend_of_type, native_streq, native_and, native_ite, hwf, decide_true,
+        Bool.and_self, ↓reduceIte]
+      refine (tupleRest_sound N rfl ht hh _ _ _ _ _ _ _ rfl ?_ hv).1
+      have e : ∀ s dd z, __smtx_model_eval N (SmtTerm.Apply (SmtTerm.DtCons s dd native_nat_zero) z) =
+          __smtx_model_eval_apply N (.DtCons s dd native_nat_zero) (__smtx_model_eval N z) := by
+        intro s dd z; rw [__smtx_model_eval.eq_def]; simp only; rw [__smtx_model_eval.eq_def]
+      rw [e, ha]
+      exact eval_apply_cons_toVal N (.dtc _ _ 0) a (Or.inl ⟨_, _, _, rfl⟩) hnv
+    · cases hv
+  · cases hv
+
+theorem tupleSel_sound (N : SmtModel) {t : SmtTerm} {i : Int} {v w : MVal}
+    (ht : __smtx_model_eval N t = toVal v) (h : Model.tupleSel (__smtx_typeof t) i v = some w) :
+    __smtx_model_eval N (__eo_to_smt_tuple_select (__smtx_typeof t) (SmtTerm.Numeral i) t) = toVal w := by
+  unfold Model.tupleSel at h
+  split at h
+  · rename_i s s2 d hT
+    split at h
+    · rename_i hc
+      simp only [Bool.and_eq_true, beq_iff_eq, Model.tupleName, decide_eq_true_eq] at hc
+      obtain ⟨⟨⟨rfl, rfl⟩, hi⟩, hh⟩ := hc
+      rw [hT]
+      simp only [__eo_to_smt_tuple_select, native_streq, native_and, native_ite, native_zleq, hi, decide_true,
+        Bool.and_self, ↓reduceIte]
+      exact eval_dtSel N ht hh h
+    · cases h
+  · cases h
+
 omit [LogosFacts] in
 theorem exp_toS (r : TRe) : ∀ n, __smtx_re_exp_rec n (.RegLan r.toS) = .RegLan (r.exp n).toS
   | 0 => rfl
@@ -1482,14 +1654,28 @@ theorem loopRec_toS (lo : Int) (r : TRe) : ∀ n hi,
     simp only [__smtx_re_loop_rec, loopRec_toS lo r n, __smtx_model_eval_re_exp, exp_toS, native_zplus, native_zneg,
       __smtx_model_eval_re_union, TRe.loopRec, TRe.mkUnion_toS, native_int_to_nat]
 
-omit [LogosFacts] in
 /-- **An indexed operation has its value.** -/
 theorem combineIdx_sound_in (N : SmtModel) {k : Kind} {is : Array Int} {cs : Array Node} {vs : List MVal} {r : MVal}
-    (hv : ValsIn N cs.toList vs) (h : Model.combineIdx k is.toList vs = some r) :
+    (hv : ValsIn N cs.toList vs) (h : Model.combineIdx k is.toList cs vs = some r) :
     __smtx_model_eval N (Node.app (.indexed k is) cs).toSmt = toVal r := by
   have hlen : cs.size = vs.length := by simpa using hv.length_eq
   unfold Model.combineIdx at h
   split at h
+  · -- a field of a tuple
+    rename_i i v his
+    have hs : cs.size = 1 := by simpa using hlen
+    have h1 : (cs[0]?.getD default).smtTypeF = cs[0].smtTypeF := by simp [hs]
+    rw [h1, Node.smtTypeF_eq] at h
+    rw [toList_one hs] at hv
+    obtain ⟨h0, -⟩ := List.forall₂_cons.1 hv
+    unfold Node.toSmt
+    rw [Node.toEo_app, toList_one hs]
+    simp only [Op.eoShape, his, indexedEoShape, AppShape.toEo, Arity.accepts, List.length_cons,
+      List.length_nil, List.map_cons, List.map_nil, List.foldl_cons, List.foldl_nil]
+    simp only [show ((0 + 1 == 1) = true) from rfl, ↓reduceIte]
+    rw [show ∀ x, __eo_to_smt (Term.Apply (Term.UOp1 UserOp1.tuple_select (Term.Numeral i)) x)
+      = __eo_to_smt_tuple_select (__smtx_typeof (__eo_to_smt x)) (SmtTerm.Numeral i) (__eo_to_smt x) from fun _ => rfl]
+    exact tupleSel_sound N h0 h
   · rename_i i rr his
     cases h
     have hs : cs.size = 1 := by simpa using hlen
@@ -1831,6 +2017,12 @@ theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List 
        | (rw [toSmt_bin (op := UserOp.set_member) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.set_member) x) y)
             = SmtTerm.set_member (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
           simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]; exact member_sound h)
+       | (rw [toSmt_bin (op := UserOp.tuple) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.tuple) x) y)
+            = __eo_to_smt_tuple_prepend (__eo_to_smt x) (__smtx_typeof (__eo_to_smt x)) (__eo_to_smt y) from fun _ _ => rfl]
+          have e0 : (cs[0]?.getD default).smtTypeF = cs[0].smtTypeF := by simp [hs]
+          have e1 : (cs[1]?.getD default).smtTypeF = cs[1].smtTypeF := by simp [hs]
+          rw [e0, e1, Node.smtTypeF_eq, Node.smtTypeF_eq] at h
+          exact tupleV_sound N h0 h1 h)
        | (rw [toSmt_bin (op := UserOp.divisible) rfl hs, show ∀ x y, __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.divisible) x) y)
             = SmtTerm.divisible (__eo_to_smt x) (__eo_to_smt y) from fun _ _ => rfl, __smtx_model_eval.eq_def]
           simp only; rw [← Node.toSmt, ← Node.toSmt, h0, h1]
@@ -1854,6 +2046,27 @@ theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List 
        | (rw [toSmt_un (op := UserOp.set_singleton) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.set_singleton) x)
             = SmtTerm.set_singleton (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
           simp only; rw [← Node.toSmt, h0]; exact singleton_sound h)
+       | (rw [toSmt_un (op := UserOp.set_choose) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.set_choose) x)
+            = SmtTerm.map_diff (__eo_to_smt x) (SmtTerm.set_empty (__eo_to_smt_set_elem_type (__smtx_typeof (__eo_to_smt x))))
+              from fun _ => rfl, __smtx_model_eval.eq_def]
+          simp only
+          split at h
+          · rename_i e es hel
+            split at h
+            · rename_i hc
+              simp only [Bool.and_eq_true, beq_iff_eq] at hc
+              obtain ⟨⟨⟨⟨hset, hp⟩, hes⟩, hty⟩, heT⟩ := hc
+              have hT : __smtx_typeof (__eo_to_smt cs[0].toEo) = .Set e.ty := by
+                have h1 : (cs[0]?.getD default).smtTypeF = cs[0].smtTypeF := by simp [hs]
+                rw [h1, Node.smtTypeF_eq] at hty
+                rw [← heT, hty]; rfl
+              rw [hT, ← Node.toSmt, h0]
+              simp only [__eo_to_smt_set_elem_type]
+              rw [show __smtx_model_eval N (SmtTerm.set_empty e.ty) = .Set (SmtMap.default e.ty (.Boolean false)) by
+                rw [__smtx_model_eval.eq_def]]
+              exact choose_sound N hset hel hp hes heT rfl (Option.some.inj h)
+            · cases h
+          · cases h)
        | (rw [toSmt_un (op := UserOp.str_len) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.str_len) x)
             = SmtTerm.str_len (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
           simp only; rw [← Node.toSmt, h0]
@@ -1885,6 +2098,18 @@ theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List 
           simp only; rw [← Node.toSmt, h0]
           obtain rfl := Option.some.inj h
           exact upper_sound _))
+    | (have hs : cs = #[] := by
+         have : cs.size = 0 := by simpa using hlen
+         exact Array.eq_empty_of_size_eq_zero this
+       subst hs
+       obtain rfl := Option.some.inj h
+       have e : (Node.app (.kind .TUPLE_UNIT) #[]).toSmt =
+           SmtTerm.DtCons (native_string_lit "@Tuple") (__eo_to_smt_tuple_decl (.sum .unit .null)) native_nat_zero := by
+         unfold Node.toSmt
+         rw [Node.toEo_app]
+         rfl
+       rw [e, __smtx_model_eval.eq_def]
+       rfl)
     | (have hs : cs.size = 3 := by simpa using hlen
        rw [toList_three hs] at hv
        obtain ⟨h0, hv⟩ := List.forall₂_cons.1 hv
@@ -2197,57 +2422,6 @@ theorem toSmt_selector (f x : Node) (cs : Array Node) (hcs : cs.toList = [x]) {a
   simp only [Op.eoShape, nodeEoShape, AppShape.toEo, Arity.accepts, hcs,
     List.map_cons, List.map_nil, List.length_cons, List.length_nil, beq_self_eq_true, ↓reduceIte, List.foldl, hf]
   rfl
-
-theorem toVal_head (v : MVal) : __smtx_apply_head_value (toVal v) = toVal v.head := by
-  induction v with
-  | app f a ihf _ => simp only [toVal, __smtx_apply_head_value, MVal.head, ihf]
-  | sins e s =>
-    rcases toVal_set_shape (.sins e s) rfl with ⟨m, hm⟩ | hm <;> simp only [MVal.head, hm, __smtx_apply_head_value]
-  | str w => simp [toVal, MVal.head, __smtx_apply_head_value]
-  | qempty T => simp [toVal, MVal.head, __smtx_apply_head_value]
-  | qcons e s _ _ =>
-    rw [show (MVal.qcons e s).head = .qcons e s from rfl, toVal_qcons]; simp [__smtx_apply_head_value]
-  | _ => rfl
-
-omit [LogosFacts] in
-/-- Booleans are compared as Booleans. -/
-@[simp] theorem veq_bool (a b : Bool) : (MVal.bool a).veq (.bool b) = (a == b) := by
-  rw [MVal.veq.eq_def]; simp [MVal.isSet]
-
-/-- Comparing with a constructor is structural. -/
-theorem veq_dtc (v : MVal) (s : native_String) (dd : SmtDatatypeDecl) (i : Nat) :
-    v.veq (.dtc s dd i) = (v == .dtc s dd i) := by
-  rw [MVal.veq.eq_def]
-  cases v <;> simp [MVal.isSet]
-
-theorem veq_toVal (a b : MVal) : native_veq (toVal a) (toVal b) = a.veq b := by
-  by_cases h : a.veq b = true
-  · simp [native_veq, (veq_iff a b).1 h, h]
-  · have : toVal a ≠ toVal b := fun e => h ((veq_iff a b).2 e)
-    simp [native_veq, this, h]
-
-omit [LogosFacts] in
-theorem toVal_argNth : ∀ (v : MVal) (n npos : Nat) {w : MVal}, v.argNth n npos = some w →
-    __smtx_apply_arg_nth_value (toVal v) n npos = toVal w
-  | .app f a, n, k + 1, w, h => by
-    simp only [MVal.argNth] at h
-    simp only [toVal, __smtx_apply_arg_nth_value, native_ite, native_nateq]
-    by_cases e : n = k
-    · subst e; simp only [beq_self_eq_true, ↓reduceIte, Option.some.injEq] at h; subst h; simp
-    · simp only [e, decide_false, Bool.false_eq_true, ↓reduceIte]
-      have : (n == k) = false := by simpa using e
-      rw [this] at h
-      exact toVal_argNth f n k h
-  | .app _ _, _, 0, _, h => by simp [MVal.argNth] at h
-  | .bool _, _, _, _, h | .uval .., _, _, _, h | .fn .., _, _, _, h | .dtc .., _, _, _, h => by
-    simp [MVal.argNth] at h
-
-theorem eval_apply_cons_toVal (M : SmtModel) (hv a : MVal)
-    (h : (∃ s dd i, hv = .dtc s dd i) ∨ ∃ f x, hv = .app f x) (ha : a.notValue = false) :
-    __smtx_model_eval_apply M (toVal hv) (toVal a) = SmtValue.Apply (toVal hv) (toVal a) := by
-  have hnv := toVal_ne_notValue a ha
-  generalize toVal a = w at hnv ⊢
-  rcases h with ⟨_, _, _, rfl⟩ | ⟨_, _, rfl⟩ <;> cases w <;> simp_all [toVal, __smtx_model_eval_apply]
 
 /-- **A constructor applied to arguments has its value.** -/
 theorem eval_chain (M : Model) : ∀ (vs : List MVal) (ts : List SmtTerm) (h : SmtTerm) (hv : MVal),

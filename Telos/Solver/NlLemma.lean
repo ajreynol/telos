@@ -14,10 +14,11 @@ by the CPC rule cvc5's proof uses, or by substitution and the rewriter:
 - `ARITH_NL_SIGN`, `(=> antec (r m 0))`: `arith_mult_sign`;
 - `ARITH_NL_TANGENT_PLANE`: `arith_mult_tangent`;
 - `ARITH_NL_INFER_BOUNDS_NT`: `arith_mult_pos` or `arith_mult_neg` on the
-  bound as the check states it, related to the lemma by their rewrites
+  bound as the check states it, related to the lemma by their normal forms
   (cvc5's `MACRO_SR_PRED_TRANSFORM`);
 - `ARITH_NL_FACTOR`: the skolem's definition by `skolem_intro`; the factoring
-  lemma by substituting the definition, after which it rewrites to `true`;
+  lemma by substituting the definition, after which its normal form is `true`
+  or a literal and its complement;
 - `ARITH_NL_FLATTEN_MON`, `EXTT_SIMPLIFY`: under the assumptions, congruence
   substitutes the equalities (to a fixed point), and the two sides have the
   same rewrite;
@@ -103,10 +104,6 @@ def bySubst (h a b : Node) : Option EqProof := do
   if ra != rb then none
   DtLemma.implies h (Node.eqNode a b) (.trans pa (.symm pb))
 
-/-- `F` from a proof `p : (G, true)` of `G` with the same rewrite. -/
-def byRewrite (F G : Node) (p : EqProof) : EqProof :=
-  if F == G then p else .trans (.rw F) (.trans (.symm (.rw G)) p)
-
 /-! ## Comparisons (`ArithNlCompareProofGenerator`) -/
 
 /-- `addProduct`: the factors of a side of a comparison. -/
@@ -177,8 +174,9 @@ def proveCompare (cmpLit? : Node → Option (Kind × Node × Node)) (lem : Node)
       let v ← isDiseqZero e
       deq := deq.push (v, e)
   let (ck, ca, cb) ← cmpLit? conc
-  let cprod0 := addProduct ca #[]
-  let cprod1 := addProduct cb #[]
+  -- (the factors without `to_real`, as the keys of the counts)
+  let cprod0 := (addProduct ca #[]).map stripToReal
+  let cprod1 := (addProduct cb #[]).map stripToReal
   let mut m0 : Counts := cprod0.foldl cAdd #[]
   let mut m1 : Counts := cprod1.foldl cAdd #[]
   -- cancel the common factors
@@ -208,13 +206,13 @@ def proveCompare (cmpLit? : Node → Option (Kind × Node × Node)) (lem : Node)
       let x := stripToReal e0[0]!
       let y := stripToReal e1[0]!
       let n := min (cGet m0 x) (cGet m1 y)
-      m0 := cSet m0 e0[0]! (cGet m0 e0[0]! - n)
-      m1 := cSet m1 e1[0]! (cGet m1 e1[0]! - n)
+      m0 := cSet m0 x (cGet m0 x - n)
+      m1 := cSet m1 y (cGet m1 y - n)
       eexp := eexp.push n
   for (v, c) in mcancel do m0 := cSet m0 v (cGet m0 v + c)
   for (v, c) in m0 do
     if c > 0 then
-      items := items.push (.refl v)
+      items := items.push (.refl (if isRealTerm ca then castToReal v else v))
       eexp := eexp.push c
   -- a strict conclusion: a strict premise first, the others guarded
   if ck == .GT then
@@ -260,15 +258,15 @@ def proveCompare (cmpLit? : Node → Option (Kind × Node × Node)) (lem : Node)
             let (_, j) ← StringsCore.litFact (.rw tgt)
             pure j
           else
-            let some (_, e) := deq.find? fun (v, _) => v == t || (stripToReal t != t && v == stripToReal t)
+            let some (_, e) := deq.find? fun (v, _) => v == t || stripToReal v == stripToReal t
               | throw "no disequality to zero for a premise"
             let some ie := litIdx e | throw "a literal not in the explanation"
             if e == tgt then pure ie
             else
-              -- `(not (= v 0))` as `(not (= (to_real v) 0.0))`, by their rewrites
+              -- `(not (= v 0))` as `(not (= (to_real v) 0.0))`, by `arith_poly_norm_rel`
               let .app (.kind .NOT) #[ea] := e | throw "not a disequality"
-              let (_, j) ← StringsCore.litFact (.trans (.rw (Node.eqNode t z))
-                (.trans (.symm (.rw ea)) (StringsCore.atomProof e ie)))
+              let some q := DtLemma.sameCast (Node.eqNode t z) ea | throw "not a disequality to zero"
+              let (_, j) ← StringsCore.litFact (.trans q (StringsCore.atomProof e ie))
               pure j
         let (_, g) ← StringsCore.rule .and_intro [] [i, jd]
         let _ := lit
@@ -307,15 +305,15 @@ def proveRaw (cmpLit? : Node → Option (Kind × Node × Node)) (l : Lemma) : Op
   | .bound mult simple pos, lem@(.app (.kind .IMPLIES) #[.app (.kind .AND) #[guard, _], infer]) =>
     let tmp := Node.mkNode .IMPLIES #[Node.mkNode .AND #[guard, simple], infer]
     let r := if pos then CRule.arith_mult_pos else .arith_mult_neg
-    some (byRewrite lem tmp (.valid tmp [stepArgs r [mult, simple]]))
+    let p : EqProof := .valid tmp [stepArgs r [mult, simple]]
+    if lem == tmp then some p else some (.trans (← DtLemma.sameForm lem tmp) p)
   | .split eq, lem => some (.valid lem [DT.argStep .split eq])
   | .factorDef, lem@(.app (.kind .EQUAL) #[k, _]) =>
     some (.eqTrue (.valid lem [DT.argStep .skolem_intro k]))
   | .factor _ k sum, lem =>
     let pk : EqProof := .valid (Node.eqNode k sum) [DT.argStep .skolem_intro k]
     let (p, lem') ← substProof (fun t => if t == k then (some pk, some sum) else (none, none)) lem
-    if Telos.rewrite lem' != Node.mkTrue then none
-    some (.trans p (.rw lem'))
+    some (.trans p (← DtLemma.byNormalForm lem'))
   | .flatten, .app (.kind .IMPLIES) #[h, .app (.kind .EQUAL) #[a, b]] => bySubst h a b
   | .extt, .app (.kind .IMPLIES) #[h, .app (.kind .EQUAL) #[a, b]] => bySubst h a b
   | .extt, .app (.kind .EQUAL) #[a, b] =>

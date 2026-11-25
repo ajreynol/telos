@@ -145,7 +145,7 @@ structure State where
   hasMap : Std.HashSet Key := {}
   /-- `d_par_op_map`: the operator of the applications of a parametric kind,
   by the type of their first argument (a term, the first met). -/
-  parOp : Std.HashMap (Kind × Option TypeNode) Node := {}
+  parOp : Std.HashMap (Kind × Option Key × Option TypeNode) Node := {}
   /-- `d_quants_prereg`, `d_quants` (user context). -/
   preregistered : Std.HashSet Key := {}
   registered : Std.HashSet Key := {}
@@ -317,7 +317,11 @@ with the kind and the type of its first argument), if it is one. -/
 def getMatchOperator (n : Node) : M (Option Node) := do
   let k := n.getKind
   if isParametricMatchKind k then
-    let key := (k, n.getChildren[0]?.bind (·.typeHint))
+    -- (by the operator, which for selectors and testers is not just the kind)
+    let op : Option Key := match n with
+      | .app (.node _ f) _ => some ⟨f⟩
+      | _ => none
+    let key := (k, op, n.getChildren[0]?.bind (·.typeHint))
     match (← getSt).parOp.get? key with
     | some m => return some m
     | none =>

@@ -361,7 +361,10 @@ mutual
       | none => return v
     | "DATATYPES_INST" =>
       -- a tester and `dt-inst`
-      if exp == Node.mkTrue then throw "an instantiation of a constructor term is not supported"
+      if exp == Node.mkTrue then
+        -- a constructor term and the instantiation of its skolem
+        let some p := DtLemma.prove id conc | throw "an instantiation of a constructor term is not supported"
+        return .fromTrue p
       let lem := Node.eqNode exp conc
       let v := EqProof.valid lem [DT.ruleStep .dt_inst lem]
       let some p ← proveT C exp Node.mkTrue | throw "a tester that is true"

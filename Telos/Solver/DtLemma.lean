@@ -64,6 +64,74 @@ def implies (h F : Node) (q : EqProof) : Option EqProof := do
   let cs ← underScope h F q
   some (.valid (.app (.kind .IMPLIES) #[h, F]) cs)
 
+/-! ## Relating formulas -/
+
+/-- `t` with its arithmetic equalities in normal form
+(`Arith.normalizeEquality`: the rewriter only orients them), below Boolean
+connectives, and a proof of `(t, t')` if it differs. -/
+partial def normEqualities (t : Node) : Node × Option EqProof :=
+  match t with
+  | .app (.kind .EQUAL) #[_, _] =>
+    match Arith.normalizeEquality t with
+    | some r => match Proof.cmdsOf r with
+      | some cs => (r.1, some (.valid (Node.eqNode t r.1) cs))
+      | none => (t, none)
+    | none => below t
+  | .app (.kind .NOT) _ | .app (.kind .AND) _ | .app (.kind .OR) _ | .app (.kind .IMPLIES) _
+  | .app (.kind .ITE) _ => below t
+  | _ => (t, none)
+where
+  below (t : Node) : Node × Option EqProof :=
+    match t with
+    | .app op cs =>
+      let rs := cs.map normEqualities
+      if rs.all (·.2.isNone) then (t, none)
+      else (.app op (rs.map (·.1)), some (.congAt t (rs.map (·.2))))
+    | t => (t, none)
+
+/-- `t` rewritten, with its arithmetic equalities in normal form, and a proof of
+`(t, t')`. -/
+def normalForm (t : Node) : Node × EqProof :=
+  let r := Telos.rewrite t
+  match normEqualities r with
+  | (_, none) => (r, .rw t)
+  | (r', some p) => (Telos.rewrite r', .trans (.rw t) (.trans p (.rw r')))
+
+/-- A proof of `(a, b)`, for formulas with the same rewrite or normal form. -/
+def sameForm (a b : Node) : Option EqProof :=
+  if Telos.rewrite a == Telos.rewrite b then some (.trans (.rw a) (.symm (.rw b))) else
+  let (a', pa) := normalForm a
+  let (b', pb) := normalForm b
+  if a' == b' then some (.trans pa (.symm pb)) else none
+
+/-- A proof of `(a, b)`, for an equality of integers `a` and its copy between
+reals `b` (or conversely): by `arith_poly_norm_rel`. -/
+def sameCast (a b : Node) : Option EqProof := do
+  let .app (.kind .EQUAL) #[a₁, a₂] := a | none
+  let .app (.kind .EQUAL) #[b₁, b₂] := b | none
+  let x := Arith.toReal (Node.mkNode .SUB #[a₁, a₂])
+  let y := Arith.toReal (Node.mkNode .SUB #[b₁, b₂])
+  let r ← Arith.polyNormRel a 1 1 x y b
+  some (.valid (Node.eqNode a b) (← Proof.cmdsOf r))
+
+/-- A proof of `(t, true)`, for `t` with normal form `true` or a disjunction of
+two complementary literals. -/
+def byNormalForm (t : Node) : Option EqProof :=
+  let (t', p) := normalForm t
+  if t' == Node.mkTrue then some p else
+  match t' with
+  | .app (.kind .OR) #[l, r] =>
+    let taut (x : Node) : Option EqProof :=
+      let act : EmitM Unit := do
+        let s ← push ⟨.split, [.node x], [], .step⟩
+        if t' != Node.orNode x (Node.notNode x) then
+          let _ ← push ⟨.reordering, [.node t'], [s], .step⟩
+      match act.run {} with
+      | .ok ((), st) => some (.trans p (.valid t' (toCmds st.steps)))
+      | .error _ => none
+    if r == Node.notNode l then taut l else if l == Node.notNode r then taut r else none
+  | _ => none
+
 /-- **A proof of `(lem, true)`** from no assumptions, for the lemma `lem` sent
 with the identifier `id`. -/
 def prove (id : String) (lem : Node) : Option EqProof := do
@@ -75,6 +143,12 @@ def prove (id : String) (lem : Node) : Option EqProof := do
     if k != Node.mkPurifySkolem t then none
     some (.eqTrue (.valid lem [DT.argStep .skolem_intro k]))
   | "DATATYPES_INST", .app (.kind .EQUAL) #[t, r] =>
+    -- a tuple and the tuple of its fields: `dt_inst`, with no tester
+    if let some T := DT.dtType? t then
+      if DT.isTupleType T && (DT.consApp? t).isNone then
+        if r != DT.getInstCons t T 0 then none
+        let eq := Node.eqNode Node.mkTrue lem
+        return .symm (.valid eq [DT.ruleStep .dt_inst eq])
     -- `t` is a constructor term, `r` its instantiation with its skolem
     let (T, i, as) ← DT.consApp? t
     let (T', i', ss) ← DT.consApp? r
@@ -84,6 +158,13 @@ def prove (id : String) (lem : Node) : Option EqProof := do
     let mut args : Array (Option EqProof) := #[]
     for j in [0:as.size] do
       let s := ss[j]!
+      -- (an internal fact may have the selectors of the term itself)
+      if s == DT.mkSel T i j t then
+        args := args.push (some (collapse T i j t as[j]!))
+        continue
+      if s == as[j]! then
+        args := args.push none
+        continue
       if s != DT.mkSel T i j k then none
       -- `(sⱼ k) = (sⱼ t) = aⱼ`
       args := args.push (some (.trans (.congAt s #[some pk]) (collapse T i j t as[j]!)))

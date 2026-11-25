@@ -19,8 +19,10 @@ are valid. `prove l` gives an `EqProof` of `(l.lem, true)` from no assumptions:
   `cong`, then `scope`;
 - an alpha-equivalence `(= q' q)` (`QUANTIFIERS_REDUCE_ALPHA_EQ`): `refl` when
   the two have the same CPC term (they differ in their annotations), else
-  `alpha_equiv` renaming the variables as their canonical forms pair them (not
-  certified when it takes more, such as reordering variables).
+  `alpha_equiv` of each to its canonical variables, then the order of the
+  children of commutative operators by congruence (`aci_norm`, `eq-symm`,
+  `arith_poly_norm`, ...) and that of the variables by `quant_var_reordering`
+  (`alphaProof`).
 
 The proofs are checked when they are made (`EqProof.check`, and Logos's checker
 for their CPC steps).
@@ -42,6 +44,118 @@ def underAssumption (h F : Node) (r : CRule) (args : List PArg) : Option EqProof
   match act.run {} with
   | .ok ((), st) => some (.valid (Node.mkNode .IMPLIES #[h, F]) (toCmds st.steps))
   | .error _ => none
+
+/-! ## Alpha-equivalence -/
+
+/-- `n` without the annotations of its quantifiers (its CPC term is that of `n`). -/
+partial def dropPatterns (n : Node) : Node :=
+  match n with
+  | .app op@(.kind k) cs =>
+    let cs := if (k == .FORALL || k == .EXISTS) && cs.size > 2 then cs.extract 0 2 else cs
+    .app op (cs.map dropPatterns)
+  | .app op cs => .app op (cs.map dropPatterns)
+  | n => n
+
+/-- `n` with its variables renamed, binders included (as `$rename_simul`). -/
+partial def renameVars (σ : Std.HashMap Key Node) (n : Node) : Node :=
+  match n with
+  | .boundVar .. => (σ.get? ⟨n⟩).getD n
+  | .app op cs => .app op (cs.map (renameVars σ))
+  | .skolem id cs => .skolem id (cs.map (renameVars σ))
+  | n => n
+
+/-- `n` with the children of its commutative operators sorted, for `n` with
+canonical variables. -/
+partial def sortComm (n : Node) : Node :=
+  match n with
+  | .app op cs =>
+    let ds := cs.map sortComm
+    match op with
+    | .kind k => if Quant.isCommKind k then .app op (ds.qsort (Quant.termOrder Node.lt)) else .app op ds
+    | _ => .app op ds
+  | n => n
+
+/-- The fact `(= a b)`, for `a` and `b` with the same `sortComm`, at its
+position; `none` if they are the same. -/
+partial def sameSorted (a b : Node) : EmitM (Option Nat) := do
+  if a == b then return none
+  match a, b with
+  | .app op cs, .app op' ds =>
+    if op != op' || cs.size != ds.size then throw "another operator"
+    -- the children of `a` in the order of `b`
+    let mut mid := cs
+    let comm := match op with
+      | .kind k => Quant.isCommKind k
+      | _ => false
+    if comm then
+      mid := #[]
+      let mut rest := cs.toList.map fun c => (c, sortComm c)
+      for d in ds do
+        let s := sortComm d
+        let some i := rest.findIdx? (·.2 == s) | throw "no child to pair"
+        mid := mid.push rest[i]!.1
+        rest := rest.eraseIdx i
+    let c := Node.app op mid
+    let mut chain : Array Nat := #[]
+    if mid != cs then
+      let eq := Node.eqNode a c
+      chain := chain.push (← match op with
+        | .kind .AND | .kind .OR => push ⟨.aci_norm, [.node eq], [], .step⟩
+        | .kind .EQUAL => push ⟨.eq_symm, cs.toList.map .node, [], .step⟩
+        | .kind .ADD | .kind .MULT => push ⟨.arith_poly_norm, [.node eq], [], .step⟩
+        | .kind .XOR => push ⟨.bool_xor_comm, cs.toList.map .node, [], .step⟩
+        | .kind .SET_UNION => push ⟨.sets_union_comm, cs.toList.map .node, [], .step⟩
+        | .kind .SET_INTER => push ⟨.sets_inter_comm, cs.toList.map .node, [], .step⟩
+        | _ => throw "an operator not reordered")
+    if c != b then
+      match op with
+      | .kind k =>
+        if k == .FORALL || k == .EXISTS then
+          if mid[0]! != ds[0]! then throw "other variables"
+          let some e ← sameSorted mid[1]! ds[1]! | throw "unreachable"
+          chain := chain.push (← congStep c op [e])
+        else chain := chain.push (← congAll op c mid ds)
+      | _ => chain := chain.push (← congAll op c mid ds)
+    return some (← closeChain a chain)
+  | _, _ => throw "terms that differ"
+where
+  congAll (op : Op) (c : Node) (cs ds : Array Node) : EmitM Nat := do
+    let mut eqs : List Nat := []
+    for (x, y) in cs.zip ds do
+      let p ← match ← sameSorted x y with
+        | some p => pure p
+        | none => push ⟨.refl, [.node x], [], .step⟩
+      eqs := eqs ++ [p]
+    congStep c op eqs
+
+/-- The fact `(= q' q)`, for alpha-equivalent formulas: both renamed to their
+canonical variables, then the orders of children and variables. -/
+def alphaProof (q' q : Node) : EmitM Nat := do
+  let q' := dropPatterns q'
+  let q := dropPatterns q
+  let rename (r : Node) : EmitM (Node × Nat) := do
+    let m := ((Quant.canonical Node.lt (Quant.quantBody r)).run ({}, {})).2.1
+    let σ : Std.HashMap Key Node := m.fold (fun σ k v => match k.1 with
+      | .boundVar .. => σ.insert k v
+      | _ => σ) {}
+    let vs := (σ.toList.map (·.1.1)).toArray.qsort Node.lt
+    let ts := vs.map fun v => (σ.get? ⟨v⟩).getD v
+    let p ← push ⟨.alpha_equiv, [.node r, .term (eoList (vs.toList.map Node.toEo)),
+      .term (eoList (ts.toList.map Node.toEo))], [], .step⟩
+    return (renameVars σ r, p)
+  let (a, pa) ← rename q'
+  let (b, pb) ← rename q
+  let mut chain := #[pa]
+  -- the body of `a`, as that of `b`
+  let a1 := match a with
+    | .app op cs => Node.app op (cs.set! 1 (Quant.quantBody b))
+    | a => a
+  if a1 != a then
+    if let some e ← sameSorted (Quant.quantBody a) (Quant.quantBody b) then
+      chain := chain.push (← congStep a (.kind .FORALL) [e])
+  if a1 != b then chain := chain.push (← push ⟨.quant_var_reordering, [.node (Node.eqNode a1 b)], [], .step⟩)
+  chain := chain.push (← push ⟨.symm, [], [pb], .step⟩)
+  closeChain q' chain
 
 /-- **A proof of `(l.lem, true)`** from no assumptions, for a lemma of the
 quantifiers engine. -/
@@ -91,24 +205,15 @@ def prove (l : Quant.Lemma) : Option EqProof := do
     | .error _ => none
   -- an alpha-equivalence, `(= q' q)` (`QUANTIFIERS_REDUCE_ALPHA_EQ`): `refl`
   -- when their CPC terms are the same (they differ in their annotations), else
-  -- `alpha_equiv`, renaming the variables of `q'` to those of `q` as the
-  -- canonical forms pair them
+  -- by their canonical variables (`alphaProof`)
   if l.id == "QUANTIFIERS_REDUCE_ALPHA_EQ" then
     let .app (.kind .EQUAL) #[q', q] := l.lem | none
     let cmds : List CCmd ← if q'.toEo == q.toEo then
         some [.step .refl (.cons q'.toEo .nil) .nil]
       else
-        let canon (r : Node) : Std.HashMap Key Node := ((Quant.canonical Node.lt (Quant.quantBody r)).run ({}, {})).2.1
-        let m1 := canon q'
-        let m2 := canon q
-        let inv : Std.HashMap Key Node := (Quant.quantVars q).foldl (fun m w =>
-          match m2.get? ⟨w⟩ with
-          | some c => m.insert ⟨c⟩ w
-          | none => m) {}
-        let ws ← (Quant.quantVars q').mapM fun v => (m1.get? ⟨v⟩).bind (inv.get? ⟨·⟩)
-        some [.step .alpha_equiv
-          (.cons q'.toEo (.cons (eoList ((Quant.quantVars q').toList.map Node.toEo))
-            (.cons (eoList (ws.toList.map Node.toEo)) .nil))) .nil]
+        match (alphaProof q' q).run {} with
+        | .ok (_, st) => some (toCmds st.steps)
+        | .error _ => none
     let p := EqProof.eqTrue (.valid l.lem cmds)
     if EqProof.check #[] p == some (l.lem, Node.mkTrue) then return p
     none

@@ -759,7 +759,8 @@ def operatorNode (k : Kind) (f : Node) : Node :=
 
 /-- The operator of an application of a builtin kind (cvc5's `getOperator()`,
 a `BUILTIN` node of the kind): an internal node, whose name no input has. -/
-def kindOperator (k : Kind) : Node := .var s!"\u0000op {reprStr k}" .boolean
+def kindOperator (k : Kind) (is : Array Int := #[]) : Node :=
+  .var (if is.isEmpty then s!"\u0000op {reprStr k}" else s!"\u0000op {reprStr k} {is}") .boolean
 
 /-- The operator node and the arguments of a congruence application, if `t` is
 one. -/
@@ -770,6 +771,9 @@ def congruenceApp (t : Node) : EEM (Option (Node × Array Node)) := do
     else return none
   | .app (.kind k) cs =>
     if k != .EQUAL && (← read).congruenceKinds k && cs.size > 0 then return some (kindOperator k, cs)
+    else return none
+  | .app (.indexed k is) cs =>
+    if (← read).congruenceKinds k && cs.size > 0 then return some (kindOperator k is, cs)
     else return none
   | _ => return none
 
@@ -785,7 +789,9 @@ partial def addTermInternal (t : Node) (isOperator : Bool := false) : EEM Unit :
                                isConstant := s.isConstant.set! res false }
       pure res
     | _ => do
-      match ← congruenceApp t with
+      -- (an operator is a leaf: a tester's, which has its constructor below it,
+      -- must not make the constructor a term)
+      match ← (if isOperator then pure none else congruenceApp t) with
       | some (op, cs) =>
         -- APPLY_UF is not an external operator kind: its operator is internal
         addTermInternal op true

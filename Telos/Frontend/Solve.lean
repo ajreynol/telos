@@ -198,9 +198,9 @@ def modelRejection (N : DtNames) (M : Solver.Model) (as : List Node) : Solver.Un
 /-- A term of the formulas that the engine does not reason about: it treats
 it as an uninterpreted term, so a `sat` answer rests on the model check alone,
 and a model it cannot evaluate is a gap of the solver, not a failure of its
-certificate. The kinds: tuples (no theory solves them: the datatypes solver
-has their updaters expanded only), `set.choose` (not ported), and equalities
-of regular expressions (the strings solver has memberships only). -/
+certificate. The kinds: equalities of regular expressions (the strings solver
+has memberships only), and updates of tuples (the model check does not evaluate
+them). -/
 partial def unhandledTerm? (fs : List Node) : Option Node := Id.run do
   let mut seen : Std.HashSet Key := {}
   let mut work := fs.toArray
@@ -212,11 +212,10 @@ partial def unhandledTerm? (fs : List Node) : Option Node := Id.run do
     match t with
     | .app op cs =>
       let k := op.getKind
-      if k == .TUPLE || k == .TUPLE_SELECT || k == .TUPLE_UPDATE || k == .SET_CHOOSE then return some t
+      if k == .TUPLE_UPDATE then return some t
       if k == .EQUAL && (cs[0]?.bind Node.typeHint) == some .regExp then return some t
-      if match t.typeHint with | some (.tuple ..) | some .unitTuple => true | _ => false then return some t
       work := work ++ cs
-    | t => if match t.typeHint with | some (.tuple ..) | some .unitTuple => true | _ => false then return some t
+    | _ => pure ()
   return none
 
 /-- Why a model that does not satisfy the input was found: a part of cvc5 that

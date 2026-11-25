@@ -779,7 +779,7 @@ partial def modelEval (ee : EE.EqualityEngine) (vals : Std.HashMap Nat MVal) (ar
       Model.combine k cs vs.toList
     | .app (.indexed k is) cs => do
       let vs ← cs.mapM (modelEval ee vals arith ·)
-      Model.combineIdx k is.toList vs.toList
+      Model.combineIdx k is.toList cs vs.toList
     | _ => none
 
 /-- The values of the model of the engine's state, made once. -/
@@ -880,7 +880,13 @@ def equivAtomProof (o : NodeOrder) (lem : Node) : Option EqProof := do
     | none => some (x, none)
   let (n₁, p₁) ← side lit
   let (n₂, p₂) ← side atom
-  if n₁ != n₂ then none
+  -- (an equality of integers and its copy between reals, `sameCast`)
+  if n₁ != n₂ then
+    let m ← DtLemma.sameCast n₁ n₂
+    let q := match p₁ with | some a => EqProof.trans a m | none => m
+    let q := match p₂ with | some b => EqProof.trans q (.symm b) | none => q
+    let p := EqProof.eqTrue q
+    return ← if EqProof.check #[] p == some (lem, Node.mkTrue) then some p else none
   let q ← match p₁, p₂ with
     | some a, some b => some (EqProof.trans a (.symm b))
     | some a, none => some a
@@ -1308,8 +1314,9 @@ conjunctions are split, and `true` dropped (`TheoryEngine::getExplanation`).
 With `record`, also the steps: each literal the linear solver explained, and
 each literal the equality engine explained that is one of `lits` or of a linear
 solver's explanation (the others are below an explanation of the equality
-engine, which proves them from the literals of the SAT solver). -/
-def explainAllSteps (lits : Array Node) (all : Bool) (record : Bool) :
+engine, which proves them from the literals of the SAT solver); with
+`recordAll`, those too. -/
+def explainAllSteps (lits : Array Node) (all : Bool) (record : Bool) (recordAll : Bool := false) :
     EngineM (Array Node × Array ExplainStep) := do
   let asg := (← get).assignment
   let fromSat (l : Node) : Bool :=
@@ -1375,7 +1382,7 @@ def explainAllSteps (lits : Array Node) (all : Bool) (record : Bool) :
               steps := steps.push { lit := l, exp := e, arith := true, cert := ← withArith (Arith.explainCert l) }
             todo := todo ++ e.map (·, true)
             continue
-        if record && !forced && top then steps := steps.push { lit := l, exp, arith := false }
+        if record && !forced && (top || recordAll) then steps := steps.push { lit := l, exp, arith := false }
         todo := todo ++ exp.map (·, false)
   return (out, steps)
 
@@ -1414,14 +1421,41 @@ def stepClauses (out : Array Node) (steps : Array ExplainStep) :
   let ee := (← get).ee
   -- (a literal explained by itself gives a tautology, which is not needed)
   let steps := steps.filter fun st => !st.exp.contains st.lit
-  return steps.map fun st =>
+  return steps.mapIdx fun i st =>
     if st.arith then
       ((st.exp.map negate).push st.lit, st.cert.map (.arith (st.exp.push (negate st.lit))))
     else
       let E := (out ++ ints).filter (· != st.lit)
       match EE.conflictOfPropagation ee (E.push (negate st.lit)) E st.lit (negate st.lit) with
       | .ok (A, q) => (A.map negate, some (.theory A q))
-      | .error _ => ((E.map negate).push st.lit, none)
+      | .error _ =>
+        -- from the equality engine's own explanation, if later steps explain its
+        -- literals (so that no steps explain each other)
+        let known := out ++ (steps.extract (i + 1) steps.size).map (·.lit)
+        let E' := (st.exp.flatMap fun l => match l with
+          | .app (.kind .AND) cs => cs
+          | l => #[l]).filter (· != Node.mkTrue)
+        if !E'.all known.contains then ((E.map negate).push st.lit, none) else
+        match EE.conflictOfPropagation ee (E'.push (negate st.lit)) E' st.lit (negate st.lit) with
+        | .ok (A, q) => (A.map negate, some (.theory A q))
+        | .error _ => ((E.map negate).push st.lit, none)
+
+/-- The conflict of the literals `lits`, refuted by the equality engine from the
+literals that its explanation reached (`explainAllSteps`, each recorded), as
+clauses (`BaseTag.derived`): when the literals of the SAT solver alone do not
+give the refutation `refute` (an equality of the graph was asserted for a
+literal that the engine had propagated itself). -/
+def derivedClauses (lits : Array Node) (all : Bool)
+    (refute : EE.EqualityEngine → Array Node → Except String (Array Node × EqProof)) :
+    EngineM (Option (Array Node × Array (Array Node × Option SatProof.Just))) := do
+  let (exp, steps) ← explainAllSteps lits all true true
+  match refute (← get).ee (exp ++ steps.map (·.lit)) with
+  | .ok (A, q) =>
+    let cs ← stepClauses exp steps
+    -- (only if every step has its certificate)
+    if cs.any (·.2.isNone) then return none
+    return some (exp, #[(A.map negate, some (.theory A q))] ++ cs)
+  | .error _ => return none
 
 /-! ### The CNF stream (`Config.satMode`) -/
 
@@ -1671,12 +1705,13 @@ partial def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (p
     let ee := (← get).ee
     let ints := (steps.filter (·.arith)).map (·.lit)
     let lits := exp ++ ints
-    let cert := match kind with
-      | some (.constants a b) => (EE.conflictOfConstants ee lits lits a b).toOption
-      | some (.dt cf) => (EE.conflictOfDt ee lits cf).toOption
-      | some (.sets id conf) => (EE.conflictOfSets ee lits id conf).toOption
-      | some (.strings id ps) => (EE.conflictOfStrings ee lits id ps).toOption
-      | _ => none
+    let refute (ee : EE.EqualityEngine) (lits : Array Node) : Except String (Array Node × EqProof) := match kind with
+      | some (.constants a b) => EE.conflictOfConstants ee lits lits a b
+      | some (.dt cf) => EE.conflictOfDt ee lits cf
+      | some (.sets id conf) => EE.conflictOfSets ee lits id conf
+      | some (.strings id ps) => EE.conflictOfStrings ee lits id ps
+      | _ => .error "not a conflict of the equality engine"
+    let cert := (refute ee lits).toOption
     let src ← match kind with
       | some (.arith p) =>
         if let some q := complementary exp then newSatSource (.theory (some (exp, q)))
@@ -1690,7 +1725,10 @@ partial def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (p
             | none => .arith A p
           newSatSource (.derived (#[(A.map negate, some main)] ++ (← stepClauses exp steps)))
       | _ =>
-        if ints.isEmpty then newSatSource (.theory cert)
+        let full ← if cert.isSome then pure none else derivedClauses conf true refute
+        if let some (exp', cs) := full then
+          newSatSource (if exp' == exp then .derived cs else .theory none)
+        else if ints.isEmpty then newSatSource (.theory cert)
         else
           let main := match cert with
             | some (A, q) => (A.map negate, some (.theory A q))
@@ -2189,7 +2227,10 @@ def carePairsOf {κ : Type} [BEq κ] [Inhabited κ] (T : Theory) (terms : Array 
   let mut groups : Array (κ × Array (Array Node × Node)) := #[]
   for app in terms do
     let (some k, .app _ cs) := (key app, app) | continue
-    if !(cs.any fun c => (eeTriggerRep? ee c tag).isSome) then continue
+    -- (`isCareArg` of sets: an element that is a set, and the set of a
+    -- `set.choose`, shared or not)
+    let setArg := T == .THEORY_SETS && (match cs[0]?.bind Node.typeHint with | some (.set _) => true | _ => false)
+    if !setArg && !(cs.any fun c => (eeTriggerRep? ee c tag).isSome) then continue
     let reps := cs.map (eeRep ee)
     match groups.findIdx? (·.1 == k) with
     | some i =>
@@ -2215,7 +2256,8 @@ def carePairsOf {κ : Type} [BEq κ] [Inhabited κ] (T : Theory) (terms : Array 
           let (x, y) := (xs[k]!, ys[k]!)
           if let (some xr, some yr) := (eeTriggerRep? ee x tag, eeTriggerRep? ee y tag) then
             if !(← eeAreEqual x y) then out := out.push (xr, yr)
-          -- (`SETS_CG_SPLIT`: elements that are sets, shared or not)
+          -- (`SETS_CG_SPLIT`: elements that are sets, and the sets of
+          -- `set.choose`s, shared or not)
           else if T == .THEORY_SETS && k == 0 && (match x.typeHint with | some (.set _) => true | _ => false) then
             if !(← eeAreEqual x y) then out := out.push (x, y)
   return out
@@ -2239,10 +2281,13 @@ def dtCarePairs : EngineM (Array (Node × Node)) := do
     match ee.nodes[i] with
     | t@(.app (.node .APPLY_CONSTRUCTOR _) cs) => if cs.size > 0 then terms := terms.push t
     | t@(.app (.node .APPLY_SELECTOR _) _) => terms := terms.push t
+    | t@(.app (.kind .TUPLE) _) | t@(.app (.indexed .TUPLE_SELECT _) _) => terms := terms.push t
     | _ => pure ()
   carePairsOf .THEORY_DATATYPES terms fun
-    | t@(.app (.node .APPLY_CONSTRUCTOR f) _) => some (f, t.typeHint)
-    | .app (.node .APPLY_SELECTOR f) #[x] => some (f, x.typeHint)
+    | t@(.app (.node .APPLY_CONSTRUCTOR f) _) => some (Op.node .APPLY_CONSTRUCTOR f, t.typeHint)
+    | .app (.node .APPLY_SELECTOR f) #[x] => some (Op.node .APPLY_SELECTOR f, x.typeHint)
+    | t@(.app op@(.kind .TUPLE) _) => some (op, t.typeHint)
+    | .app op@(.indexed .TUPLE_SELECT _) #[x] => some (op, x.typeHint)
     | _ => none
 
 /-- cvc5's node order, for the care pairs (`EE.ageLt`, with the order of the
@@ -2255,6 +2300,7 @@ def setsCarePairs : EngineM (Array (Node × Node)) := do
   carePairsOf .THEORY_SETS (← get).ee.sets.check.careTerms (fun
     | .app (.kind .SET_MEMBER) #[_, s] => some (Kind.SET_MEMBER, s.typeHint)
     | t@(.app (.kind .SET_SINGLETON) _) => some (Kind.SET_SINGLETON, t.typeHint)
+    | t@(.app (.kind .SET_CHOOSE) _) => some (Kind.SET_CHOOSE, t.typeHint)
     | _ => none) fun t => t.getKind == .SET_MEMBER
 
 /-- `TheoryStrings::computeCareGraph`: its function terms, by operator. -/

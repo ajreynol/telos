@@ -112,6 +112,10 @@ def satExplainQuiet (lit : Node) : EngineM (Array Node × BaseTag) := do
   let r := EE.conflictOfPropagation s.ee (lits.push (negate lit)) lits lit (negate lit)
   let cert := r.toOption.map
     fun (A, q) => SatProof.Just.theory A q
+  if cert.isNone && c.eeSolver then
+    if let some (exp', cs) ← derivedClauses #[lit] false
+        (fun ee lits => EE.conflictOfPropagation ee (lits.push (negate lit)) lits lit (negate lit)) then
+      if exp' == exp then return (exp, .derived cs)
   if ariths.isEmpty then return (exp, .theory cert)
   let main := match cert with
     | some j@(.theory A _) => (A.map negate, some j)

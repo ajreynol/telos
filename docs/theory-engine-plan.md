@@ -1478,7 +1478,9 @@ Not yet:
 `TheorySetsPrivate` with its `SolverState`, `TermRegistry` and inference manager,
 in safe mode: no cardinality (`setsCardExp`), no relations (`relsExp`), no
 universe or complement (`setsExp`), no proxy lemmas. `set.map`, `set.filter`,
-`set.fold` and `set.choose` are not ported.
+`set.fold` is not ported. `set.choose` is (`SETS_CHOOSE_MEMBER`, congruence and
+the care graph); the model check evaluates it on singletons of Booleans and
+numbers only, as Logos leaves the element chosen from a larger set open.
 
 ### Design
 
