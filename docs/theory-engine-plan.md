@@ -1580,7 +1580,6 @@ preprocessed equalities (the node order of preprocessing). Recorded tests:
 
 ### To do
 
-- The care graph for sets of sets (`SETS_CG_SPLIT`), `set.choose`.
 - The remaining event differences.
 
 ## Stage 9: strings (in progress: stage 1, word equations with lengths)
@@ -1948,11 +1947,26 @@ the solving of arithmetic literals for a usable monomial
 variables of miniscoping (telos keeps the names, so where cvc5 has two
 alpha-equivalent formulas, telos has one, and no alpha lemma).
 
+Step 3 (2026-11-24): counterexample-guided instantiation,
+`Telos/Solver/Theory/QuantCegqi.lean` (`InstStrategyCegqi`, `CegInstantiator`,
+the instantiators of arithmetic and datatypes). With full-strict proofs
+(`cegqi-midpoint`, no infinities) no virtual terms are made, so they are not
+ported. Counterexample lemmas `(or (not G) (not body[e]))` have no certificate,
+and no refutation needs one: `G` occurs elsewhere only negated, so nothing
+resolves a clause derived from them. `G` and `e` are internal constants (`@ce.q`,
+`@ic.q.i`); the decision strategies of the `G`s come before the decision
+engine's. Fidelity notes: monomial sums are telos's polynomials, as its sums keep
+`to_real` on integer leaves; the phase of `G` is not required (it is always
+decided first, true); the events have not been compared with cvc5's. Fixed with
+it: a skolem is a leaf for `hasBoundVar`. On the test bed: the `unsat`s are
+certified (35 of 35 CPC proofs accepted by Ethos); a `sat` with a universal
+formula over an infinite domain stays `cert-sat/not-evaluated`.
+
 Steps, each with its fuzz generator, events and certificates:
 1. the engine's skeleton, skolemization, the instantiation manager, the term
    database, conflict-based instantiation (UF);
 2. E-matching;
-3. CEGQI for linear arithmetic, then datatypes;
+3. CEGQI for linear arithmetic, then datatypes (done, 2026-11-24);
 4. alpha-equivalence and the remaining preprocessing.
 
 ## Stage 11: nonlinear arithmetic (in progress: milestone 1)

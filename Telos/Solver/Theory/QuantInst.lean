@@ -15,6 +15,18 @@ instance is entailed (`inst-no-entail`) or recorded, and the lemma
 
 namespace Telos.Solver.Quant
 
+/-- The instantiator of a formula (`CegInstantiator`, `QuantCegqi.lean`), as
+registered with its counterexample lemma: its number, its instantiation
+constants, the variables to solve for, in order, the atoms of the lemma, and
+whether it has nested quantifiers. -/
+structure CegInst where
+  id : Nat
+  inputVars : Array Node := #[]
+  vars : Array Node := #[]
+  ceAtoms : Std.HashSet Key := {}
+  nested : Bool := false
+  deriving Inhabited
+
 /-- The quantifiers engine's state. -/
 structure Eng where
   st : State := {}
@@ -27,6 +39,24 @@ structure Eng where
   em : EmData := {}
   /-- Alpha-equivalence (`QuantAlpha.lean`). -/
   alpha : AlphaDb := {}
+  /-- Counterexample-guided instantiation (`QuantCegqi.lean`, user context): the
+  formulas it handles (`d_do_cbqi`), numbered; their instantiators, and those
+  nested in each; the counterexample literals, in the order their decision
+  strategies are registered; the Boolean constants whose values it reads, and
+  the SAT solver's values of them. -/
+  doCbqi : Std.HashMap Key Bool := {}
+  cegIds : Std.HashMap Key Nat := {}
+  cegQuants : Array Node := #[]
+  cegInsts : Std.HashMap Key CegInst := {}
+  cegChildren : Std.HashMap Key (Array Node) := {}
+  ceLits : Array Node := #[]
+  ceBools : Array Node := #[]
+  ceVals : Std.HashMap Key Bool := {}
+  /-- The round's: the inactive formulas (`isQuantifierActive`), the active
+  innermost ones, and whether an instantiator found no instance. -/
+  inactiveQuants : Std.HashSet Key := {}
+  cegActive : Array Node := #[]
+  cegIncomplete : Bool := false
   /-- The nodes made while solving, numbered (the equality engine's
   `freshIds`, given and taken back by each call). -/
   fresh : Std.HashMap Key Nat := {}
@@ -79,7 +109,9 @@ or its lemma was sent. -/
 def addInstantiation (rd : Round) (q : Node) (terms : Array Node) (id : String) : EM (Bool × Round) := do
   let vs := quantVars q
   let subs : Subs := (vs.zip terms).foldl (fun m (v, t) => m.insert ⟨v⟩ t) {}
-  let (ent, rd) ← runM rd (isEntailed (quantBody q) subs false true)
+  -- (`inst-no-entail`)
+  let (ent, rd) ← if (← ectx).pureArith then pure (false, rd)
+    else runM rd (isEntailed (quantBody q) subs false true)
   if ent then return (false, rd)
   let key : Key := ⟨Node.mkNode .AND (#[q] ++ terms)⟩
   if (← get).st.insts.contains key then return (false, rd)
@@ -121,7 +153,7 @@ def markRelevant (q : Node) : EM Unit :=
     { e with st := { e.st with rlvVec := (e.st.rlvVec.filter (· != q)).push q, lastRlv := some q } }
 
 /-- The asserted formulas in the order of relevance (`reset_round`). -/
-def orderedAsserted : EM (Array Node) := do
+def allOrderedAsserted : EM (Array Node) := do
   let st := (← get).st
   if st.rlvVec.isEmpty then return st.asserted
   let mut rest := st.asserted
@@ -132,5 +164,12 @@ def orderedAsserted : EM (Array Node) := do
       out := out.push q
       rest := rest.erase q
   return out ++ st.asserted.filter fun q => !out.contains q
+
+/-- The asserted formulas, in the order of relevance, that are active and that
+counterexample-guided instantiation does not own (`hasOwnership`). -/
+def orderedAsserted : EM (Array Node) := do
+  let en ← get
+  return (← allOrderedAsserted).filter fun q =>
+    !en.inactiveQuants.contains ⟨q⟩ && (en.doCbqi.get? ⟨q⟩) != some true
 
 end Telos.Solver.Quant

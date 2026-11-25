@@ -236,8 +236,25 @@ def toEffort : Sat.Effort → Effort
   | .standard => .standard
   | .full => .full
 
+/-- Give the quantifiers engine the SAT solver's values of the Boolean constants
+that it reads. -/
+def noteCeVals : PropM Unit := do
+  let p ← getThe PropState
+  let bs := p.eng.quant.ceBools
+  if bs.isEmpty then return
+  let vals : Std.HashMap Key Bool := bs.foldl (fun m g =>
+    match Cnf.getLiteral? p.eng.cnf g with
+    | some l => match p.sat.value l with
+      | .tt => m.insert ⟨g⟩ true
+      | .ff => m.insert ⟨g⟩ false
+      | _ => m
+    | none => m) {}
+  onEngine (modify fun s => { s with quant := { s.quant with ceVals := vals } })
+
 instance : TheoryProxy PropM where
-  theoryCheck e := onEngineF (satCheck (toEffort e))
+  theoryCheck e := do
+    if e matches .full then noteCeVals
+    onEngineF (satCheck (toEffort e))
   theoryPropagate := do
     let lits ← onEngine (modifyGet fun s => (s.propagated, { s with propagated := #[] }))
     lits.mapM satLit
@@ -262,8 +279,13 @@ instance : TheoryProxy PropM where
     modifyThe PropState fun p => { p with dec := p.dec.pop }
   notifyBacktrack := onEngineF satBacktrack
   getNextDecisionRequest := do
+    -- the decision strategies of the counterexample literals (`DecisionManager`),
+    -- then the decision engine's
+    let p ← getThe PropState
+    for g in p.eng.quant.ceLits do
+      if let some l := Cnf.getLiteral? p.eng.cnf g then
+        if p.sat.value l == .undef then return (l, true, false)
     if (← read).decision == .internal then return (Lit.undef, false, false)
-    -- (no theory has decision strategies: the decision engine's)
     let (d, stop) ← onDecision Decision.getNext
     match d with
     | some (atom, v) =>
@@ -501,21 +523,6 @@ def diagnoseCert (p : PropState) (inputs : Array Node) (cert : SatProof.Cert) : 
       .missingProof labels.toList
     else .certBroken why
 
-/-- A quantified literal with a variable of a type cvc5's counterexample-guided
-instantiation handles (integers, reals, datatypes). -/
-def cegqiApplies (lit : Node) : Bool :=
-  if lit.isBoundedForall then false else
-  let q := match lit with
-    | .app (.kind .NOT) #[a] => a
-    | a => a
-  match q with
-  | .app (.kind k) cs =>
-    (k == .FORALL || k == .EXISTS) && (cs[0]?.map Node.getChildren |>.getD #[]).any fun v =>
-      match v.typeHint with
-      | some .integer | some .real | some (.datatype ..) => true
-      | _ => false
-  | _ => false
-
 /-- The arithmetic solver's values (`collectModelValues`) of the terms of its
 facts and of its shared terms (a variable of an atom that is not asserted to it
 may belong to another theory's facts only), with the nonlinear extension's
@@ -579,12 +586,6 @@ def runSat (c : Config) (formulas : List Node) : Result :=
       else if e.modelUnsoundAt.isSome then
         match e.modelUnsoundWhy with
         | some (T, id) => match IncompleteId.ofName? id with
-          | some .QUANTIFIERS =>
-            -- cvc5 instantiates quantifiers over arithmetic and datatypes by
-            -- counterexample-guided instantiation, not ported (Stage 10, step 3)
-            if e.quantFacts.any cegqiApplies then
-              some (.notPorted "quantifiers: counterexample-guided instantiation (CEGQI) of quantifiers over arithmetic or datatypes")
-            else some (.intentional T .QUANTIFIERS)
           | some i => some (.intentional T i)
           | none => some (.notPorted s!"{T} set the model unsound ({id}), which cvc5 does not")
         | none => some (.internal "the model is unsound, and no theory said so")

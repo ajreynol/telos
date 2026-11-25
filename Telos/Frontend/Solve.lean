@@ -266,6 +266,7 @@ def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Boo
   let cfg : Solver.Config := { theories, inert := Solver.inertTheories theories (out ++ as), termBased := opts.termBased, eeEvents, triggerEvents, events, wantProof, cvc5Order,
                                 arith := { Solver.arithOptionsOf (sc.logic.getD "ALL") with order := engOrder },
                                 order := engOrder,
+                                pureArith := Solver.pureArithOf (sc.logic.getD "ALL"),
                                 decision := Solver.decisionModeOf (sc.logic.getD "ALL") (u.decision <|> sc.decision),
                                 declOrder := (sc.symbols.flatMap (·.names)).zipIdx.foldl
                                   (fun m (x, i) => m.insert x i) {} }

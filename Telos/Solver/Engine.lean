@@ -91,6 +91,12 @@ def arithOptionsOf (logic : String) : Arith.Options :=
   | .ok l => let l := l.widen; Arith.Options.ofLogic l.pureArith l.quantified l.linear l.integers l.difference l.reals
   | .error _ => Arith.Options.ofLogic false true false true false
 
+/-- The logic is pure arithmetic (after `widenLogic`). -/
+def pureArithOf (logic : String) : Bool :=
+  match Preprocess.Logic.parse logic with
+  | .ok l => l.widen.pureArith
+  | .error _ => false
+
 /-- `SetDefaults::setDefaultDecisionMode`: justification for `ALL`,
 quantifiers, strings, QF_LRA, the logics of bit-vectors with UF or arrays,
 QF_BV, and QF_AUFLIA; stop-only for QF_LRA and QF_AUFLIA; internal (MiniSat's
@@ -152,6 +158,8 @@ structure Config where
   satMode : Bool := false
   /-- The linear solver's options that the logic decides. -/
   arith : Arith.Options := {}
+  /-- The logic is pure arithmetic (`LogicInfo::isPure(THEORY_ARITH)`). -/
+  pureArith : Bool := false
   /-- The SAT solver's decision mode. -/
   decision : Decision.Mode := .internal
   /-- The declared constants, by their order of declaration (cvc5's node ids). -/
@@ -788,84 +796,6 @@ def modelThunk (s : State) : Thunk (Std.HashMap Nat MVal × Std.HashMap Key Rat)
     let arith := Arith.modelValues s.arith
     (classValues s.ee arith, arith.foldl (fun m (t, q) => m.insert ⟨t⟩ q) {})
 
-/-- What the quantifiers engine sees of the rest: the equality engine (its
-terms, representatives, (dis)equalities and classes, in its order), cvc5's
-node order, the facts asserted to the theories, and the rewriter. -/
-def quantCtx : EngineM Quant.Ctx := do
-  let s ← get
-  let c ← read
-  let ee := s.ee
-  let ectx ← eeCtx
-  let rep (t : Node) : Node := match ee.nodeIds.get? ⟨t⟩ with
-    | some i => ee.nodes[EE.find ee i]!
-    | none => t
-  let areEqual (a b : Node) : Bool := a == b || match ee.nodeIds.get? ⟨a⟩, ee.nodeIds.get? ⟨b⟩ with
-    | some i, some j => EE.find ee i == EE.find ee j
-    | _, _ => false
-  let areDisequal (a b : Node) : Bool := (((EE.areDisequal a b false).run ectx).run ee).1
-  let mut reps : Array Node := #[]
-  for i in [0:ee.nodes.size] do
-    if !ee.isInternal[i]! && EE.find ee i == i then reps := reps.push ee.nodes[i]!
-  let ord := { c.order with fresh := ee.freshIds }
-  let members (r : Node) : Array Node := Id.run do
-    let some i := ee.nodeIds.get? ⟨r⟩ | return #[r]
-    let mut out := #[]
-    let mut j := i
-    for _ in [0:ee.nodes.size] do
-      if !ee.isInternal[j]! then out := out.push ee.nodes[j]!
-      j := ee.enodes[j]!.next
-      if j == i then break
-    return out
-  let model := modelThunk s
-  let value (t : Node) : Option MVal := modelEval ee model.get.1 model.get.2 t
-  return { modelInt := fun t => match value t with
-             | some (.int i) => some i
-             | _ => none
-           modelBool := fun t => match value t with
-             | some (.bool b) => some b
-             | _ => none
-           hasTerm := fun t => ee.nodeIds.contains ⟨t⟩, rep, areEqual, areDisequal, members,
-           order := c.order, rewriteAt := fun o t => Telos.rewrite t o,
-           lt := fun a b => match ord.id? a, ord.id? b with
-             | some i, some j => i < j
-             | _, _ => EE.ageLt ee.nodeIds a b c.declOrder c.order,
-           reps,
-           facts := s.ufFacts ++ s.arithFacts ++ s.dtFacts ++ s.setsFacts ++ s.stringsFacts ++ s.quantFacts,
-           rewrite := fun t => Telos.rewrite t ord }
-
-/-- Run an operation of the quantifiers engine, and act on its outputs: its
-skolems, and its lemmas, as a theory's (`TheoryEngine::lemma`); a model that
-is unsound (`setModelUnsound`), and a check asked for (`markUsed`). -/
-def quantRun (x : Quant.EM α) (flush : EngineM Unit := pure ()) : EngineM α := do
-  let ctx ← quantCtx
-  let q ← modifyGet fun s => (s.quant, { s with quant := {} })
-  let q := { q with fresh := (← get).ee.freshIds }
-  let ((a, q), out) := ((x.run q).run {}).run ctx
-  modify fun s => { s with quant := { q with fresh := {} }, ee := { s.ee with freshIds := q.fresh } }
-  processNotes (out.skolems.map EE.Note.skolem)
-  -- the triggers made (`-o trigger`), printed when made, before the lemmas
-  -- pending (`doPending`)
-  if (← read).triggerEvents then
-    for (_, t) in out.triggers do
-      match t with
-      | .trigger q ns tag u => emit (.trigger q ns tag u)
-      | .noTrigger q => emit (.noTrigger q)
-  -- each lemma, then its atoms preregistered (`TheoryEngine::lemma`)
-  for l in out.lemmas do
-    emit (.lemma (← level) .THEORY_QUANTIFIERS l.id l.lem)
-    if (← read).satMode then
-      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (l.lem, false, some .quant, Thunk.mk fun _ => QuantLemma.prove l),
-                               outputUsed := true, lemmasAdded := true }
-    else
-      modify fun s => { s with lemmaSent := true, lemmaQueue := s.lemmaQueue.push l.lem, lemmasAdded := true }
-    flush
-  if out.modelUnsound then
-    let l ← level
-    emit (.modelUnsound l .THEORY_QUANTIFIERS "QUANTIFIERS")
-    modify fun s => { s with modelUnsoundAt := s.modelUnsoundAt.orElse fun _ => some l }
-  if out.markUsed then modify fun s => { s with outputUsed := true }
-  return a
-
 /-- The proof of an `ARITH_EQUIV_ATOM` lemma `(= lit atom)`, two equalities
 with the same normal form (`rewriter::normalizeEquality`, certified by
 `arith_poly_norm_rel`; cvc5's `mkArithPolyNormRel`): each side's rewrite to
@@ -1158,6 +1088,25 @@ partial def hasTermFormula (n : Node) (inTerm : Bool := false) : Bool :=
   (!n.getKind.isQuantifier &&
     n.getChildren.any (hasTermFormula · (inTerm || Preprocess.hasNestedTermChildren n)))
 
+/-- Whether `n` has an operator that the theory of arithmetic's `ppRewrite`
+eliminates, not below quantifiers. -/
+def hasArithOperator (n : Node) : Bool := Id.run do
+  let mut seen : Std.HashSet Key := {}
+  let mut work := #[n]
+  while !work.isEmpty do
+    let cur := work.back!
+    work := work.pop
+    if seen.contains ⟨cur⟩ then continue
+    seen := seen.insert ⟨cur⟩
+    let k := cur.getKind
+    if k == .FORALL || k == .EXISTS then continue
+    if k == .INTS_DIVISION || k == .INTS_DIVISION_TOTAL || k == .INTS_MODULUS || k == .INTS_MODULUS_TOTAL ||
+        k == .DIVISION || k == .DIVISION_TOTAL || k == .ABS || k == .TO_INTEGER || k == .IS_INTEGER then return true
+    match cur with
+    | .app _ cs => work := work ++ cs
+    | _ => pure ()
+  return false
+
 /-- `TheoryPreprocessor::preprocessLemma`: the lemma with its term formulas
 removed (and the theories' `ppRewrite`), certified; the lemmas of the
 skolems it introduced, each with a proof of `(F, true)` (`skolem_intro`,
@@ -1171,6 +1120,114 @@ def lemmaPreprocess (lem : Node) : EngineM (Node × Array (Node × Option EqProo
   let skl := lems.map fun l =>
     (l.1, (Proof.cmdsOf l).map fun cs => EqProof.symm (.valid (Node.eqNode Node.mkTrue l.1) cs))
   return (r.1, skl, if r.1 == lem then none else Proof.cmdsOf r)
+
+/-- The constant of a value, of a type. -/
+partial def constOfValue (T : TypeNode) (v : MVal) : Option Node :=
+  match T, v with
+  | .boolean, .bool b => some (Node.mkBool b)
+  | .integer, .int i => some (.const (.integer i))
+  | .real, .rat q => some (.const (.rational q))
+  | .string, .str w => some (.const (.string w))
+  | T, v => do
+    let .dtc _ _ i := v.head | none
+    let fs ← DT.fieldTypes? T i
+    let rec args (v : MVal) (acc : List MVal) : List MVal := match v with
+      | .app f a => args f (a :: acc)
+      | _ => acc
+    let vs := args v []
+    if vs.length != fs.length then none
+    let cs ← (fs.zip vs).mapM fun (F, w) => constOfValue F w
+    some (DT.mkCons T i cs.toArray)
+
+/-- What the quantifiers engine sees of the rest: the equality engine (its
+terms, representatives, (dis)equalities and classes, in its order), cvc5's
+node order, the facts asserted to the theories, and the rewriter. -/
+def quantCtx : EngineM Quant.Ctx := do
+  let s ← get
+  let c ← read
+  let ee := s.ee
+  let ectx ← eeCtx
+  let rep (t : Node) : Node := match ee.nodeIds.get? ⟨t⟩ with
+    | some i => ee.nodes[EE.find ee i]!
+    | none => t
+  let areEqual (a b : Node) : Bool := a == b || match ee.nodeIds.get? ⟨a⟩, ee.nodeIds.get? ⟨b⟩ with
+    | some i, some j => EE.find ee i == EE.find ee j
+    | _, _ => false
+  let areDisequal (a b : Node) : Bool := (((EE.areDisequal a b false).run ectx).run ee).1
+  let mut reps : Array Node := #[]
+  for i in [0:ee.nodes.size] do
+    if !ee.isInternal[i]! && EE.find ee i == i then reps := reps.push ee.nodes[i]!
+  let ord := { c.order with fresh := ee.freshIds }
+  let members (r : Node) : Array Node := Id.run do
+    let some i := ee.nodeIds.get? ⟨r⟩ | return #[r]
+    let mut out := #[]
+    let mut j := i
+    for _ in [0:ee.nodes.size] do
+      if !ee.isInternal[j]! then out := out.push ee.nodes[j]!
+      j := ee.enodes[j]!.next
+      if j == i then break
+    return out
+  let model := modelThunk s
+  let value (t : Node) : Option MVal := modelEval ee model.get.1 model.get.2 t
+  return { modelInt := fun t => match value t with
+             | some (.int i) => some i
+             | _ => none
+           modelBool := fun t => match value t with
+             | some (.bool b) => some b
+             | _ => none
+           modelConst := fun t => do constOfValue (← t.typeHint) (← value t)
+           factsOf := fun
+             | .THEORY_ARITH => s.arithFacts
+             | .THEORY_UF => s.ufFacts
+             | .THEORY_DATATYPES => s.dtFacts
+             | _ => #[]
+           preprocess := fun n =>
+             if !(hasTermFormula n || hasArithOperator n) then #[n] else
+             let ((f, sk, _), _) := ((lemmaPreprocess n).run c).run s
+             #[f] ++ sk.map (·.1)
+           cegqi := c.satMode && (c.theories.contains .THEORY_ARITH || c.theories.contains .THEORY_DATATYPES)
+           pureArith := c.pureArith
+           hasTerm := fun t => ee.nodeIds.contains ⟨t⟩, rep, areEqual, areDisequal, members,
+           order := c.order, rewriteAt := fun o t => Telos.rewrite t o,
+           lt := fun a b => match ord.id? a, ord.id? b with
+             | some i, some j => i < j
+             | _, _ => EE.ageLt ee.nodeIds a b c.declOrder c.order,
+           reps,
+           facts := s.ufFacts ++ s.arithFacts ++ s.dtFacts ++ s.setsFacts ++ s.stringsFacts ++ s.quantFacts,
+           rewrite := fun t => Telos.rewrite t ord }
+
+/-- Run an operation of the quantifiers engine, and act on its outputs: its
+skolems, and its lemmas, as a theory's (`TheoryEngine::lemma`); a model that
+is unsound (`setModelUnsound`), and a check asked for (`markUsed`). -/
+def quantRun (x : Quant.EM α) (flush : EngineM Unit := pure ()) : EngineM α := do
+  let ctx ← quantCtx
+  let q ← modifyGet fun s => (s.quant, { s with quant := {} })
+  let q := { q with fresh := (← get).ee.freshIds }
+  let ((a, q), out) := ((x.run q).run {}).run ctx
+  modify fun s => { s with quant := { q with fresh := {} }, ee := { s.ee with freshIds := q.fresh } }
+  processNotes (out.skolems.map EE.Note.skolem)
+  -- the triggers made (`-o trigger`), printed when made, before the lemmas
+  -- pending (`doPending`)
+  if (← read).triggerEvents then
+    for (_, t) in out.triggers do
+      match t with
+      | .trigger q ns tag u => emit (.trigger q ns tag u)
+      | .noTrigger q => emit (.noTrigger q)
+  -- each lemma, then its atoms preregistered (`TheoryEngine::lemma`)
+  for l in out.lemmas do
+    emit (.lemma (← level) .THEORY_QUANTIFIERS l.id l.lem)
+    if (← read).satMode then
+      modify fun s => { s with satLemmaQueue := s.satLemmaQueue.push (l.lem, false, some .quant, Thunk.mk fun _ => QuantLemma.prove l),
+                               outputUsed := true, lemmasAdded := true }
+    else
+      modify fun s => { s with lemmaSent := true, lemmaQueue := s.lemmaQueue.push l.lem, lemmasAdded := true }
+    flush
+  if out.modelUnsound then
+    let l ← level
+    emit (.modelUnsound l .THEORY_QUANTIFIERS "QUANTIFIERS")
+    modify fun s => { s with modelUnsoundAt := s.modelUnsoundAt.orElse fun _ => some l }
+  if out.markUsed then modify fun s => { s with outputUsed := true }
+  return a
 
 /-- `SkolemDefManager::notifyAsserted`: the definitions of the skolems of an
 asserted literal that were not active, now active. -/
@@ -1749,7 +1806,9 @@ partial def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (p
     -- `TheoryPreprocessor::preprocessLemma`, when the lemma has term formulas
     -- (not for arithmetic's, which have none)
     let isArith := match kind with | some (.arith _) => true | _ => false
-    let (lemF, skLems, tppCmds) ← if !isArith && hasTermFormula lem then lemmaPreprocess lem
+    -- (the instances of quantifiers may have arithmetic operators to eliminate)
+    let isQuant := match kind with | some .quant => true | _ => false
+    let (lemF, skLems, tppCmds) ← if !isArith && (hasTermFormula lem || (isQuant && hasArithOperator lem)) then lemmaPreprocess lem
       else pure (lem, #[], none)
     -- the formula's proof, from the lemma's
     let src ← match kind with

@@ -1,5 +1,6 @@
 import Telos.Rewriter.Rewrite
 import Telos.Solver.Theory.QuantEMatching
+import Telos.Solver.Theory.QuantCegqi
 import Telos.Solver.Event
 
 /-!
@@ -47,6 +48,7 @@ def preRegister (q : Node) : EM Unit := do
   modify fun e => { e with st := { e.st with preregistered := e.st.preregistered.insert ⟨q⟩ } }
   if ← reduceQuantifier q then return
   registerQuantifier q
+  cegqiPreRegister q
 
 /-- The skolems of `q` (`getSkolemConstants`). -/
 def skolemsOf (q : Node) : Array Node :=
@@ -248,7 +250,13 @@ whether every asserted formula is one of them, completely instantiated. -/
 def modelEngineCheck (rd : Round) : EM (Bool × Round) := do
   let mut rd := rd
   let mut complete := true
-  for q in ← orderedAsserted do
+  let en ← get
+  for q in ← allOrderedAsserted do
+    if en.inactiveQuants.contains ⟨q⟩ then continue
+    -- (complete for those it owns, if each got an instance)
+    if en.doCbqi.get? ⟨q⟩ == some true then
+      if en.cegIncomplete then complete := false
+      continue
     if !q.isBoundedForall then
       complete := false
       continue
@@ -267,10 +275,11 @@ def check (e : Effort) (needCheck : Bool) (allTerms : Array Node) : EM Unit := d
   let mut unsound := false
   let anyAsserted := !st.asserted.isEmpty
   -- the modules that need a check: conflict-based instantiation, at full effort
-  let qcfNeeds := anyAsserted && !st.conflictInst && e == .full
+  let c ← ectx
+  let qcfNeeds := anyAsserted && !st.conflictInst && e == .full && !c.pureArith
   -- E-matching (`getInstWhenNeedsCheck`, `inst-when=full-last-call`, with
   -- `d_instWhenPhase` 3)
-  let emNeeds := anyAsserted && ((e == .full && st.ierCounter % 3 != 0) || e == .lastCall)
+  let emNeeds := anyAsserted && ((e == .full && st.ierCounter % 3 != 0 && !c.pureArith) || e == .lastCall)
   let needs := anyAsserted && (e == .lastCall || qcfNeeds || emNeeds)
   if needs then
     -- the utilities' reset (the term database, at full effort and last call)
@@ -279,11 +288,13 @@ def check (e : Effort) (needCheck : Bool) (allTerms : Array Node) : EM Unit := d
     -- the modules' `reset_round` (at the standard effort, those that need a
     -- check)
     if e != .standard || emNeeds then rd ← ematchResetRound rd
+    if e != .standard then cegqiReset
     -- the modules' efforts: conflict, standard, model, last call
     let lemmasBefore := (← getThe Out).lemmas.size
     for qe in [0, 1, 2, 3] do
       if qe == 0 && qcfNeeds then rd ← qcfCheck rd
       if qe == 1 && emNeeds && !rd.inConflict then rd ← ematchCheck rd (e == .lastCall)
+      if qe == 1 && e == .lastCall && c.cegqi && !rd.inConflict then rd ← cegqiCheck rd
       let mut complete := false
       if qe == 2 && e == .lastCall then
         let (ok, rd') ← modelEngineCheck rd

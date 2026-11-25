@@ -3,6 +3,7 @@ import Std.Data.HashSet
 import Telos.Core.Node.Key
 import Telos.Core.Node.FastType
 import Telos.Core.Node.NodeOrder
+import Telos.Solver.Event
 
 /-!
 # The state of the quantifiers engine
@@ -55,6 +56,19 @@ structure Ctx where
   /-- The model at last call: the value of an integer term, and of a formula. -/
   modelInt : Node → Option Int := fun _ => none
   modelBool : Node → Option Bool := fun _ => none
+  /-- The value of a term in the model, as a constant. -/
+  modelConst : Node → Option Node := fun _ => none
+  /-- The facts asserted to a theory. -/
+  factsOf : Theory → Array Node := fun _ => #[]
+  /-- The formulas of a lemma after `TheoryPreprocessor::preprocessLemma`: it,
+  and those of its skolems. -/
+  preprocess : Node → Array Node := fun n => #[n]
+  /-- Counterexample-guided instantiation is on (`cegqi`), and the logic is pure
+  arithmetic, which turns off conflict-based instantiation (`cbqi`) and the
+  entailment checks of instances (`inst-no-entail`), and has E-matching at last
+  call only. -/
+  cegqi : Bool := false
+  pureArith : Bool := false
 
 /-- `TNodeTrie`: its children (or, at a leaf, the term), in cvc5's node order. -/
 inductive Trie where
@@ -162,6 +176,10 @@ structure State where
   conflictInst : Bool := false
   /-- The lemmas sent, by node (the inference manager's cache, user context). -/
   lemmaCache : Std.HashSet Key := {}
+  /-- Whether there are instantiation constants (`QuantCegqi.lean`), and the terms
+  known to have one or not. -/
+  anyInstConst : Bool := false
+  instConsts : Std.HashMap Key Bool := {}
   /-- `d_ierCounter`, `d_ierCounterLc`, `d_ierCounterLastLc`. -/
   ierCounter : Nat := 0
   ierCounterLc : Nat := 0
@@ -264,7 +282,7 @@ def isBoolConnectiveTerm (n : Node) : Bool :=
   | _, _ => false
 
 /-- Whether `n` has a bound variable, free in it (`expr::hasBoundVar` for the
-bound variables of a quantifier's body). Memoized. -/
+bound variables of a quantifier's body; a skolem is a leaf). Memoized. -/
 partial def hasBoundVar (n : Node) : Bool :=
   let rec go (m : Std.HashMap Key Bool) (n : Node) : Std.HashMap Key Bool × Bool :=
     match m.get? ⟨n⟩ with
@@ -273,7 +291,6 @@ partial def hasBoundVar (n : Node) : Bool :=
       let (m, b) := match n with
         | .boundVar .. => (m, true)
         | .app _ cs => cs.foldl (fun (m, b) c => if b then (m, b) else go m c) (m, false)
-        | .skolem _ cs => cs.foldl (fun (m, b) c => if b then (m, b) else go m c) (m, false)
         | _ => (m, false)
       (m.insert ⟨n⟩ b, b)
   (go {} n).2
@@ -309,6 +326,27 @@ partial def substitute (vs ts : Array Node) (n : Node) : Node :=
       (m.insert ⟨n⟩ r, r)
   (go {} n).2
 
+/-- The internal constants of counterexample-guided instantiation
+(`QuantCegqi.lean`). -/
+def isInstConst : Node → Bool
+  | .var n _ => n.startsWith "@ic."
+  | _ => false
+
+/-- Whether `n` has an instantiation constant. Memoized (`State.instConsts`). -/
+partial def hasInstConst (n : Node) : M Bool := do
+  if !(← getSt).anyInstConst then return false
+  if isInstConst n then return true
+  let cs := match n with
+    | .app _ cs | .skolem _ cs => cs
+    | _ => #[]
+  if cs.isEmpty then return false
+  if let some b := (← getSt).instConsts.get? ⟨n⟩ then return b
+  let mut r := false
+  for c in cs do if !r then r := ← hasInstConst c
+  let r' := r
+  modifySt fun s => { s with instConsts := s.instConsts.insert ⟨n⟩ r' }
+  return r
+
 /-! ## The term database (`TermDb`) -/
 
 /-- `getMatchOperator`: the operator of an atomic trigger term (the function of
@@ -338,6 +376,11 @@ lists of their match operators. -/
 partial def addTerm (n : Node) : M Unit := do
   if (← getSt).processed.contains ⟨n⟩ then return
   modifySt fun s => (s.log (.processed ⟨n⟩)) |> fun s => { s with processed := s.processed.insert ⟨n⟩ }
+  -- (not those with instantiation constants, `hasInstConstAttr`)
+  if ← hasInstConst n then
+    if n.getKind != .FORALL && n.getKind != .EXISTS then
+      for c in n.getChildren do addTerm c
+    return
   modifySt fun s => { (s.log (.typeTerm n.typeHint)) with
     typeTerms := s.typeTerms.alter n.typeHint fun l => some ((l.getD #[]).push n) }
   if let some op ← getMatchOperator n then
