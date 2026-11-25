@@ -935,6 +935,11 @@ def proveReInter (P : Array Node) (conc : Node) : Option (Node × List CCmd) := 
     if (EqProof.check #[] (.valid F cs)).isSome then some (F, cs) else none
   | .error _ => none
 
+/-- The inference may have a proof (`prove`). -/
+def provable (id : String) (P : Array Node) : Bool :=
+  !P.isEmpty && (id == "STRINGS_UNIT_INJ" || id == "STRINGS_RE_INTER_INCLUDE" || id == "STRINGS_RE_INTER_CONF" ||
+    id == "STRINGS_RE_INTER_INFER" || (kindOf id).isSome)
+
 /-- **A CPC proof of `(=> (premiseFormula P) conc)`** for the core inference
 `id`, which Logos checks. -/
 def prove (id : String) (P : Array Node) (conc : Node) : Option (Node × List CCmd) := do
@@ -1032,12 +1037,17 @@ def modusPonens (F : Node) (pF pH : EqProof) : Option EqProof := do
   let q : EqProof := .trans (.symm (.congAt F #[some pH, none])) pF
   some (.trans (.trans (.rw C) (.symm (.rw t))) q)
 
-/-- A proof of `(conc, true)` from proofs of `(pᵢ, true)` for the premises `P`
-of the core inference `id`. -/
-def proveFrom (id : String) (P : Array Node) (ps : Array EqProof) (conc : Node) : Option EqProof := do
-  let (F, cs) ← prove id P conc
+/-- A proof of the conclusion of a core inference, from its CPC proof (`prove`)
+and proofs of `(pᵢ, true)` for its premises `P`. -/
+def proveFromProof (proof : Option (Node × List CCmd)) (P : Array Node) (ps : Array EqProof) : Option EqProof := do
+  let (F, cs) ← proof
   let pH ← andIntro P ps
   modusPonens F (.valid F cs) pH
+
+/-- A proof of `(conc, true)` from proofs of `(pᵢ, true)` for the premises `P`
+of the core inference `id`. -/
+def proveFrom (id : String) (P : Array Node) (ps : Array EqProof) (conc : Node) : Option EqProof :=
+  proveFromProof (prove id P conc) P ps
 
 /-- The CPC proof of `(=> h conc)`, for `h` the conjunction of `E`, from a proof
 of `(conc, true)` (`(x, false)` for `conc` the negation of `x`) from `E`. -/

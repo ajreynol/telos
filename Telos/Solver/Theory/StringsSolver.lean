@@ -1,3 +1,4 @@
+import Telos.Solver.StringsCore
 import Telos.Solver.Theory.Strings
 import Telos.Solver.Theory.StringsReduce
 import Telos.Preprocess.Theory.StringsStaticRewrite
@@ -2033,6 +2034,16 @@ def assertInternalFact (ii : Inference) : m Unit := do
       if !pol && isStringLike a then
         modifyStrings fun s => { s with disequalities := s.disequalities.push (Node.eqNode a b) }
     modifyStrings fun s => { s with sentFacts := s.sentFacts + 1, facts := s.facts.insert ⟨lit⟩ (ii.id, expn) }
+    let id := ii.id
+    let P := (match expn with
+      | .app (.kind .AND) ps => ps
+      | e => #[e]).filter (· != Node.mkTrue)
+    if StringsCore.provable id P then
+      modifyStrings fun s =>
+        let F : Key := ⟨Node.mkNode .IMPLIES #[StringsCore.premiseFormula P, lit]⟩
+        let old := s.factProofs.getD F []
+        let new := old ++ [(id, Thunk.mk fun _ => StringsCore.prove id P lit)]
+        if old.any (·.1 == id) then s else { s with factProofs := s.factProofs.insert F new }
     let holds ← match atom with
       | .app (.kind .EQUAL) #[a, b] =>
         if !(← hasTerm a) || !(← hasTerm b) then pure false

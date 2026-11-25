@@ -246,9 +246,55 @@ theorem termTy_str_rev (a : Term) : termTy (Term.Apply (Term.UOp UserOp.str_rev)
     __smtx_typeof_seq_op_1 (termTy a) := by
   unfold termTy; rw [show __eo_to_smt (Term.Apply (Term.UOp UserOp.str_rev) a) = (SmtTerm.str_rev (__eo_to_smt a)) from rfl, __smtx_typeof.eq_def]
 
+/-- The application of a declared constant (Logos translates it as it is). -/
+inductive UHead : Term → Prop
+  | uconst (i : native_Nat) (T : Term) : UHead (Term.UConst i T)
+  | app {g : Term} (x : Term) : UHead g → UHead (Term.Apply g x)
+
+theorem toSmt_apply_uhead {f : Term} (h : UHead f) (y : Term) :
+    __eo_to_smt (Term.Apply f y) = SmtTerm.Apply (__eo_to_smt f) (__eo_to_smt y) := by
+  rcases h with _ | ⟨_, h⟩
+  · rfl
+  rcases h with _ | ⟨_, h⟩
+  · rfl
+  rcases h with _ | ⟨_, h⟩
+  · rfl
+  rcases h with _ | ⟨_, h⟩
+  · rfl
+  rename_i g _
+  cases g <;> rfl
+
+theorem typeof_apply_uhead {f : Term} (h : UHead f) (y : Term) :
+    termTy (Term.Apply f y) = __smtx_typeof_apply (termTy f) (termTy y) := by
+  unfold termTy
+  rw [toSmt_apply_uhead h]
+  cases h with
+  | uconst i T =>
+    rw [show __eo_to_smt (Term.UConst i T) = SmtTerm.UConst (native_uconst_id i) (__eo_to_smt_type T) from rfl,
+      __smtx_typeof.eq_def (SmtTerm.Apply _ _)]
+  | app x hg => rw [toSmt_apply_uhead hg, __smtx_typeof.eq_def (SmtTerm.Apply _ _)]
+
+theorem isUHead_sound : ∀ {f : Term}, isUHead f = true → UHead f
+  | .UConst i T, _ => .uconst i T
+  | .Apply f x, h => .app x (isUHead_sound (f := f) (by simpa [isUHead] using h))
+
+theorem typeof_apply_isUHead {f : Term} (h : isUHead f = true) (x : Term) :
+    __smtx_typeof_apply (termTy f) (termTy x) = termTy (Term.Apply f x) :=
+  (typeof_apply_uhead (isUHead_sound h) x).symm
+
+theorem termTy_uconst (i : native_Nat) (T : Term) : termTy (Term.UConst 0 T) = termTy (Term.UConst i T) := by
+  unfold termTy
+  rw [show __eo_to_smt (Term.UConst 0 T) = SmtTerm.UConst (native_uconst_id 0) (__eo_to_smt_type T) from rfl,
+    show __eo_to_smt (Term.UConst i T) = SmtTerm.UConst (native_uconst_id i) (__eo_to_smt_type T) from rfl,
+    __smtx_typeof.eq_def, __smtx_typeof.eq_def (SmtTerm.UConst (native_uconst_id i) _)]
+
 theorem termTyF_eq (t : Term) : termTyF t = termTy t := by
   fun_induction termTyF t <;>
-    simp_all only [termTy_comp, termTy_str_in_re, termTy_str_to_code, termTy_eq, termTy_and,
+    first
+    | with_reducible rfl
+    | exact termTy_uconst _ _
+    | (rename_i h ih₁ ih₂; rw [ih₁, ih₂]; exact typeof_apply_isUHead h _)
+    | simp_all only [termTy_comp, termTy_str_in_re, termTy_str_to_code, termTy_eq, termTy_and,
       termTy_or, termTy_not, termTy_str_concat, termTy_str_len, termTy_purify,
       termTy_plus, termTy_geq, termTy_ite, termTy_mult, termTy_neg, termTy_eoo_neg_2, termTy_lt, termTy_leq, termTy_gt,
       termTy_to_real, termTy_imp, termTy_xor, termTy_str_substr, termTy_str_contains, termTy_str_prefixof, termTy_str_suffixof, termTy_str_at, termTy_str_indexof, termTy_str_replace, termTy_str_replace_all, termTy_str_to_re, termTy_str_to_int, termTy_str_from_int, termTy_str_from_code, termTy_str_is_digit, termTy_str_rev]
@@ -300,6 +346,12 @@ theorem app_GT (a b : Term) : termTy (Kind.GT.eoShape.toEo [a, b]) = __smtx_type
 
 theorem app_GEQ (a b : Term) : termTy (Kind.GEQ.eoShape.toEo [a, b]) = __smtx_typeof_arith_overload_op_2_ret (termTy a) (termTy b) .Bool := by
   show termTy (Term.Apply (Term.Apply (Term.UOp UserOp.geq) a) b) = _; exact termTy_geq a b
+
+theorem termTy_qdiv_total (a b : Term) : termTy (Term.Apply (Term.Apply (Term.UOp UserOp.qdiv_total) a) b) = __smtx_typeof_arith_overload_op_2_ret (termTy a) (termTy b) .Real := by
+  unfold termTy; rw [show __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.qdiv_total) a) b) = SmtTerm.qdiv_total (__eo_to_smt a) (__eo_to_smt b) from rfl, __smtx_typeof.eq_def] <;> rfl
+
+theorem app_DIVISION_TOTAL (a b : Term) : termTy (Kind.DIVISION_TOTAL.eoShape.toEo [a, b]) = __smtx_typeof_arith_overload_op_2_ret (termTy a) (termTy b) .Real := by
+  show termTy (Term.Apply (Term.Apply (Term.UOp UserOp.qdiv_total) a) b) = _; exact termTy_qdiv_total a b
 
 theorem app_DIVISION (a b : Term) : termTy (Kind.DIVISION.eoShape.toEo [a, b]) = __smtx_typeof_arith_overload_op_2_ret (termTy a) (termTy b) .Real := by
   show termTy (Term.Apply (Term.Apply (Term.UOp UserOp.qdiv) a) b) = _; exact termTy_qdiv a b
@@ -643,7 +695,7 @@ theorem kindTy_sound {k : Kind} {l : List Node} {T : SmtType} (h : kindTy k (l.m
        obtain ⟨a, b, rfl, rfl, rfl⟩ := map_two heq
        obtain rfl := Option.some.inj h
        simp only [List.map_cons, List.map_nil, ← termTy_toEo]
-       first | with_reducible exact app_IMPLIES _ _ | with_reducible exact app_XOR _ _ | with_reducible exact app_EQUAL _ _ | with_reducible exact app_SUB _ _ | with_reducible exact app_LT _ _ | with_reducible exact app_LEQ _ _ | with_reducible exact app_GT _ _ | with_reducible exact app_GEQ _ _ | with_reducible exact app_DIVISION _ _ | with_reducible exact app_INTS_DIVISION _ _ | with_reducible exact app_INTS_MODULUS _ _ | with_reducible exact app_INTS_DIVISION_TOTAL _ _ | with_reducible exact app_INTS_MODULUS_TOTAL _ _ | with_reducible exact app_DIVISIBLE _ _ | with_reducible exact app_STRING_CHARAT _ _ | with_reducible exact app_STRING_CONTAINS _ _ | with_reducible exact app_STRING_PREFIX _ _ | with_reducible exact app_STRING_SUFFIX _ _ | with_reducible exact app_STRING_LT _ _ | with_reducible exact app_STRING_LEQ _ _ | with_reducible exact app_STRING_IN_REGEXP _ _ | with_reducible exact app_REGEXP_DIFF _ _ | with_reducible exact app_REGEXP_RANGE _ _)
+       first | with_reducible exact app_IMPLIES _ _ | with_reducible exact app_XOR _ _ | with_reducible exact app_EQUAL _ _ | with_reducible exact app_SUB _ _ | with_reducible exact app_LT _ _ | with_reducible exact app_LEQ _ _ | with_reducible exact app_GT _ _ | with_reducible exact app_GEQ _ _ | with_reducible exact app_DIVISION _ _ | with_reducible exact app_DIVISION_TOTAL _ _ | with_reducible exact app_INTS_DIVISION _ _ | with_reducible exact app_INTS_MODULUS _ _ | with_reducible exact app_INTS_DIVISION_TOTAL _ _ | with_reducible exact app_INTS_MODULUS_TOTAL _ _ | with_reducible exact app_DIVISIBLE _ _ | with_reducible exact app_STRING_CHARAT _ _ | with_reducible exact app_STRING_CONTAINS _ _ | with_reducible exact app_STRING_PREFIX _ _ | with_reducible exact app_STRING_SUFFIX _ _ | with_reducible exact app_STRING_LT _ _ | with_reducible exact app_STRING_LEQ _ _ | with_reducible exact app_STRING_IN_REGEXP _ _ | with_reducible exact app_REGEXP_DIFF _ _ | with_reducible exact app_REGEXP_RANGE _ _)
     | (rename_i heq
        obtain ⟨a, b, c, rfl, rfl, rfl, rfl⟩ := map_three heq
        obtain rfl := Option.some.inj h
@@ -715,40 +767,286 @@ theorem smtType_purify (t : Node) : (Node.skolem .PURIFY #[t]).smtType = t.smtTy
   simp only [SkolemId.toEo]
   exact termTy_purify t.toEo
 
+/-- A list of variables of types `Ts`, as translated. -/
+inductive BinderOk : Term → List SmtType → Prop
+  | nil : BinderOk Term.__eo_List_nil []
+  | cons {s : native_String} {Ty vs : Term} {T : SmtType} {Ts : List SmtType} :
+      __eo_to_smt_type Ty = T → __smtx_type_wf T = true → BinderOk vs Ts →
+      BinderOk (Term.Apply (Term.Apply Term.__eo_List_cons (Term.Var (Term.String s) Ty)) vs) (T :: Ts)
+
+/-- A concatenation of (at least) `n` regular expressions. -/
+def CatOk : SmtTerm → Nat → Prop
+  | _, 0 => True
+  | .re_concat a b, n + 1 => __smtx_typeof a = .RegLan ∧ __smtx_typeof b = .RegLan ∧ CatOk b n
+  | _, _ + 1 => False
+
 /-- What a node keeps is right: its type is that of its translation; a function
-skolem, applied to an argument of its argument type, has its result type. -/
+skolem, applied to an argument of its argument type, has its result type; and
+the translation has the form that is kept. -/
 def KeptOk (t : Node) : KeptTy → Prop
   | .none => True
   | .ty T => t.smtType = T
   | .fn A R => ∀ x : Term, termTy x = A → termTy ((nodeEoShape .APPLY_UF t.toEo).toEo [x]) = R
+  | .uf F => (∃ i Ty, t.toEo = Term.UConst i Ty) ∧ t.smtType = F
+  | .bvar T => (∃ s Ty, t.toEo = Term.Var (Term.String s) Ty ∧ __eo_to_smt_type Ty = T ∧ __smtx_type_wf T = true) ∧
+      t.smtType = T
+  | .binder Ts => BinderOk t.toEo Ts
+  | .quant Ts => (∃ vs F, t.toEo = Term.Apply (Term.Apply (Term.UOp UserOp.forall) vs) F ∧ BinderOk vs Ts ∧
+      termTy F = .Bool) ∧ t.smtType = .Bool
+  | .recat n => CatOk t.toSmt n ∧ t.smtType = .RegLan
+  | .num i => t.toEo = Term.Numeral i ∧ t.smtType = .Int
 
-/-- The children's kept types, as `kept` collects them. -/
-def keptTys (cs : List Node) : Option (List SmtType) :=
-  cs.foldr (fun c acc => acc.bind fun ts => c.kept.ty?.map (· :: ts)) (some [])
+theorem ty_ok' {t : Node} {k : KeptTy} {T : SmtType} (h : KeptOk t k) (ht : k.ty? = some T) : t.smtType = T := by
+  cases k <;> simp only [KeptTy.ty?, Option.some.injEq, reduceCtorEq] at ht <;> subst ht
+  · exact h
+  · exact h.2
+  · exact h.2
+  · exact h.2
+  · exact h.2
+  · exact h.2
 
-theorem ty_ok {t : Node} {T : SmtType} (h : KeptOk t t.kept) (ht : t.kept.ty? = some T) : t.smtType = T := by
-  cases hk : t.kept with
-  | none => rw [hk] at ht; cases ht
-  | ty U => rw [hk] at h ht; simp only [KeptTy.ty?, Option.some.injEq] at ht; subst ht; exact h
-  | fn A R => rw [hk] at ht; cases ht
+theorem ty_ok {t : Node} {T : SmtType} (h : KeptOk t t.kept) (ht : t.kept.ty? = some T) : t.smtType = T :=
+  ty_ok' h ht
+
+/-- What the children keep, as `kept` collects it. -/
+def keptsOf (cs : List Node) : List KeptTy := cs.foldr (fun c acc => c.kept :: acc) []
+
+theorem keptsOf_map (cs : List Node) : keptsOf cs = cs.map Node.kept := by
+  induction cs with
+  | nil => rfl
+  | cons a l ih => simp only [keptsOf, List.foldr_cons, List.map_cons] at ih ⊢; rw [ih]
 
 theorem keptTys_sound {cs : List Node} {ts : List SmtType}
-    (hc : ∀ c ∈ cs, KeptOk c c.kept) (h : keptTys cs = some ts) : ts = cs.map smtType := by
+    (hc : ∀ c ∈ cs, KeptOk c c.kept) (h : KeptTy.tys (cs.map Node.kept) = some ts) : ts = cs.map smtType := by
   induction cs generalizing ts with
-  | nil => simp [keptTys] at h; simp [h]
+  | nil => simp [KeptTy.tys] at h; simp [h]
   | cons a l ih =>
-    simp only [keptTys, List.foldr_cons] at h
-    cases hl : keptTys l with
-    | none => simp only [keptTys] at hl; rw [hl] at h; cases h
+    simp only [List.map_cons, KeptTy.tys] at h
+    cases hl : KeptTy.tys (l.map Node.kept) with
+    | none => rw [hl] at h; cases h
     | some ts' =>
-      simp only [keptTys] at hl; rw [hl] at h
+      rw [hl] at h
       cases ha : a.kept.ty? with
       | none => rw [ha] at h; cases h
       | some T =>
         rw [ha] at h
         simp only [Option.bind_some, Option.map_some, Option.some.injEq] at h; subst h
-        have := ih (ts := ts') (fun c hm => hc c (by simp [hm])) (by simpa [keptTys] using hl)
+        have := ih (ts := ts') (fun c hm => hc c (by simp [hm])) hl
         rw [List.map_cons, ty_ok (hc a (by simp)) ha, this]
+
+theorem bvars_sound {cs : List Node} {Ts : List SmtType}
+    (hc : ∀ c ∈ cs, KeptOk c c.kept) (h : KeptTy.bvars (cs.map Node.kept) = some Ts) :
+    BinderOk (eoList (cs.map Node.toEo)) Ts := by
+  induction cs generalizing Ts with
+  | nil => simp [KeptTy.bvars] at h; subst h; exact .nil
+  | cons a l ih =>
+    simp only [List.map_cons, KeptTy.bvars] at h
+    cases hl : KeptTy.bvars (l.map Node.kept) with
+    | none => rw [hl] at h; cases h
+    | some Ts' =>
+      rw [hl] at h
+      have hak := hc a (by simp)
+      cases ha : a.kept <;> rw [ha] at h hak <;> simp only [KeptTy.bvar?, Option.bind_some, Option.map_none,
+        Option.map_some, reduceCtorEq, Option.some.injEq] at h
+      subst h
+      obtain ⟨⟨s, Ty, he, hT, hwf⟩, -⟩ := hak
+      simp only [List.map_cons, eoList]
+      rw [he]
+      exact .cons hT hwf (ih (fun c hm => hc c (by simp [hm])) hl)
+
+theorem smtTyOf_sound : ∀ (T : TypeNode) {S : SmtType}, smtTyOf T = some S →
+    __eo_to_smt_type T.toEo = S ∧ S ≠ .None := by
+  intro T
+  induction T using smtTyOf.induct with
+  | case1 | case2 | case3 | case4 | case5 | case6 =>
+    intro S h
+    simp only [smtTyOf, Option.some.injEq] at h
+    subst h
+    refine ⟨?_, by simp⟩
+    simp only [TypeNode.toEo]
+    first | rfl | simp [__eo_to_smt_type, __smtx_typeof_guard, native_ite, native_Teq]
+  | case7 e ih =>
+    intro S h
+    simp only [smtTyOf, Option.map_eq_some_iff] at h
+    obtain ⟨E, hE, rfl⟩ := h
+    obtain ⟨h1, h2⟩ := ih hE
+    refine ⟨?_, by simp⟩
+    simp only [TypeNode.toEo]
+    rw [show __eo_to_smt_type (Term.Apply (Term.UOp UserOp.Seq) e.toEo) =
+      __smtx_typeof_guard (__eo_to_smt_type e.toEo) (SmtType.Seq (__eo_to_smt_type e.toEo)) from rfl, h1]
+    simp [__smtx_typeof_guard, native_ite, native_Teq, h2]
+  | case8 e ih =>
+    intro S h
+    simp only [smtTyOf, Option.map_eq_some_iff] at h
+    obtain ⟨E, hE, rfl⟩ := h
+    obtain ⟨h1, h2⟩ := ih hE
+    refine ⟨?_, by simp⟩
+    simp only [TypeNode.toEo]
+    rw [show __eo_to_smt_type (Term.Apply (Term.UOp UserOp.Set) e.toEo) =
+      __smtx_typeof_guard (__eo_to_smt_type e.toEo) (SmtType.Set (__eo_to_smt_type e.toEo)) from rfl, h1]
+    simp [__smtx_typeof_guard, native_ite, native_Teq, h2]
+  | case9 a r iha ihr =>
+    intro S h
+    simp only [smtTyOf, Option.bind_eq_some_iff, Option.map_eq_some_iff] at h
+    obtain ⟨A, hA, R, hR, rfl⟩ := h
+    obtain ⟨h1, h2⟩ := iha hA
+    obtain ⟨h3, h4⟩ := ihr hR
+    refine ⟨?_, by simp⟩
+    simp only [TypeNode.toEo]
+    rw [show __eo_to_smt_type (Term.Apply (Term.Apply Term.FunType a.toEo) r.toEo) =
+      __smtx_typeof_guard (__eo_to_smt_type a.toEo) (__smtx_typeof_guard (__eo_to_smt_type r.toEo)
+        (SmtType.FunType (__eo_to_smt_type a.toEo) (__eo_to_smt_type r.toEo))) from rfl, h1, h3]
+    simp [__smtx_typeof_guard, native_ite, native_Teq, h2, h4]
+  | case10 T h1 h2 h3 h4 h5 h6 h7 h8 h9 =>
+    intro S h
+    unfold smtTyOf at h
+    split at h <;> simp_all
+
+theorem varTy_sound {T : TypeNode} {S : SmtType} (h : varTy T = some S) :
+    __eo_to_smt_type T.toEo = S ∧ __smtx_type_wf S = true := by
+  unfold varTy at h
+  split at h
+  · rename_i U hU
+    split at h
+    · rename_i hwf
+      obtain rfl := Option.some.inj h
+      exact ⟨(smtTyOf_sound T hU).1, hwf⟩
+    · cases h
+  · cases h
+
+theorem smtType_var {x : String} {T : TypeNode} {S : SmtType} (h : varTy T = some S) : (Node.var x T).smtType = S := by
+  obtain ⟨h1, h2⟩ := varTy_sound h
+  simp only [smtType, toSmt, toEo]
+  rw [show __eo_to_smt (Term.UConst (constId x) T.toEo) = SmtTerm.UConst (native_uconst_id (constId x)) (__eo_to_smt_type T.toEo)
+    from rfl, h1, __smtx_typeof.eq_def]
+  simp [__smtx_typeof_guard_wf, h2, native_ite]
+
+theorem smtType_boundVar {x : String} {T : TypeNode} {S : SmtType} (h : varTy T = some S) :
+    (Node.boundVar x T).smtType = S := by
+  obtain ⟨h1, h2⟩ := varTy_sound h
+  simp only [smtType, toSmt, toEo]
+  rw [show __eo_to_smt (Term.Var (Term.String (native_string_lit x)) T.toEo) =
+    SmtTerm.Var (native_string_lit x) (__eo_to_smt_type T.toEo) from rfl, h1, __smtx_typeof.eq_def]
+  simp [__smtx_typeof_guard_wf, h2, native_ite]
+
+theorem typeof_not (a : SmtTerm) : __smtx_typeof (SmtTerm.not a) =
+    native_ite (native_Teq (__smtx_typeof a) .Bool) .Bool .None := by
+  rw [__smtx_typeof.eq_def]
+
+/-- An existential formula over well-formed variables is a Boolean. -/
+theorem typeof_exists {vs : Term} {Ts : List SmtType} (h : BinderOk vs Ts) {F : SmtTerm}
+    (hF : __smtx_typeof F = .Bool) : __smtx_typeof (__eo_to_smt_exists vs F) = .Bool := by
+  induction h with
+  | nil => exact hF
+  | cons hT hwf _ ih =>
+    simp only [__eo_to_smt_exists]
+    rw [__smtx_typeof.eq_def]
+    simp [ih, hT, __smtx_typeof_guard_wf, hwf, native_ite, native_Teq]
+
+theorem typeof_choice {s : native_String} {T : SmtType} {F : SmtTerm} (hwf : __smtx_type_wf T = true)
+    (hF : __smtx_typeof F = .Bool) : __smtx_typeof (SmtTerm.choice s T F) = T := by
+  rw [__smtx_typeof.eq_def]
+  simp [hF, __smtx_typeof_guard_wf, hwf, native_ite, native_Teq]
+
+/-- The skolem of the `n`-th variable has its type. -/
+theorem typeof_skolemize {vs : Term} {Ts : List SmtType} (h : BinderOk vs Ts) :
+    ∀ {G : SmtTerm} {n : Nat} {T : SmtType}, __smtx_typeof G = .Bool → Ts[n]? = some T →
+      __smtx_typeof (__eo_to_smt_quantifiers_skolemize vs G n) = T := by
+  induction h with
+  | nil => intro G n T _ hn; simp at hn
+  | @cons s Ty vs T' Ts hT hwf hvs ih =>
+    intro G n T hG hn
+    have hc : __smtx_typeof (SmtTerm.choice s T' (__eo_to_smt_exists vs G)) = T' :=
+      typeof_choice hwf (typeof_exists hvs hG)
+    cases n with
+    | zero =>
+      simp only [List.getElem?_cons_zero, Option.some.injEq] at hn
+      subst hn
+      simp only [__eo_to_smt_quantifiers_skolemize, hT]
+      exact hc
+    | succ n =>
+      simp only [List.getElem?_cons_succ] at hn
+      simp only [__eo_to_smt_quantifiers_skolemize, hT]
+      refine ih ?_ hn
+      rw [__smtx_typeof.eq_def]
+      simp [hc, hG, __smtx_typeof_guard_wf, hwf, native_ite, native_Teq]
+
+/-- A component of a concatenation of regular expressions is a string. -/
+theorem compTy_string : ∀ (n : Nat) {R : SmtTerm} {m : Nat}, CatOk R m → n < m →
+    compTy (.Seq .Char) R n = .Seq .Char := by
+  intro n
+  induction n with
+  | zero =>
+    intro R m h hm
+    cases m with
+    | zero => omega
+    | succ m =>
+      cases R <;> simp only [CatOk] at h
+      simp only [compTy, splitTy, h.1, h.2.1]
+      decide
+  | succ n ih =>
+    intro R m h hm
+    cases m with
+    | zero => omega
+    | succ m =>
+      cases R <;> simp only [CatOk] at h
+      simp only [compTy, splitTy, h.1, h.2.1]
+      have : __smtx_typeof_str_substr (.Seq .Char)
+          (native_ite (native_Teq (.Seq .Char) (.Seq .Char)) (native_ite (native_Teq SmtType.RegLan .RegLan)
+            (native_ite (native_Teq SmtType.RegLan .RegLan) .Int .None) .None) .None)
+          (__smtx_typeof_arith_overload_op_2 (__smtx_typeof_seq_op_1_ret (.Seq .Char) .Int)
+            (native_ite (native_Teq (.Seq .Char) (.Seq .Char)) (native_ite (native_Teq SmtType.RegLan .RegLan)
+              (native_ite (native_Teq SmtType.RegLan .RegLan) .Int .None) .None) .None)) = .Seq .Char := by decide
+      rw [this]
+      exact ih h.2.2 (by omega)
+
+theorem reTy2_inv {T U : SmtType} (h : reTy2 T U = .RegLan) : T = .RegLan ∧ U = .RegLan := by
+  by_cases h1 : T = .RegLan <;> by_cases h2 : U = .RegLan <;> simp_all [reTy2, native_ite, native_Teq]
+
+theorem kepts_one {l : List Node} {x : KeptTy} (h : l.map Node.kept = [x]) : ∃ a, l = [a] ∧ a.kept = x := by
+  match l, h with | [a], h => exact ⟨a, rfl, by simpa using h⟩
+theorem kepts_two {l : List Node} {x y : KeptTy} (h : l.map Node.kept = [x, y]) :
+    ∃ a b, l = [a, b] ∧ a.kept = x ∧ b.kept = y := by
+  match l, h with | [a, b], h => simp at h; exact ⟨a, b, rfl, h.1, h.2⟩
+theorem kepts_three {l : List Node} {x y z : KeptTy} (h : l.map Node.kept = [x, y, z]) :
+    ∃ a b c, l = [a, b, c] ∧ a.kept = x ∧ b.kept = y ∧ c.kept = z := by
+  match l, h with | [a, b, c], h => simp at h; exact ⟨a, b, c, rfl, h.1, h.2.1, h.2.2⟩
+
+/-- The translation of a concatenation of regular expressions. -/
+theorem catOk_chain : ∀ (l : List Node),
+    (l.map smtType).foldr reTy2 .RegLan = .RegLan →
+    CatOk (__eo_to_smt (eoRightAssocNil UserOp.re_concat
+      (Term.Apply (Term.UOp UserOp.str_to_re) (Term.String [])) (l.map toEo))) l.length ∧
+    __smtx_typeof (__eo_to_smt (eoRightAssocNil UserOp.re_concat
+      (Term.Apply (Term.UOp UserOp.str_to_re) (Term.String [])) (l.map toEo))) = .RegLan := by
+  intro l
+  induction l with
+  | nil =>
+    intro _
+    refine ⟨trivial, ?_⟩
+    simp only [List.map_nil, eoRightAssocNil]
+    show termTy _ = _
+    rw [termTy_str_to_re, termTy_string]
+    decide
+  | cons a l ih =>
+    intro h
+    simp only [List.map_cons, List.foldr_cons] at h
+    obtain ⟨ha, hl⟩ := reTy2_inv h
+    obtain ⟨i1, i2⟩ := ih hl
+    simp only [List.map_cons, eoRightAssocNil, List.length_cons]
+    rw [show ∀ x y, __eo_to_smt (eoApp2 UserOp.re_concat x y) = SmtTerm.re_concat (__eo_to_smt x) (__eo_to_smt y)
+      from fun _ _ => rfl]
+    refine ⟨⟨ha, i2, i1⟩, ?_⟩
+    rw [__smtx_typeof.eq_def]
+    have ha' : __smtx_typeof (__eo_to_smt a.toEo) = .RegLan := ha
+    simp [ha', i2, native_ite, native_Teq]
+
+theorem termTy_foldl_uhead : ∀ (xs : List Term) {f : Term}, UHead f →
+    termTy (xs.foldl Term.Apply f) = (xs.map termTy).foldl __smtx_typeof_apply (termTy f)
+  | [], _, _ => rfl
+  | x :: xs, f, hf => by
+    simp only [List.foldl, List.map]
+    rw [termTy_foldl_uhead xs (UHead.app x hf), typeof_apply_uhead hf]
 
 theorem skolem_toEo (id : SkolemId) (cs : Array Node) :
     (Node.skolem id cs).toEo = id.toEo (cs.toList.map Node.toEo) := by
@@ -835,6 +1133,19 @@ theorem skolemTy_sound {id : SkolemId} {cs : Array Node} :
     rw [skolem_toEo]
     show termTy (Term.Apply (Term.UOp UserOp._at_mod_by_zero) x) = _
     skolem_ty (SmtTerm.mod (__eo_to_smt x) (SmtTerm.Numeral 0))
+  · obtain rfl := map_zero heq
+    intro x hx
+    rw [skolem_toEo]
+    show termTy (Term.Apply (Term.UOp UserOp._at_div_by_zero) x) = _
+    unfold termTy at hx ⊢
+    rw [show __eo_to_smt (Term.Apply (Term.UOp UserOp._at_div_by_zero) x) =
+      SmtTerm.qdiv (__eo_to_smt x) (SmtTerm.Rational (native_mk_rational 0 1)) from rfl]
+    have hq : ∀ a b, __smtx_typeof (SmtTerm.qdiv a b) =
+        __smtx_typeof_arith_overload_op_2_ret (__smtx_typeof a) (__smtx_typeof b) .Real := by
+      intro a b; rw [__smtx_typeof.eq_def]
+    have hr : ∀ r, __smtx_typeof (SmtTerm.Rational r) = .Real := by intro r; rw [__smtx_typeof.eq_def]
+    rw [hq, hx, hr]
+    rfl
   · obtain ⟨a, rfl, ha⟩ := map_one heq
     show termTy (Node.toEo _) = _
     rw [skolem_toEo]
@@ -928,74 +1239,237 @@ theorem ofOption_ok {t : Node} {o : Option SmtType} (h : ∀ T, o = some T → t
   | none => trivial
   | some T => exact h T rfl
 
-/-- **What a node keeps is right.** -/
-theorem kept_sound : ∀ t : Node, KeptOk t t.kept
-  | .const c => by
-    rw [Node.kept]
-    refine ofOption_ok fun T h => ?_
-    cases c <;> simp only [Const.ty, Option.some.injEq, reduceCtorEq] at h <;> subst h
-    · exact smtType_bool _
-    · exact smtType_int _
-    · exact smtType_rat _
-    · exact smtType_string _
-  | .var x T' => by
-    rw [Node.kept]
-    refine ofOption_ok fun T h => ?_
-    cases T' <;> simp only [varTy, Option.some.injEq, reduceCtorEq] at h <;> subst h
-    · exact smtType_var_boolean x
-    · exact smtType_var_integer x
-    · exact smtType_var_real x
-    · exact smtType_var_string x
-  | .boundVar _ _ => by rw [Node.kept]; trivial
-  | .skolem id cs => by
-    rw [Node.kept, ← Array.foldr_toList]
-    change KeptOk _ (match keptTys cs.toList with | some ts => skolemTy id ts | none => .none)
-    cases hk : keptTys cs.toList with
+theorem forall_ok {t : Node} {vs F : Term} {T : SmtType} {Ts : List SmtType}
+    (he : t.toEo = Term.Apply (Term.Apply (Term.UOp UserOp.forall) vs) F) (hb : BinderOk vs (T :: Ts))
+    (hF : termTy F = .Bool) : KeptOk t (.quant (T :: Ts)) := by
+  refine ⟨⟨vs, F, he, hb, hF⟩, ?_⟩
+  show termTy t.toEo = _
+  rw [he]
+  unfold termTy
+  have hF' : __smtx_typeof (__eo_to_smt F) = .Bool := hF
+  have hx : __smtx_typeof (__eo_to_smt_exists vs (SmtTerm.not (__eo_to_smt F))) = .Bool :=
+    typeof_exists hb (by rw [typeof_not, hF']; decide)
+  cases hb with
+  | @cons s Ty vs' _ _ hT hwf hvs =>
+    rw [show __eo_to_smt (Term.Apply (Term.Apply (Term.UOp UserOp.forall)
+        (Term.Apply (Term.Apply Term.__eo_List_cons (Term.Var (Term.String s) Ty)) vs')) F) =
+      SmtTerm.not (__eo_to_smt_exists (Term.Apply (Term.Apply Term.__eo_List_cons (Term.Var (Term.String s) Ty)) vs')
+        (SmtTerm.not (__eo_to_smt F))) from rfl, typeof_not, hx]
+    decide
+
+theorem skolemKept_sound {id : SkolemId} {cs : Array Node} (hc : ∀ c ∈ cs.toList, KeptOk c c.kept) :
+    KeptOk (.skolem id cs) (skolemKept id (cs.toList.map Node.kept)) := by
+  have gen : KeptOk (.skolem id cs) (match KeptTy.tys (cs.toList.map Node.kept) with
+      | some ts => skolemTy id ts | none => .none) := by
+    cases hk : KeptTy.tys (cs.toList.map Node.kept) with
     | none => trivial
     | some ts =>
-      have hts := keptTys_sound (fun c hm => kept_sound c) hk
+      have hts := keptTys_sound hc hk
       subst hts
       exact skolemTy_sound
-  | .app op cs => by
-    rw [Node.kept, ← Array.foldr_toList]
-    cases hk : keptTys cs.toList with
-    | none =>
-      simp only [keptTys] at hk
-      rw [hk]; trivial
-    | some ts =>
-      have hts := keptTys_sound (fun c hm => kept_sound c) hk
-      simp only [keptTys] at hk
-      rw [hk]
+  unfold skolemKept
+  split
+  · -- `@quantifiers_skolemize`
+    rename_i Ts i heq
+    obtain ⟨q, n, hl, hq, hn⟩ := kepts_two heq
+    have kq := hc q (by simp [hl])
+    have kn := hc n (by simp [hl])
+    rw [hq] at kq; rw [hn] at kn
+    obtain ⟨⟨vs, F, he, hb, hF⟩, -⟩ := kq
+    split
+    · rename_i hi
+      split
+      · rename_i T hT
+        show termTy (Node.toEo _) = T
+        rw [skolem_toEo, hl]
+        simp only [List.map_cons, List.map_nil, SkolemId.toEo, he, kn.1]
+        unfold termTy
+        rw [show __eo_to_smt (Term.UOp2 UserOp2._at_quantifiers_skolemize
+          (Term.Apply (Term.Apply (Term.UOp UserOp.forall) vs) F) (Term.Numeral i)) =
+          native_ite (native_zleq 0 i)
+            (__eo_to_smt_quantifiers_skolemize vs (SmtTerm.not (__eo_to_smt F)) (native_int_to_nat i)) SmtTerm.None from rfl]
+        simp only [native_zleq, hi, decide_true, native_ite, ↓reduceIte]
+        refine typeof_skolemize hb ?_ hT
+        have hF' : __smtx_typeof (__eo_to_smt F) = .Bool := hF
+        rw [typeof_not, hF']; decide
+      · trivial
+    · trivial
+  · -- `@re_unfold_pos_component`
+    rename_i k n i heq
+    obtain ⟨a, r, m, hl, ha, hr, hm⟩ := kepts_three heq
+    have ka := hc a (by simp [hl])
+    have kr := hc r (by simp [hl])
+    have km := hc m (by simp [hl])
+    rw [hr] at kr; rw [hm] at km
+    split
+    · rename_i hcond
+      have hta := ty_ok ka (by rw [ha]; exact hcond.1)
+      show termTy (Node.toEo _) = _
+      rw [skolem_toEo, hl]
+      simp only [List.map_cons, List.map_nil, SkolemId.toEo, km.1]
+      rw [termTy_comp, termTy_toEo, hta]
+      simp only [__eo_to_smt_nat_is_valid, native_zleq, hcond.2.1, decide_true, native_ite, ↓reduceIte, __eo_to_smt_nat]
+      exact compTy_string _ kr.1 hcond.2.2
+    · trivial
+  · exact gen
+
+theorem appKept_sound {k : Kind} {cs : Array Node} (hc : ∀ c ∈ cs.toList, KeptOk c c.kept) :
+    KeptOk (.app (.kind k) cs) (appKept k (cs.toList.map Node.kept)) := by
+  unfold appKept
+  split
+  · split
+    · rename_i Ts hT
+      show BinderOk (Node.toEo _) Ts
+      rw [toEo_app]
+      exact bvars_sound hc hT
+    · trivial
+  · rename_i T Ts b heq
+    obtain ⟨v, body, hl, hv, hb⟩ := kepts_two heq
+    have kv := hc v (by simp [hl])
+    have kb := hc body (by simp [hl])
+    rw [hv] at kv
+    split
+    · rename_i hB
+      have hF := ty_ok kb (by rw [hb]; exact hB)
+      have he : (Node.app (.kind .FORALL) cs).toEo = Term.Apply (Term.Apply (Term.UOp UserOp.forall) v.toEo) body.toEo := by
+        rw [toEo_app, hl]; rfl
+      exact forall_ok he kv hF
+    · trivial
+  · rename_i T Ts b p heq
+    obtain ⟨v, body, pat, hl, hv, hb, -⟩ := kepts_three heq
+    have kv := hc v (by simp [hl])
+    have kb := hc body (by simp [hl])
+    rw [hv] at kv
+    split
+    · rename_i hB
+      have hF := ty_ok kb (by rw [hb]; exact hB)
+      have he : (Node.app (.kind .FORALL) cs).toEo = Term.Apply (Term.Apply (Term.UOp UserOp.forall) v.toEo) body.toEo := by
+        rw [toEo_app, hl]; rfl
+      exact forall_ok he kv hF
+    · trivial
+  · rename_i k ks _ _ _
+    split
+    · rename_i ts hts'
+      have hts := keptTys_sound hc hts'
       subst hts
-      cases op with
-      | kind k =>
-        refine ofOption_ok fun T h => ?_
-        show termTy (Node.app (.kind k) cs).toEo = T
+      split
+      · rename_i hcat
+        simp only [Bool.and_eq_true, beq_iff_eq] at hcat
+        obtain ⟨rfl, hkt⟩ := hcat
+        have hty : (Node.app (.kind .REGEXP_CONCAT) cs).smtType = .RegLan := by
+          show termTy (Node.toEo _) = _
+          rw [toEo_app]; exact kindTy_sound hkt
+        refine ⟨?_, hty⟩
+        match hl : cs.toList, hkt with
+        | a :: b :: rest, hkt =>
+          simp only [List.map_cons, kindTy, Option.some.injEq] at hkt
+          have := (catOk_chain (a :: b :: rest) (by simpa using hkt)).1
+          unfold toSmt
+          rw [toEo_app, hl]
+          simp only [List.map_cons] at this ⊢
+          show CatOk (__eo_to_smt (eoRightAssocNil UserOp.re_concat
+            (Term.Apply (Term.UOp UserOp.str_to_re) (Term.String [])) (a.toEo :: b.toEo :: rest.map toEo))) _
+          simpa only [List.length_cons, List.length_map] using this
+      · refine ofOption_ok fun T h => ?_
+        show termTy (Node.app (.kind _) cs).toEo = T
         rw [toEo_app]; exact kindTy_sound h
-      | indexed k is =>
+    · trivial
+
+/-- **What a node keeps is right.** -/
+theorem kept_sound : ∀ t : Node, KeptOk t t.kept
+  | .const (.integer n) => by
+    rw [Node.kept]
+    exact ⟨by simp [Node.toEo, Const.toEo], smtType_int n⟩
+  | .const (.boolean b) => by
+    rw [Node.kept.eq_def]
+    exact smtType_bool b
+  | .const (.rational q) => by
+    rw [Node.kept.eq_def]
+    exact smtType_rat q
+  | .const (.string w) => by
+    rw [Node.kept.eq_def]
+    exact smtType_string w
+  | .const (.bitVector ..) | .const (.emptySet _) | .const (.emptySeq _) | .const (.dtCons ..)
+  | .const (.dtSel ..) => by
+    rw [Node.kept.eq_def]; trivial
+  | .var x T' => by
+    rw [Node.kept]
+    split
+    · rename_i S hS
+      exact ⟨⟨_, _, by rw [Node.toEo]⟩, smtType_var hS⟩
+    · trivial
+  | .boundVar x T' => by
+    rw [Node.kept]
+    split
+    · rename_i S hS
+      exact ⟨⟨_, _, by rw [Node.toEo], varTy_sound hS⟩, smtType_boundVar hS⟩
+    · trivial
+  | .skolem id cs => by
+    rw [Node.kept, ← Array.foldr_toList]
+    change KeptOk _ (skolemKept id (keptsOf cs.toList))
+    rw [keptsOf_map]
+    exact skolemKept_sound fun c hm => kept_sound c
+  | .app op cs => by
+    rw [Node.kept.eq_def]
+    dsimp only
+    rw [← Array.foldr_toList]
+    change KeptOk _ (match op with
+      | .kind k => appKept k (keptsOf cs.toList)
+      | .indexed k is => match KeptTy.tys (keptsOf cs.toList) with
+        | some ts => .ofOption (indexedTy k is.toList ts) | none => .none
+      | .node k f => if k == .APPLY_UF then f.kept.apply (keptsOf cs.toList) else .none)
+    rw [keptsOf_map]
+    cases op with
+    | kind k => exact appKept_sound fun c hm => kept_sound c
+    | indexed k is =>
+      simp only
+      split
+      · rename_i ts hts'
+        have hts := keptTys_sound (fun c hm => kept_sound c) hts'
+        subst hts
         refine ofOption_ok fun T h => ?_
         show termTy (Node.app (.indexed k is) cs).toEo = T
         rw [toEo_app]; exact indexedTy_sound h
-      | node k f =>
-        simp only
+      · trivial
+    | node k f =>
+      simp only
+      split
+      · rename_i hk
+        simp only [beq_iff_eq] at hk
+        subst hk
+        have hf := kept_sound f
+        generalize f.kept = K at hf
+        unfold KeptTy.apply
         split
-        · rename_i hk
-          simp only [beq_iff_eq] at hk
-          subst hk
-          have hf := kept_sound f
-          generalize f.kept = K at hf
-          unfold KeptTy.apply
+        · rename_i A R k' heq
+          obtain ⟨a, hl, ha⟩ := kepts_one heq
           split
-          · rename_i A R T heq
-            obtain ⟨a, hl, ha⟩ := map_one heq
-            split
-            · rename_i hT
-              show termTy (Node.app (.node .APPLY_UF f) cs).toEo = R
-              rw [toEo_app, hl]
-              exact hf a.toEo (by rw [termTy_toEo, ha, hT])
-            · trivial
+          · rename_i hT
+            show termTy (Node.app (.node .APPLY_UF f) cs).toEo = R
+            rw [toEo_app, hl]
+            have hm : a ∈ cs.toList := by simp [hl]
+            exact hf a.toEo (by rw [termTy_toEo]; exact ty_ok (kept_sound a) (by rw [ha]; exact hT))
+          · trivial
+        · rename_i F k' ks heq
+          obtain ⟨⟨i, Ty, he⟩, hF⟩ := hf
+          split
+          · rename_i ts hts'
+            rw [← heq] at hts'
+            have hts := keptTys_sound (fun c hm => kept_sound c) hts'
+            subst hts
+            show termTy (Node.app (.node .APPLY_UF f) cs).toEo = _
+            have hne : 1 ≤ cs.toList.length := by
+              have := congrArg List.length heq
+              simp at this; simp; omega
+            rw [toEo_app]
+            simp only [Op.eoShape, nodeEoShape, he, isFnSkolemTerm, Bool.false_eq_true, ↓reduceIte, AppShape.toEo,
+              Arity.accepts, List.length_map, hne, decide_true]
+            rw [termTy_foldl_uhead _ (UHead.uconst i Ty), map_toEo_ty]
+            have : termTy (Term.UConst i Ty) = F := by rw [← hF, ← termTy_toEo, he]
+            rw [this]
           · trivial
         · trivial
+      · trivial
 termination_by t => sizeOf t
 decreasing_by
   all_goals simp_wf
@@ -1100,12 +1574,44 @@ def shapeToEoF : AppShape → List Term → Term
   | .binder _, _ => Term.Stuck
   | .none, _ => Term.Stuck
 
+/-- The kept type of the first of the nodes, or its type computed from its
+translation `x`. -/
+def headTy (cs : Array Node) (xs : List Term) : SmtType :=
+  match cs[0]? with
+  | some c => match c.fastTy with
+    | some T => T
+    | none => termTyF (xs.headD Term.Stuck)
+  | none => termTyF (xs.headD Term.Stuck)
+
+theorem headTy_eq (cs : Array Node) (xs : List Term) (h : xs = cs.toList.map toEo) :
+    headTy cs xs = termTy (xs.headD Term.Stuck) := by
+  unfold headTy
+  split
+  · rename_i c hc
+    split
+    · rename_i T hT
+      have : xs.headD Term.Stuck = c.toEo := by
+        obtain ⟨l⟩ := cs
+        subst h
+        cases l with
+        | nil => simp at hc
+        | cons a l => simp at hc; subst hc; rfl
+      rw [this, termTy_toEo]
+      exact (fastTy_sound c T hT).symm
+    · exact termTyF_eq _
+  · exact termTyF_eq _
+
 def toEoF : Node → Term
   | .const c => c.toEo
   | .var name T => Term.UConst (constId name) T.toEo
   | .boundVar name T => Term.Var (Term.String (native_string_lit name)) T.toEo
   | .skolem id cs => id.toEo (cs.attach.toList.map fun ⟨c, _⟩ => c.toEoF)
-  | .app (.kind k) cs => shapeToEoF k.eoShape (cs.attach.toList.map fun ⟨c, _⟩ => c.toEoF)
+  | .app (.kind k) cs =>
+      let xs := cs.attach.toList.map fun ⟨c, _⟩ => c.toEoF
+      match k.eoShape with
+      | .rightAssocNil op .typed =>
+        if 2 ≤ xs.length then eoRightAssocNil op (typedNilOfType op (headTy cs xs)) xs else Term.Stuck
+      | s => shapeToEoF s xs
   | .app (.indexed k is) cs =>
       shapeToEoF (indexedEoShape k is.toList) (cs.attach.toList.map fun ⟨c, _⟩ => c.toEoF)
   | .app (.node k f) cs =>
@@ -1132,11 +1638,19 @@ theorem toEoF_eq : ∀ n : Node, n.toEoF = n.toEo
     intro ⟨c, hc⟩ _
     exact toEoF_eq c
   | .app (.kind k) cs => by
-    rw [toEoF, toEo, ← shapeToEo_csimp]
-    congr 1
-    apply List.map_congr_left
-    intro ⟨c, hc⟩ _
-    exact toEoF_eq c
+    have hl : (cs.attach.toList.map fun ⟨c, _⟩ => c.toEoF) = cs.toList.map toEo := by
+      have : (cs.attach.toList.map fun ⟨c, _⟩ => c.toEoF) = cs.attach.toList.map fun ⟨c, _⟩ => c.toEo := by
+        apply List.map_congr_left
+        intro ⟨c, hc⟩ _
+        exact toEoF_eq c
+      rw [this]; simp
+    rw [toEoF, toEo_app]
+    simp only [hl, Op.eoShape]
+    split
+    · rename_i op hs
+      rw [hs, headTy_eq cs _ rfl]
+      rfl
+    · rw [← shapeToEo_csimp]
   | .app (.indexed k is) cs => by
     rw [toEoF, toEo, ← shapeToEo_csimp]
     congr 1

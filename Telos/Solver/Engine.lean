@@ -1483,7 +1483,7 @@ def stepClauses (out : Array Node) (steps : Array ExplainStep) :
       ((st.exp.map negate).push st.lit, st.cert.map (.arith (st.exp.push (negate st.lit))))
     else
       let E := (out ++ ints).filter (· != st.lit)
-      match EE.conflictOfPropagation ee (E.push (negate st.lit)) E st.lit (negate st.lit) with
+      match EE.conflictOfPropagation ee (E.push (negate st.lit)) E st.lit (negate st.lit) true with
       | .ok (A, q) => (A.map negate, some (.theory A q))
       | .error _ =>
         -- from the equality engine's own explanation, if later steps explain its
@@ -1493,7 +1493,7 @@ def stepClauses (out : Array Node) (steps : Array ExplainStep) :
           | .app (.kind .AND) cs => cs
           | l => #[l]).filter (· != Node.mkTrue)
         if !E'.all known.contains then ((E.map negate).push st.lit, none) else
-        match EE.conflictOfPropagation ee (E'.push (negate st.lit)) E' st.lit (negate st.lit) with
+        match EE.conflictOfPropagation ee (E'.push (negate st.lit)) E' st.lit (negate st.lit) true with
         | .ok (A, q) => (A.map negate, some (.theory A q))
         | .error _ => ((E.map negate).push st.lit, none)
 

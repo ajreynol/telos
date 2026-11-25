@@ -38,17 +38,18 @@ def compTy (T : SmtType) : SmtTerm → Nat → SmtType
       r₂ n
   | _, _ => .None
 
-/-- Whether a term has a component skolem. -/
-def hasComp : Term → Bool
-  | .UOp3 UserOp3._at_re_unfold_pos_component .. => true
-  | .Apply f a => hasComp f || hasComp a
+/-- The term is a declared constant, applied to arguments. -/
+def isUHead : Term → Bool
+  | .UConst _ _ => true
+  | .Apply f _ => isUHead f
   | _ => false
 
 /-- **The type of a term's translation**, without translating component
 skolems (`termTyF_eq`). -/
 def termTyF (t : Term) : SmtType :=
-  if !hasComp t then termTy t else
   match t with
+  -- (a constant's name, whose translation is long, does not matter)
+  | .UConst _ T => termTy (.UConst 0 T)
   | .UOp3 UserOp3._at_re_unfold_pos_component x₁ x₂ x₃ =>
     native_ite (__eo_to_smt_nat_is_valid x₃) (compTy (termTyF x₁) (__eo_to_smt x₂) (__eo_to_smt_nat x₃)) .None
   | .Apply (.Apply (.UOp UserOp.eq) a) b => __smtx_typeof_eq (termTyF a) (termTyF b)
@@ -88,6 +89,7 @@ def termTyF (t : Term) : SmtType :=
   | .Apply (.UOp UserOp.str_from_code) a => native_ite (native_Teq (termTyF a) .Int) (.Seq .Char) .None
   | .Apply (.UOp UserOp.str_is_digit) a => native_ite (native_Teq (termTyF a) (.Seq .Char)) .Bool .None
   | .Apply (.UOp UserOp.str_rev) a => __smtx_typeof_seq_op_1 (termTyF a)
+  | .Apply f x => if isUHead f then __smtx_typeof_apply (termTyF f) (termTyF x) else termTy (.Apply f x)
   | t => termTy t
 
 

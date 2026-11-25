@@ -137,21 +137,28 @@ with
   translation (`Node.kept_sound`), so typing a node is constant time, however
   large the term it shares, as cvc5 keeps a type in each node. -/
   @[computed_field] kept : Node → KeptTy
-    | .const c => .ofOption c.ty
-    | .var _ T => .ofOption (varTy T)
-    | .boundVar _ _ => .none
-    | .skolem id cs =>
-      match cs.foldr (fun c acc => acc.bind fun ts => c.kept.ty?.map (· :: ts)) (some []) with
-      | some ts => skolemTy id ts
+    | .const c =>
+      match c with
+      | .integer i => .num i
+      | c => .ofOption c.ty
+    | .var _ T =>
+      match varTy T with
+      | some S => .uf S
       | none => .none
+    | .boundVar _ T =>
+      match varTy T with
+      | some S => .bvar S
+      | none => .none
+    | .skolem id cs => skolemKept id (cs.foldr (fun c acc => c.kept :: acc) [])
     | .app op cs =>
-      match cs.foldr (fun c acc => acc.bind fun ts => c.kept.ty?.map (· :: ts)) (some []) with
-      | some ts =>
-        match op with
-        | .kind k => .ofOption (kindTy k ts)
-        | .indexed k is => .ofOption (indexedTy k is.toList ts)
-        | .node k f => if k == .APPLY_UF then f.kept.apply ts else .none
-      | none => .none
+      let ks := cs.foldr (fun c acc => c.kept :: acc) []
+      match op with
+      | .kind k => appKept k ks
+      | .indexed k is =>
+        match KeptTy.tys ks with
+        | some ts => .ofOption (indexedTy k is.toList ts)
+        | none => .none
+      | .node k f => if k == .APPLY_UF then f.kept.apply ks else .none
 
 /-- The operator of an application (cvc5's API `Op`). -/
 inductive Op where

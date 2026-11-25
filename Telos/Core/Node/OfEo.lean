@@ -164,18 +164,17 @@ where
 
 /-- The node a Logos variable stands for: the variable of `env` with this
 translation, or a free variable. -/
-def varOfEo (env : List Node) (t : Term) (bound : Bool) : Option Node :=
-  match env.find? (·.toEo == t) with
-  | some v => some v
+def varOfEo (env : List (Term × Node)) (t : Term) (bound : Bool) : Option Node :=
+  match env.find? (·.1 == t) with
+  | some (_, v) => some v
   | none =>
     match t with
     | .Var (.String s) T =>
       (if bound then Node.boundVar else Node.var) (nativeStringToString s) <$> TypeNode.ofEo T
     | _ => none
 
-/-- A partial inverse of `toEo`, for the kinds `toEo` translates. Variables are
-looked up in `env` first (see the module doc). -/
-partial def ofEo (env : List Node) (t : Term) : Option Node := do
+/-- `ofEo`, with the translation of each variable of the environment. -/
+partial def ofEoIn (env : List (Term × Node)) (t : Term) : Option Node := do
   -- A nullary constructor is an `APPLY_CONSTRUCTOR` application, as in cvc5,
   -- not the constructor symbol.
   if let .DtCons s d i := t then return ← dtApp .APPLY_CONSTRUCTOR (← dtCons s d i) []
@@ -221,32 +220,32 @@ partial def ofEo (env : List Node) (t : Term) : Option Node := do
   | .UOp UserOp.forall, [vs, body] => binder .FORALL vs body
   | .UOp UserOp.exists, [vs, body] => binder .EXISTS vs body
   | .UOp3 UserOp3._at_re_unfold_pos_component s r i, [] =>
-      return .skolem .RE_UNFOLD_POS_COMPONENT #[← ofEo env s, ← ofEo env r, ← ofEo env i]
+      return .skolem .RE_UNFOLD_POS_COMPONENT #[← ofEoIn env s, ← ofEoIn env r, ← ofEoIn env i]
   | .UOp2 UserOp2._at_quantifiers_skolemize q i, [] =>
-      return .skolem .QUANTIFIERS_SKOLEMIZE #[← ofEo env q, ← ofEo env i]
+      return .skolem .QUANTIFIERS_SKOLEMIZE #[← ofEoIn env q, ← ofEoIn env i]
   | .UOp2 UserOp2.re_loop (.Numeral i) (.Numeral j), [x] =>
-      return .app (.indexed .REGEXP_LOOP #[i, j]) #[← ofEo env x]
+      return .app (.indexed .REGEXP_LOOP #[i, j]) #[← ofEoIn env x]
   | .UOp2 UserOp2.extract (.Numeral i) (.Numeral j), [x] =>
-      return .app (.indexed .BITVECTOR_EXTRACT #[i, j]) #[← ofEo env x]
+      return .app (.indexed .BITVECTOR_EXTRACT #[i, j]) #[← ofEoIn env x]
   | .DtCons s d i, _ => dtApp .APPLY_CONSTRUCTOR (← dtCons s d i) xs
   | .DtSel s d i j, [_] => dtApp .APPLY_SELECTOR (← dtSel s d i j) xs
   | .UOp1 UserOp1.is (.DtCons s d i), [_] => dtApp .APPLY_TESTER (← dtCons s d i) xs
   | .UOp1 UserOp1.update (.DtSel s d i j), [_, _] => dtApp .APPLY_UPDATER (← dtSel s d i j) xs
   | .UOp1 op (.Numeral i), [x] =>
     match indexedKindOf op with
-    | some k => return .app (.indexed k #[i]) #[← ofEo env x]
+    | some k => return .app (.indexed k #[i]) #[← ofEoIn env x]
     | none => none
   | .UOp1 UserOp1.tuple_update (.Numeral i), [x, y] =>
-    return .app (.indexed .TUPLE_UPDATE #[i]) #[← ofEo env x, ← ofEo env y]
+    return .app (.indexed .TUPLE_UPDATE #[i]) #[← ofEoIn env x, ← ofEoIn env y]
   | .UOp op, [x, _] =>
     match naryKindOf op with
     | some k => nary k x
     | none => byShape op xs
   | .UOp op, _ => byShape op xs
   | f@(.Var ..), _ :: _ =>
-      return .app (.node .APPLY_UF (← varOfEo env f false)) (← xs.mapM (ofEo env)).toArray
+      return .app (.node .APPLY_UF (← varOfEo env f false)) (← xs.mapM (ofEoIn env)).toArray
   | .UConst i T, _ :: _ =>
-      return .app (.node .APPLY_UF (.var (constName i) (← TypeNode.ofEo T))) (← xs.mapM (ofEo env)).toArray
+      return .app (.node .APPLY_UF (.var (constName i) (← TypeNode.ofEo T))) (← xs.mapM (ofEoIn env)).toArray
   | _, _ => none
 where
   /-- The skolem `id` applied to `xs`: its cache values first, then (for a
@@ -254,18 +253,18 @@ where
   skolemApp (id : SkolemId) (xs : List Term) : Option Node := do
     let n := id.numCacheVals
     if xs.length < n then none
-    let k := Node.skolem id (← (xs.take n).mapM (ofEo env)).toArray
+    let k := Node.skolem id (← (xs.take n).mapM (ofEoIn env)).toArray
     match xs.drop n with
     | [] => return k
-    | args => return .app (.node .APPLY_UF k) (← args.mapM (ofEo env)).toArray
+    | args => return .app (.node .APPLY_UF k) (← args.mapM (ofEoIn env)).toArray
   app (k : Kind) (xs : List Term) : Option Node := do
-    return .app (.kind k) (← xs.mapM (ofEo env)).toArray
+    return .app (.kind k) (← xs.mapM (ofEoIn env)).toArray
   dtCons (s : native_String) (d : DatatypeDecl) (i : Nat) : Option Node := do
     return .const (.dtCons (.datatype (nativeStr s) (← TypeNode.dtDeclOfEo d)) i)
   dtSel (s : native_String) (d : DatatypeDecl) (i j : Nat) : Option Node := do
     return .const (.dtSel (.datatype (nativeStr s) (← TypeNode.dtDeclOfEo d)) i j)
   dtApp (k : Kind) (f : Node) (xs : List Term) : Option Node := do
-    return .app (.node k f) (← xs.mapM (ofEo env)).toArray
+    return .app (.node k f) (← xs.mapM (ofEoIn env)).toArray
   nary (k : Kind) (first : Term) : Option Node := do
     let .rightAssocNil op nil := k.eoShape | none
     let elems ← eoRightAssocNilElems op (nil.eval op first) t
@@ -282,7 +281,12 @@ where
     let bvs ← (← eoListElems vs).mapM (varOfEo env · true)
     -- The body is read with the bound variables in scope, so that their
     -- occurrences are the same `boundVar`s.
-    return .app (.kind k) #[.app (.kind .BOUND_VAR_LIST) bvs.toArray, ← ofEo (bvs ++ env) body]
+    return .app (.kind k) #[.app (.kind .BOUND_VAR_LIST) bvs.toArray, ← ofEoIn (bvs.map (fun v => (v.toEo, v)) ++ env) body]
+
+/-- A partial inverse of `toEo`, for the kinds `toEo` translates. Variables are
+looked up in `env` first (see the module doc). -/
+def ofEo (env : List Node) (t : Term) : Option Node :=
+  ofEoIn (env.map fun v => (v.toEo, v)) t
 
 end Node
 

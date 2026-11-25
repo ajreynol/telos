@@ -1224,10 +1224,14 @@ def classValues (ee : EE.EqualityEngine) (arith : Array (Node × Rat) := #[]) : 
     for L in [start : start + 8] do
       if found.isSome then break
       -- (more letters, when those up to `z` do not suffice)
-      let base := if 26 ^ L > usedStr.size then 26 else 10000
-      let count := base ^ L
+      -- (at most 8192 candidates are tried, so only the last three letters
+      -- change, and the powers of longer lengths do not matter)
+      let base := if 26 ^ min L 8 > usedStr.size then 26 else 10000
+      let count := base ^ min L 8
+      let pre := List.replicate (L - 3) 97
       for k in [0 : min count 8192] do
-        let w := (List.range L).map fun j => 97 + (k / base ^ (L - 1 - j)) % base
+        let m := min L 3
+        let w := pre ++ (List.range m).map fun j => 97 + (k / base ^ (m - 1 - j)) % base
         if !usedStr.contains w then
           found := some w
           break

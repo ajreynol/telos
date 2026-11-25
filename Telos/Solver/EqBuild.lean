@@ -43,6 +43,8 @@ structure BuildCtx where
   /-- The internal facts whose proofs are being built: a premise proved by the
   fact itself has no proof (the engine's graph may have such a path). -/
   active : List Node := []
+  /-- Leave a hole, `valid F []`, for the proof of an internal fact of strings. -/
+  holes : Bool := false
 
 /-- The assumptions so far, and a path to each of their subterms. A congruence
 may relate a term that occurs in none of the explanation's literals, only in
@@ -437,7 +439,13 @@ mutual
           | e => if e == Node.mkTrue then #[] else #[e]
         let P := P.filter (· != Node.mkTrue)
         let ps ← P.mapM (proveLitTrue C)
-        let some q := StringsCore.proveFrom id P ps conc | throw s!"an internal fact of {id} without a proof"
+        if !StringsCore.provable id P then throw s!"an internal fact of {id} without a proof"
+        let F := Node.mkNode .IMPLIES #[StringsCore.premiseFormula P, conc]
+        let proof := match (C.ee.strings.factProofs.getD ⟨F⟩ []).find? (·.1 == id) with
+          -- (a hole, filled if the clause is used: `fillHoles`)
+          | some (_, t) => if C.holes then some (F, []) else t.get
+          | none => StringsCore.prove id P conc
+        let some q := StringsCore.proveFromProof proof P ps | throw s!"an internal fact of {id} without a proof"
         return .fromTrue q
       throw s!"an internal fact of {id} is not supported"
 
@@ -557,18 +565,48 @@ def proveTerms (C : BuildCtx) (t₁ t₂ : Node) : BuildM EqProof := do
   return p
 
 
+mutual
+/-- Fill the holes of a proof (`BuildCtx.holes`) with the CPC proofs of the
+internal facts: none if one has no proof. -/
+def fillHoles (proofs : Std.HashMap Key (List (String × Thunk (Option (Node × List Eo.CCmd))))) :
+    EqProof → Option EqProof
+  | .valid F [] => do
+    let some (_, cs) := (proofs.getD ⟨F⟩ []).findSome? (·.2.get) | none
+    return .valid F cs
+  | .symm p => (fillHoles proofs p).map .symm
+  | .trans p q => do return .trans (← fillHoles proofs p) (← fillHoles proofs q)
+  | .cong src args => do return .cong src (← fillArgs proofs args.toList).toArray
+  | .eqTrue p => (fillHoles proofs p).map .eqTrue
+  | .fromTrue p => (fillHoles proofs p).map .fromTrue
+  | .andElim i p => (fillHoles proofs p).map (.andElim i)
+  | .orElim k p qs => do return .orElim k (← fillHoles proofs p) (← fillList proofs qs)
+  | .congAt t args => do return .congAt t (← fillArgs proofs args.toList).toArray
+  | p => some p
+
+def fillArgs (proofs : Std.HashMap Key (List (String × Thunk (Option (Node × List Eo.CCmd))))) :
+    List (Option EqProof) → Option (List (Option EqProof))
+  | [] => some []
+  | none :: l => do return none :: (← fillArgs proofs l)
+  | some p :: l => do return some (← fillHoles proofs p) :: (← fillArgs proofs l)
+
+def fillList (proofs : Std.HashMap Key (List (String × Thunk (Option (Node × List Eo.CCmd))))) :
+    List EqProof → Option (List EqProof)
+  | [] => some []
+  | p :: l => do return (← fillHoles proofs p) :: (← fillList proofs l)
+end
+
 /-- A certificate that a literal `lit`, explained by `E`, and the assumption
 `neg` that makes it false are contradictory: assumptions (`E`, `neg`, and the
 literals added by `pathTo`) and a proof of `(true, false)` from them. -/
-def conflictOfPropagation (ee : EqualityEngine) (lits : Array Node) (E : Array Node) (lit neg : Node) :
-    Except String (Array Node × EqProof) :=
+def conflictOfPropagation (ee : EqualityEngine) (lits : Array Node) (E : Array Node) (lit neg : Node)
+    (holes : Bool := false) : Except String (Array Node × EqProof) :=
   -- the premises of internal facts reach other asserted literals; the
   -- explanation's reasons that are internal facts are not assumptions
   let noFacts := ee.dt.facts.isEmpty && ee.sets.facts.isEmpty && ee.strings.facts.isEmpty
   let E := if noFacts then E else E.filter lits.contains
   let A := E.push neg
   let A := if noFacts then A else A ++ lits.filter (fun l => !A.contains l)
-  let C := buildCtx ee A lits
+  let C := { buildCtx ee A lits with holes }
   let n := E.size
   build A do
     match lit with

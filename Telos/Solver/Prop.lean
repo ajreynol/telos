@@ -109,12 +109,12 @@ def satExplainQuiet (lit : Node) : EngineM (Array Node × BaseTag) := do
   -- explained)
   let ariths := steps.filter (·.arith)
   let lits := exp ++ ariths.map (·.lit)
-  let r := EE.conflictOfPropagation s.ee (lits.push (negate lit)) lits lit (negate lit)
+  let r := EE.conflictOfPropagation s.ee (lits.push (negate lit)) lits lit (negate lit) true
   let cert := r.toOption.map
     fun (A, q) => SatProof.Just.theory A q
   if cert.isNone && c.eeSolver then
     if let some (exp', cs) ← derivedClauses #[lit] false
-        (fun ee lits => EE.conflictOfPropagation ee (lits.push (negate lit)) lits lit (negate lit)) then
+        (fun ee lits => EE.conflictOfPropagation ee (lits.push (negate lit)) lits lit (negate lit) true) then
       if exp' == exp then return (exp, .derived cs)
   if ariths.isEmpty then return (exp, .theory cert)
   let main := match cert with
@@ -389,25 +389,31 @@ it follows from by unit propagation instead (`derived`), and what justifies
 it, made when used. -/
 structure BaseClause where
   clause : SatProof.Clause
-  derived : Option (Array (Array Node × Option SatProof.Just)) := none
+  derived : Option (Thunk (Array (Array Node × Option SatProof.Just))) := none
   just : Thunk (Option SatProof.Just) := Thunk.pure none
 
 /-- The clauses given to the SAT solver. -/
 def baseClauses (p : PropState) : Option (Array BaseClause) :=
+  let proofs := p.eng.ee.strings.factProofs
+  let fill (j : Option SatProof.Just) : Option SatProof.Just := match j with
+    | some (.theory A q) => (EE.fillHoles proofs q).map (.theory A ·)
+    | j => j
+  let fillAux (aux : Array (Array Node × Option SatProof.Just)) : Thunk (Array (Array Node × Option SatProof.Just)) :=
+    Thunk.mk fun _ => aux.map fun (d, j) => (d, fill j)
   let toNodes (c : Array Lit) : Option SatProof.Clause := c.mapM (Cnf.getNode? p.eng.cnf)
   p.base.mapM fun (c, tag) => do
     let clause ← toNodes c
     match tag with
     | .cnf (.defn n) => some { clause, just := Thunk.pure (some (.defn n)) }
     | .cnf (.src k) => match p.eng.satSources[k]? with
-      | some (.derived aux) => some { clause, derived := some aux }
+      | some (.derived aux) => some { clause, derived := some (fillAux aux) }
       | some (.input i) => some { clause, just := Thunk.pure (some (.input i)) }
       | some (.theory cert) => some { clause, just := Thunk.pure (cert.map fun (A, q) => .theory A q) }
       | some (.lemma cert) => some { clause, just := Thunk.mk fun _ => cert.get.map fun (F, q) => .lemma F q }
       | some (.arith cert) => some { clause, just := Thunk.pure (cert.map fun (A, q) => .arith A q) }
       | none => some { clause }
-    | .theory j => some { clause, just := Thunk.pure j }
-    | .derived aux => some { clause, derived := some aux }
+    | .theory j => some { clause, just := Thunk.mk fun _ => fill j }
+    | .derived aux => some { clause, derived := some (fillAux aux) }
 
 /-- The clauses of `db` (those before `top`) that refute the negations of the
 literals of `c` by unit propagation, as indices; none if it finds no conflict. -/
@@ -481,7 +487,7 @@ def buildCert (p : PropState) : Option SatProof.Cert := do
     let some b := base[i]? | continue
     match b.derived with
     | some aux =>
-      for (d, j) in aux do
+      for (d, j) in aux.get do
         if let some j := j then clauses := clauses.push (d, j)
       derived := derived.push b.clause
     | none => if let some j := b.just.get then clauses := clauses.push (b.clause, j)
@@ -504,7 +510,7 @@ def unjustifiedClauses (p : PropState) : Array (SatProof.Clause × String) := Id
       | some (_, .cnf (.src k)) => (p.eng.srcLabels.get? k).getD s!"source {k}"
       | _ => "a propagation's explanation"
     match b.derived with
-    | some aux => for (d, j) in aux do if j.isNone then out := out.push (d, label)
+    | some aux => for (d, j) in aux.get do if j.isNone then out := out.push (d, label)
     | none => if b.just.get.isNone then out := out.push (b.clause, label)
   return out
 

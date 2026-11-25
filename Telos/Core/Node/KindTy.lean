@@ -54,7 +54,7 @@ def kindTy : Kind → List SmtType → Option SmtType
   | .NEG, [T] => some (__smtx_typeof_arith_overload_op_1 T)
   | .LT, [T, U] | .LEQ, [T, U] | .GT, [T, U] | .GEQ, [T, U] =>
     some (__smtx_typeof_arith_overload_op_2_ret T U .Bool)
-  | .DIVISION, [T, U] => some (__smtx_typeof_arith_overload_op_2_ret T U .Real)
+  | .DIVISION, [T, U] | .DIVISION_TOTAL, [T, U] => some (__smtx_typeof_arith_overload_op_2_ret T U .Real)
   | .TO_REAL, [T] => some (native_ite (native_Teq T .Int) .Real .None)
   | .STRING_LENGTH, [T] => some (__smtx_typeof_seq_op_1_ret T .Int)
   | .STRING_SUBSTR, [S, I, J] => some (__smtx_typeof_str_substr S I J)
@@ -105,27 +105,63 @@ def kindTy : Kind → List SmtType → Option SmtType
     some (ts.foldr reTy2 .RegLan)
   | _, _ => none
 
-/-- The type a node keeps: none, its own, or, for a skolem that is a function (it has
-no type of its own in Logos), those of its argument and result. -/
+/-- The type a node keeps, and what its parents need to know of it to type
+themselves:
+- `ty T`: its type;
+- `fn A R`: a skolem that is a function (it has no type of its own in Logos): the
+  types of its argument and result;
+- `uf F`: a declared constant, of type `F`;
+- `bvar T`: a variable of type `T`;
+- `binder Ts`: a list of variables of types `Ts`;
+- `quant Ts`: a universal formula (a Boolean) over variables of types `Ts`;
+- `recat n`: a concatenation of `n` regular expressions;
+- `num i`: the integer `i`. -/
 inductive KeptTy where
   | none
   | ty (T : SmtType)
   | fn (arg res : SmtType)
+  | uf (T : SmtType)
+  | bvar (T : SmtType)
+  | binder (Ts : List SmtType)
+  | quant (Ts : List SmtType)
+  | recat (n : Nat)
+  | num (i : Int)
   deriving Inhabited
 
 namespace KeptTy
 
 def ty? : KeptTy → Option SmtType
-  | .ty T => some T
+  | .ty T | .uf T | .bvar T => some T
+  | .quant _ => some .Bool
+  | .recat _ => some .RegLan
+  | .num _ => some .Int
+  | _ => Option.none
+
+def bvar? : KeptTy → Option SmtType
+  | .bvar T => some T
   | _ => Option.none
 
 def ofOption : Option SmtType → KeptTy
   | some T => .ty T
   | Option.none => .none
 
-/-- The type of `(f t)`, from what `f` and `t` keep. -/
-def apply : KeptTy → List SmtType → KeptTy
-  | .fn A R, [T] => if T = A then .ty R else .none
+/-- The types of the children, if each keeps one. -/
+def tys : List KeptTy → Option (List SmtType)
+  | [] => some []
+  | k :: ks => (tys ks).bind fun ts => k.ty?.map (· :: ts)
+
+/-- The types of variables, if the children are. -/
+def bvars : List KeptTy → Option (List SmtType)
+  | [] => some []
+  | k :: ks => (bvars ks).bind fun ts => k.bvar?.map (· :: ts)
+
+/-- The type of `(f t₁ … tₙ)`, from what `f` and the arguments keep. -/
+def apply : KeptTy → List KeptTy → KeptTy
+  | .fn A R, [k] => if k.ty? = some A then .ty R else .none
+  | .uf F, k :: ks =>
+    match tys (k :: ks) with
+    | some ts => .ty (ts.foldl __smtx_typeof_apply F)
+    | Option.none => .none
   | _, _ => .none
 
 end KeptTy
@@ -135,6 +171,7 @@ def skolemTy : SkolemId → List SmtType → KeptTy
   -- the purification skolem `(@purify t)` has the type of `t`
   | .PURIFY, [T] => .ty T
   | .INT_DIV_BY_ZERO, [] | .MOD_BY_ZERO, [] => .fn .Int .Int
+  | .DIV_BY_ZERO, [] => .fn .Real .Real
   | .STRINGS_STOI_NON_DIGIT, [.Seq .Char] => .ty .Int
   | .STRINGS_NUM_OCCUR, [.Seq .Char, .Seq .Char] => .ty .Int
   | .STRINGS_NUM_OCCUR_RE, [.Seq .Char, .RegLan] => .ty .Int
@@ -152,12 +189,58 @@ def indexedTy : Kind → List Int → List SmtType → Option SmtType
   | .REGEXP_LOOP, [i, j], [.RegLan] => if 0 ≤ i ∧ 0 ≤ j then some .RegLan else none
   | _, _, _ => none
 
-/-- The SMT type of a free constant of type `T`, for the types `varTy` covers. -/
-def varTy : TypeNode → Option SmtType
+/-- The SMT type of a type (`__eo_to_smt_type`), for the types it covers: not
+the datatypes, arrays and bit-vectors. -/
+def smtTyOf : TypeNode → Option SmtType
   | .boolean => some .Bool
   | .integer => some .Int
   | .real => some .Real
   | .string => some (.Seq .Char)
+  | .regExp => some .RegLan
+  | .sort i => some (.USort i)
+  | .sequence e => (smtTyOf e).map .Seq
+  | .set e => (smtTyOf e).map .Set
+  | .function a r => (smtTyOf a).bind fun A => (smtTyOf r).map fun R => .FunType A R
   | _ => none
+
+/-- The SMT type of a free constant or a variable of type `T`, if it is well
+formed, for the types `smtTyOf` covers. -/
+def varTy (T : TypeNode) : Option SmtType :=
+  match smtTyOf T with
+  | some S => if __smtx_type_wf S then some S else none
+  | none => none
+
+/-- What a skolem keeps, from what its cache values keep. -/
+def skolemKept (id : SkolemId) (ks : List KeptTy) : KeptTy :=
+  match id, ks with
+  -- `(@quantifiers_skolemize q i)`: the type of the `i`-th variable of `q`
+  | .QUANTIFIERS_SKOLEMIZE, [.quant Ts, .num i] =>
+    if 0 ≤ i then
+      match Ts[i.toNat]? with
+      | some T => .ty T
+      | none => .none
+    else .none
+  -- `(@re_unfold_pos_component s r i)`: a string, if `r` has component `i`
+  | .RE_UNFOLD_POS_COMPONENT, [k, .recat n, .num i] =>
+    if k.ty? = some (.Seq .Char) ∧ 0 ≤ i ∧ i.toNat < n then .ty (.Seq .Char) else .none
+  | id, ks =>
+    match KeptTy.tys ks with
+    | some ts => skolemTy id ts
+    | none => .none
+
+/-- What an application of the kind `k` keeps, from what its children keep. -/
+def appKept (k : Kind) (ks : List KeptTy) : KeptTy :=
+  match k, ks with
+  | .BOUND_VAR_LIST, ks =>
+    match KeptTy.bvars ks with
+    | some Ts => .binder Ts
+    | none => .none
+  | .FORALL, [.binder (T :: Ts), b] | .FORALL, [.binder (T :: Ts), b, _] =>
+    if b.ty? = some .Bool then .quant (T :: Ts) else .none
+  | k, ks =>
+    match KeptTy.tys ks with
+    | some ts =>
+      if k == .REGEXP_CONCAT && kindTy k ts == some .RegLan then .recat ts.length else .ofOption (kindTy k ts)
+    | none => .none
 
 end Telos
