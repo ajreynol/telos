@@ -32,7 +32,26 @@ def byTemplateRev (r : TRule) (args : List Node) (n : Node) : Option (Rw n) := d
 `(= n m)` as its argument (for example `aci_norm` or `absorb`). This is how
 results computed by unverified code are certified. -/
 def checkBy (r : CRule) (n m : Node) : Option (Rw n) :=
-  applyCmds (.cons (.step r (.cons (eqFormula n m) .nil) .nil) .nil) n
+  -- (the `aci_norm` of conjunctions, disjunctions and concatenations, statically)
+  if h : Profile.time "static: side conditions" (fun _ => "aci_norm")
+      (fun _ => (match r with | .aci_norm => true | _ => false) && Aci.check n m) = true then
+    some ⟨m, .static .aci (show Aci.Ok n m from Aci.check_ok (Bool.and_eq_true _ _ |>.mp h).2) (.refl m)⟩
+  else if h : Profile.time "static: side conditions" (fun _ => "aci_norm (concat)")
+      (fun _ => (match r with | .aci_norm => true | _ => false) && decide (AciConcat.Ok n m)) = true then
+    some ⟨m, .static .aciConcat
+      (show AciConcat.Ok n m from of_decide_eq_true (Bool.and_eq_true _ _ |>.mp h).2) (.refl m)⟩
+  else
+  applyCmdsTo (.cons (.step r (.cons (eqFormula n m) .nil) .nil) .nil) n m
+
+/-- The length of a concatenation, by `str-len-concat-rec`: statically, for strings. -/
+def byLenConcat (n : Node) : Option (Rw n) :=
+  match n with
+  | .app (.kind .STRING_LENGTH) ⟨[.app (.kind .STRING_CONCAT) ⟨a :: b :: cs⟩]⟩ =>
+    if h : Profile.time "static: side conditions" (fun _ => "str-len-concat-rec")
+        (fun _ => decide (LenConcat.StringsOk a b cs)) = true then
+      some ⟨LenConcat.rhs a b cs, .static (.lenConcat a b cs) ⟨rfl, rfl, of_decide_eq_true h⟩ (.refl _)⟩
+    else byRule "str-len-concat-rec" _
+  | n => byRule "str-len-concat-rec" n
 
 /-- Rewrite `n` to its value, by the `evaluate` rule. -/
 def byEvaluate (n : Node) : Option (Rw n) :=

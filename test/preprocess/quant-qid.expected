@@ -1,0 +1,9 @@
+;; post-asserts start
+(set-logic ALL)
+(declare-fun p (Int Int) Bool)
+(declare-fun r (Int) Bool)
+(assert (forall ((x Int) (y Int)) (or (r x) (p x y))))
+(assert (forall ((x Int)) (or (r x) (forall ((y Int)) (! (p y x) :pattern ((p y x)))))))
+(assert true)
+(check-sat)
+;; post-asserts end

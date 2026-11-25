@@ -262,7 +262,7 @@ partial def lengthIntroRw (n : Node) : Rw n :=
       else if a.getKind == .SEQ_EMPTY then checkBy .seq_eval_op m zero
       else if a.isConst then byEvaluate m
       else if a.getKind == .STRING_CONCAT then
-        (byRule "str-len-concat-rec" m).map fun r => r.next fun k => some (lengthIntroRw k)
+        (byLenConcat m).map fun r => r.next fun k => some (lengthIntroRw k)
       else none
     | _, _ => none
 

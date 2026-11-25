@@ -186,6 +186,21 @@ def applyCmds (cs : CCmdList) (n : Node) : Option (Rw n) :=
     else rejected ()
   else rejected ()
 
+/-- `applyCmds` for a result `m` known in advance, which is not read back. -/
+def applyCmdsTo (cs : CCmdList) (n m : Node) : Option (Rw n) :=
+  let rule := fun (_ : Unit) => lastRuleName cs
+  let rejected (_ : Unit) : Option (Rw n) := Profile.time "checker: rejected" rule fun _ => none
+  if hT : Profile.time "checker: side conditions" rule
+      (fun _ => decide (CmdListTranslationOk cs)) = true then
+    let st := Profile.time "checker: run" rule fun _ => runFromEmpty cs
+    if hC : __eo_state_is_closed st = true then
+      if hE : Profile.time "checker: compare" rule
+          (fun _ => decide (__eo_state_proven_nth st 0 = eqFormula n m)) = true then
+        some ⟨m, .step cs ⟨of_decide_eq_true hT, hC, of_decide_eq_true hE⟩ (.refl m)⟩
+      else rejected ()
+    else rejected ()
+  else rejected ()
+
 /-- A list of terms as a rule's argument list. -/
 def toArgList : List Term → CArgList
   | [] => .nil

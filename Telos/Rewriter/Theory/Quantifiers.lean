@@ -856,10 +856,26 @@ partial def prenexRev (ys : Array Node) (b₁ b₂ : Node) : Option (Rw (mkQuant
             (prenexRev zs c c').map fun s => h ▸ s else none
     | _, _, _ => none
 
+/-- The quantifiers that `computePrenex` pulls, without annotations that are not
+patterns (a `:qid`): cvc5 pulls a quantifier unless it has a pattern
+(`QuantAttributes::hasPattern`), and the annotations go. -/
+partial def stripPulled (pol : Bool) (b : Node) : Node :=
+  match pats? b with
+  | some ipl => if pol && b.getKind == .FORALL && !hasPattern ipl then stripPats b else b
+  | none =>
+    let sub := fun (p : Bool) (i : Nat) (cs : Array Node) => cs.modify i (stripPulled p)
+    match b with
+    | .app (.kind .AND) cs => .app (.kind .AND) (cs.map (stripPulled pol))
+    | .app (.kind .OR) cs => .app (.kind .OR) (cs.map (stripPulled pol))
+    | .app (.kind .NOT) cs => .app (.kind .NOT) (sub (!pol) 0 cs)
+    | .app (.kind .ITE) cs => .app (.kind .ITE) (sub pol 2 (sub pol 1 cs))
+    | .app (.kind .IMPLIES) cs => .app (.kind .IMPLIES) (sub pol 1 (sub (!pol) 0 cs))
+    | b => b
+
 /-- `COMPUTE_PRENEX`: `(forall xs F)` is `(forall xs ys F')`, for `F'` the
 prenexed `F` and `ys` its pulled variables: `F = (forall ys F')`
 (`prenexRev`, reversed) below the quantifier, then `quant-merge-prenex`. -/
-def prenex (n : Node) : Option (Rw n) := do
+def prenexBare (n : Node) : Option (Rw n) := do
   let (_, xs, b₁) ← quant? n
   if !hasQuant b₁ then none
   let ((), (free, counts)) := (binderInfo n).run ({}, {})
@@ -873,6 +889,14 @@ def prenex (n : Node) : Option (Rw n) := do
   let fwd ← Proof.reverse b₁ rev
   let r ← congrBody? n fun b => if h : b = b₁ then h ▸ fwd else Rw.id b
   r.next? fun m => checkBy .quant_merge_prenex m (mkQuant .FORALL (xs ++ ys) b₂)
+
+/-- `prenexBare`, once the annotations of the quantifiers it pulls are gone (which
+have no CPC counterpart: the same CPC term). -/
+def prenex (n : Node) : Option (Rw n) := do
+  let (k, xs, b₁) ← quant? n
+  let b := stripPulled true b₁
+  if b == b₁ then return ← prenexBare n
+  (castEo n (mkQuant k xs b)).bind (·.next? prenexBare)
 
 /-- `rewriteForall` on a quantifier with patterns (cvc5's `doOperation`): the
 steps that keep them (`COMPUTE_ELIM_SYMBOLS`, `COMPUTE_COND_SPLIT`), those that

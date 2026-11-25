@@ -217,7 +217,7 @@ def rewriteLength (rw : (m : Node) → Rw m) (n : Node) : Option (Rw n) :=
     else if c.isConst then byEvaluate n
     else match c.getKind with
       | .SEQ_UNIT => byRule "seq-len-unit" n
-      | .STRING_CONCAT => byRule "str-len-concat-rec" n
+      | .STRING_CONCAT => byLenConcat n
       | .STRING_REPLACE | .STRING_REPLACE_ALL =>
         -- `LEN_REPL_INV`, when `ArithEntail::checkEq` shows that the pattern and
         -- the replacement have the same length.

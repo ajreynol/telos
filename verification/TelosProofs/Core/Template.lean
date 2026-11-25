@@ -131,6 +131,11 @@ theorem TRule.step_eq {r : TRule} {args : List Node} {n m : Node} (h : r.Ok args
     show __eo_prog_bool_double_not_elim a.toEo = _
     unfold __eo_prog_bool_double_not_elim
     split <;> simp_all [eqFormula, eoApp2, toEo_not]
+  case eqRefl.cons.nil =>
+    have ha' := hns a (by simp)
+    show __eo_prog_eq_refl a.toEo = _
+    unfold __eo_prog_eq_refl
+    split <;> simp_all [eqFormula, eoApp2, toEo_eq, Node.mkTrue, Node.toEo, Const.toEo]
   all_goals have ha' := hns a (by simp)
   all_goals have hb' := hns b (by simp)
   · -- arith-elim-leq

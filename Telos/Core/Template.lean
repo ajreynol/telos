@@ -30,6 +30,7 @@ inductive TRule where
   | arithElimGt
   | arithLeqNorm
   | eqSymm
+  | eqRefl
   deriving DecidableEq, Repr
 
 namespace TRule
@@ -42,6 +43,7 @@ def rule : TRule → CRule
   | .arithElimGt => .arith_elim_gt
   | .arithLeqNorm => .arith_leq_norm
   | .eqSymm => .eq_symm
+  | .eqRefl => .eq_refl
 
 /-- The template rule of a CPC rule, if it is one. -/
 def ofRule : CRule → Option TRule
@@ -51,6 +53,7 @@ def ofRule : CRule → Option TRule
   | .arith_elim_gt => some .arithElimGt
   | .arith_leq_norm => some .arithLeqNorm
   | .eq_symm => some .eqSymm
+  | .eq_refl => some .eqRefl
   | _ => none
 
 /-- The left-hand side, for the arguments `args`. -/
@@ -60,6 +63,7 @@ def lhs : TRule → List Node → Option Node
   | .arithElimLt, [t, s] => some (Node.mkNode .LT #[t, s])
   | .arithElimGt, [t, s] => some (Node.mkNode .GT #[t, s])
   | .eqSymm, [t, s] => some (Node.eqNode t s)
+  | .eqRefl, [t] => some (Node.eqNode t t)
   | _, _ => none
 
 /-- The right-hand side, for the arguments `args`. -/
@@ -71,6 +75,7 @@ def rhs : TRule → List Node → Option Node
   | .arithLeqNorm, [t, s] =>
     some (Node.notNode (Node.mkNode .GEQ #[t, Node.mkNode .ADD #[s, .const (.integer 1)]]))
   | .eqSymm, [t, s] => some (Node.eqNode s t)
+  | .eqRefl, [_] => some Node.mkTrue
   | _, _ => none
 
 /-- Whether the program writes the integer `0` as the nil of a sum it builds

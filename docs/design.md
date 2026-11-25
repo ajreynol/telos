@@ -983,6 +983,13 @@ The uses at run time now, to replace:
      (2,500 assertions): static side conditions 12.5ms to 3.6ms, the rewrite
      pass 316ms to 280ms, about 7% end to end. To do: more kinds in `kindTy`
      (`APPLY_UF`, purification skolems, arrays, bit-vectors, strings).
+   - `aci_norm` on conjunctions, disjunctions and concatenations of strings
+     (`StaticProc.aci`, `aciConcat`, `Telos/Core/AciNorm.lean`), and
+     `str-len-concat-rec` (`lenConcat`): the side condition compares the
+     flattened operands (as sets; as lists, for strings) and types. Checker time
+     over the 69 slow regressions: `aci_norm` 66s to none (`javafe…682` 14.5s to
+     about 1s). `checkBy` knows its result, so it no longer reads it back, which also
+     keeps annotations (`:qid`) that the read-back dropped.
    - Template rules: a RARE rule whose program builds `(= lhs rhs)` from its
      arguments with no condition is taken statically (`StaticProc.template`,
      `Telos/Core/Template.lean`): telos builds both sides, the side condition
@@ -990,7 +997,7 @@ The uses at run time now, to replace:
      Logos, and `TRule.provesEq` (`TelosProofs/Core/Template.lean`) proves the
      step, also read right to left with `symm`. Rules: `bool-double-not-elim`,
      `arith-elim-leq`, `arith-elim-lt`, `arith-elim-gt`, `arith-leq-norm`,
-     `eq-symm`, through the RARE matcher (`RuleSpec.staticStep`) and the
+     `eq-symm`, `eq-refl`, through the RARE matcher (`RuleSpec.staticStep`) and the
      integer inequality normalization (`negTail`). `big_lia`: checker runs
      8,819 to 2,072 (checking about 57ms to 13ms), rewrite pass 280ms to
      237ms; 0.36s to 0.32s end to end (0.39s before `smtTypeF`). Remaining
