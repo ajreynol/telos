@@ -189,6 +189,19 @@ def connective : Op → Bool
   | .kind k => k == .AND || k == .OR || k == .IMPLIES || k == .XOR || k == .ITE
   | _ => false
 
+/-- `acc` with the products of `t` (`NodeOrder.isProduct`), children first, left
+to right: cvc5's rewriter builds a `NONLINEAR_MULT` for each, even for a
+product it leaves unchanged. (Each shared subterm is visited once.) -/
+def pushProducts (acc : Array Node) (t : Node) : Array Node :=
+  (go (acc, {}) t).1
+where
+  go : Array Node × Std.HashSet Key → Node → Array Node × Std.HashSet Key
+  | (acc, seen), t@(.app _ cs) =>
+    if seen.contains ⟨t⟩ then (acc, seen) else
+    let (acc, seen) := cs.attach.foldl (fun s ⟨c, _⟩ => go s c) (acc, seen.insert ⟨t⟩)
+    (if NodeOrder.isProduct t then acc.push t else acc, seen)
+  | s, _ => s
+
 /-- The nodes a certified rewrite creates, in order (as cvc5's rewriter would
 create them): the result of each step, and for a rewrite below an operator,
 the children's nodes, then the rebuilt application. They approximate cvc5's
@@ -208,15 +221,15 @@ def certNodes {n m : Node} (acc : Array Node) : Certified n m → Array Node
     -- each child rewritten, then the node cvc5's rewriter builds for it
     -- (`cvx`), if it changed; then the application, if a child changed
     -- (sizes, not arrays, are kept, so that `acc` is updated in place; an
-    -- unchanged child is skipped, its certificate not looked up)
-    let n₀ := acc.size
-    let acc := (List.finRange cs.size).foldl (fun acc j =>
+    -- unchanged child's certificate is not looked up, only its products are
+    -- added, `pushProducts`)
+    let (acc, changed) := (List.finRange cs.size).foldl (fun (acc, changed) j =>
       let d := ds[j.1]'(hsize ▸ j.2)
-      if cs[j.1] == d then acc else
+      if cs[j.1] == d then (pushProducts acc d, changed) else
       let n := acc.size
       let acc := certNodes acc (hc j.1 j.2)
-      if acc.size == n then acc else NodeOrder.pushCvx acc d) acc
-    certNodes (if connective op || acc.size == n₀ then acc else acc.push (.app op ds)) r
+      if acc.size == n then (acc, changed) else (NodeOrder.pushCvx acc d, true)) (acc, false)
+    certNodes (if connective op || !changed then acc else acc.push (.app op ds)) r
   | @Certified.congrBody k vs _ body' _ pats _ _ hc r =>
     certNodes ((certNodes acc hc).push (.app (.kind k) ⟨vs :: body' :: pats⟩)) r
 

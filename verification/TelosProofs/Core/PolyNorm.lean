@@ -1708,13 +1708,13 @@ theorem V_two_mult {a b : Node} (h : NS (mkNode .MULT #[a, b]).toEo) :
   have := V_mult_list (xs := [a, b]) (by simp) h
   exact ⟨this.1 a (by simp), this.1 b (by simp), by rw [this.2]; simp⟩
 
-theorem V_termNode {real : Bool} {fs : Mono} {c : Rat} (hc : real = true ∨ c.isInt = true)
-    (h : NS (termNode real (fs, c)).toEo) : V (termNode real (fs, c)).toEo = C c * monoV fs := by
+theorem V_termNodeRaw {real : Bool} {fs : Mono} {c : Rat} (hc : real = true ∨ c.isInt = true)
+    (h : NS (termNodeRaw real (fs, c)).toEo) : V (termNodeRaw real (fs, c)).toEo = C c * monoV fs := by
   cases fs with
-  | nil => simp only [termNode] at h ⊢; rw [V_constNode hc]; simp [monoV]
+  | nil => simp only [termNodeRaw] at h ⊢; rw [V_constNode hc]; simp [monoV]
   | cons f fs =>
     have hne : f :: fs ≠ [] := by simp
-    simp only [termNode] at h ⊢
+    simp only [termNodeRaw] at h ⊢
     by_cases hra : (real && (f :: fs).all isInt) = true
     · simp only [hra, Bool.false_eq_true, ↓reduceIte] at h ⊢
       by_cases hci : c.isInt = true
@@ -1740,6 +1740,17 @@ theorem V_termNode {real : Bool} {fs : Mono} {c : Rat} (hc : real = true ∨ c.i
       · simp only [h1c, Bool.false_eq_true, ↓reduceIte] at h ⊢
         obtain ⟨-, h3, e2⟩ := V_two_mult h
         rw [e2, V_constNode hc, V_monoNode hne h3]
+
+theorem orderLeaves_perm (o : NodeOrder) (fs : Mono) : List.Perm (orderLeaves o fs) fs := by
+  unfold orderLeaves
+  split
+  · exact List.Perm.refl _
+  · exact List.mergeSort_perm fs _
+
+theorem V_termNode {real : Bool} {fs : Mono} {c : Rat} {o : NodeOrder} (hc : real = true ∨ c.isInt = true)
+    (h : NS (termNode real (fs, c) o).toEo) : V (termNode real (fs, c) o).toEo = C c * monoV fs := by
+  unfold termNode at *
+  rw [V_termNodeRaw hc h, monoV_perm (orderLeaves_perm o fs)]
 
 theorem V_sumNode {real : Bool} {ts : List Node} (h : NS (sumNode real ts).toEo) :
     (∀ t ∈ ts, NS t.toEo) ∧ V (sumNode real ts).toEo = (ts.map fun t => V t.toEo).sum := by

@@ -368,15 +368,15 @@ def normalizeEquality (n : Node) (o : NodeOrder := {}) : Option (Rw n) := do
         m?.map fun (m, c) =>
           let rest : Poly := scaled.filter (·.1 != m)
           -- `c m + rest = μ (a - b)`: `-c m = rest` for `c < 0`, else `c m = -rest`
-          let (l, r, cx) := if c < 0 then (termNode false (m, -c), rest.toNode false o, -(den : Rat))
-            else (termNode false (m, c), (Poly.scale rest (-1)).toNode false o, (den : Rat))
+          let (l, r, cx) := if c < 0 then (termNode false (m, -c) o, rest.toNode false o, -(den : Rat))
+            else (termNode false (m, c) o, (Poly.scale rest (-1)).toNode false o, (den : Rat))
           let (l, r) := if real then (ensureReal l, ensureReal r) else (l, r)
           (mkNode .EQUAL #[l, r], cx, (num : Rat))
     else
       (terms.head?).map fun (m, c) =>
         -- `c m + rest = a - b`: `m = -rest / c`
         let rest : Poly := Poly.scale (sum.filter (·.1 != m)) (-1 / c)
-        (mkNode .EQUAL #[termNode true (m, 1), rest.toNode true o], 1, c)
+        (mkNode .EQUAL #[termNode true (m, 1) o, rest.toNode true o], 1, c)
   match target? with
   | none => rewriteEq n o
   | some (t, cx, cy) =>

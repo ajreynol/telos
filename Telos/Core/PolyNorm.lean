@@ -153,8 +153,8 @@ def productNode : List Node → Node
 
 def monoNode (real : Bool) (fs : Mono) : Node := productNode (fs.map (wrapLeaf real))
 
-/-- The term `c * fs` of a sum of type `Real` when `real` (cvc5's `mkMultTerm`). -/
-def termNode (real : Bool) : Mono × Rat → Node
+/-- `termNode`, with the factors in the order given. -/
+def termNodeRaw (real : Bool) : Mono × Rat → Node
   | ([], c) => constNode real c
   | (fs, c) =>
     if real && fs.all isInt then
@@ -166,6 +166,25 @@ def termNode (real : Bool) : Mono × Rat → Node
       else mkNode .MULT #[constNode true c, mkNode .TO_REAL #[productNode fs]]
     else if c = 1 then monoNode real fs else mkNode .MULT #[constNode real c, monoNode real fs]
 
+/-- cvc5's `LeafNodeComparator` on the factors of a monomial: real terms before
+integer terms, variables before other terms, then by node id (`o`, without the
+ids of terms created during solving: `NodeOrder.ltStable`). -/
+def leafLtAt (o : NodeOrder) (a b : Node) : Bool :=
+  if a == b then false
+  else if isInt a != isInt b then !isInt a
+  else if a.isVar != b.isVar then a.isVar
+  else o.ltStable a b
+
+/-- The factors of a monomial in cvc5's order (with no node ids, `leafLt`'s, in
+which `polyOf` keeps them). -/
+def orderLeaves (o : NodeOrder) (fs : Mono) : Mono :=
+  if o.decl.isEmpty && o.ids.isEmpty then fs else fs.mergeSort fun a b => !leafLtAt o b a
+
+/-- The term `c * fs` of a sum of type `Real` when `real` (cvc5's `mkMultTerm`),
+its factors in cvc5's order. -/
+def termNode (real : Bool) (e : Mono × Rat) (o : NodeOrder := {}) : Node :=
+  termNodeRaw real (orderLeaves o e.1, e.2)
+
 /-- The node of a sum of terms. -/
 def sumNode (real : Bool) : List Node → Node
   | [] => constNode real 0
@@ -175,7 +194,7 @@ def sumNode (real : Bool) : List Node → Node
 /-- The node of a polynomial in cvc5's normal form (`collectSum`, `mkMultTerm`),
 of type `Real` when `real`. -/
 def Poly.toNodeAt (real : Bool) (p : Poly) (o : NodeOrder := {}) : Node :=
-  sumNode real ((p.sorted o).map (termNode real))
+  sumNode real ((p.sorted o).map (termNode real · o))
 
 /-- The node of a polynomial in cvc5's normal form. A real sum of integer leaves
 with integral coefficients is an integer sum for cvc5 (`maybeEnsureReal`), so it

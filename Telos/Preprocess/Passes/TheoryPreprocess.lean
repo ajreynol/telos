@@ -128,13 +128,29 @@ def ppRewrite (n : Node) : Option (Rw n × Option (Rw mkTrue)) :=
   | .THEORY_STRINGS => stringsPpRewrite n
   | _ => none
 
+/-- Whether `n` has a purification skolem. -/
+partial def hasPurify : Node → Bool
+  | .skolem .PURIFY _ => true
+  | .skolem _ cs => cs.any hasPurify
+  | .app _ cs => cs.any hasPurify
+  | _ => false
+
 /-- `preprocessWithProof`: `ppRewrite`, except for equalities, then rewriting. -/
 def preprocessWithProof (n : Node) : TppM (Rw n) := do
   if n.getKind == .EQUAL then return Rw.id n
   match ppRewrite n with
   | some (r, lem) =>
     addLemma lem
-    return r.trans (rewriteCert r.1 (← get).order)
+    let r := r.trans (rewriteCert r.1 (← get).order)
+    -- (the nodes of its result are created now, as cvc5's ids number them: the
+    -- children of a node are traversed from the last, so the last one's come
+    -- first, as of `(@div_by_zero x)`; with the integer form of those with
+    -- integral reals, which the order looks up, `NodeOrder.id?`. Not a result
+    -- with purification skolems, which term formula removal numbers otherwise.)
+    let o := (← get).order
+    if !(o.decl.isEmpty && o.ids.isEmpty) && !hasPurify r.1 then
+      modify fun s => { s with order := (s.order.add r.1).add (NodeOrder.cvx r.1) }
+    return r
   | none => return Rw.id n
 
 /-- The cached result for `n` in context `val`. -/
@@ -146,7 +162,6 @@ def findCache (n : Node) (val : Nat) : TppM (Option (Rw n)) := do
 /-- `TheoryPreprocessor::theoryPreprocess`, for `n` in context `val`. -/
 partial def theoryPreprocess (n : Node) (val : Nat) : TppM (Rw n) := do
   if let some r ← findCache n val then return r
-  let o := (← get).order
   let res ← do
     if let some r ← removeTermFormulas n (2 ≤ val) then pure r
     else
@@ -159,6 +174,8 @@ partial def theoryPreprocess (n : Node) (val : Nat) : TppM (Rw n) := do
       -- cvc5 rewrites `ret` here, a cache hit when the children did not change
       -- (`n` is then a subterm of a rewritten term); telos's rewriter has no
       -- cache across calls, so it rewrites only a changed node.
+      -- (in the order with the nodes the children's preprocessing created)
+      let o := (← get).order
       let r₂ : Rw ret := if traverse && ret != n then Profile.time "tpp" (fun _ => "rewrite") fun _ => rewriteCert ret o else Rw.id ret
       let r₂ ← if r₂.1 == ret then preprocessWithProof ret else pure r₂
       if r₂.1 == ret then pure r₁
