@@ -194,7 +194,7 @@ structure State where
   lemmaCache : Std.HashSet Key := {}
   /-- The internal facts asserted, with their inference and explanation, for the
   certificates. -/
-  facts : Std.HashMap Key (String × Node) := {}
+  facts : Std.HashMap Key (List (String × Node)) := {}
   /-- The CPC proofs of the internal facts (`StringsCore.prove`), by formula (the
   implication of the conclusion by the premises), each by its inferences: made at
   the first use, and then shared by the certificates. -/

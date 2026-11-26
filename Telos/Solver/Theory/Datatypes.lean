@@ -424,7 +424,7 @@ mutual
     modifyDt fun d => { d with sentFacts := d.sentFacts + 1 }
     if !(← holds atom pol) then
       -- (with the premises of the edge it makes)
-      modifyDt fun d => { d with facts := d.facts.insert ⟨i.conc⟩ (i.id, i.exp) }
+      modifyDt fun d => { d with facts := addFact d.facts i.conc i.id i.exp }
       match atom with
       | .app (.kind .EQUAL) _ => let _ ← assertEquality atom pol i.exp
       | _ => let _ ← assertPredicate atom pol i.exp

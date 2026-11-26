@@ -194,7 +194,7 @@ mutual
     modifySets fun s => { s with sentFacts := s.sentFacts + 1 }
     if !(← holds atom pol) then
       -- (with the premises of the edge it makes)
-      modifySets fun s => { s with facts := s.facts.insert ⟨conc⟩ (id, exp) }
+      modifySets fun s => { s with facts := addFact s.facts conc id exp }
       match atom with
       | .app (.kind .EQUAL) _ => let _ ← assertEquality atom pol exp
       | _ => let _ ← assertPredicate atom pol exp

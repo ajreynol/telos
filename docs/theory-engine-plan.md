@@ -1697,9 +1697,11 @@ Certificates (an `unsat` that needs an uncertified step is `unknown`):
   rewrite of the intersection to `re.none` (`proveReInter`);
 - in the proof builder, an internal fact that is also an assumption is that
   assumption (`proveEdge`). An internal fact (of strings, sets or datatypes) is
-  recorded with the premises of the edge it makes, when it is asserted: one
-  derived again with other premises adds no edge, and the explanation went
-  through the first. Two concatenations that are not in one class are equal by
+  recorded with the premises of the edge it makes, when it is asserted, with
+  all its derivations (`addFact`): one derived again in the same branch adds no
+  edge, and the records are not undone on a backtrack, so a fact may have been
+  derived in another branch from other premises. The proof of an edge uses the
+  derivation, in either orientation, whose premises are the edge's reason. Two concatenations that are not in one class are equal by
   congruence when their components are, in turn (`byComponents`);
 - the EXTF inferences also try the substitution of the premises in the order
   of the size of the term each replaces (`Known.byReplaced`);

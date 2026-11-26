@@ -2054,7 +2054,7 @@ def assertInternalFact (ii : Inference) : m Unit := do
     if !holds then
       -- (the fact with the premises of the edge it makes: one derived again
       -- later, with other premises, adds no edge)
-      modifyStrings fun s => { s with facts := s.facts.insert ⟨lit⟩ (ii.id, expn) }
+      modifyStrings fun s => { s with facts := addFact s.facts lit ii.id expn }
       match atom with
       | .app (.kind .EQUAL) _ => let _ ← assertEquality atom pol expn
       | _ => let _ ← assertPredicate atom pol expn

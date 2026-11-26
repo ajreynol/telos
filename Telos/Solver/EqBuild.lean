@@ -200,13 +200,17 @@ mutual
             let (x, y) := EqProof.assumptionEq conc
             if x == a && y == b then return p
             if x == b && y == a then return .symm p
-        for conc in cands do
-          if let some (id, exp) := ee.dt.facts.get? ⟨conc⟩ <|> ee.sets.facts.get? ⟨conc⟩ <|>
-              ee.strings.facts.get? ⟨conc⟩ then
-            let p ← proveFact C conc id exp
-            let (x, y) := EqProof.assumptionEq conc
-            if x == a && y == b then return p
-            if x == b && y == a then return .symm p
+        -- (the derivation that made the edge, in either orientation: its premises
+        -- are the edge's reason; else any)
+        let derivs := cands.flatMap fun conc =>
+          (ee.dt.facts.getD ⟨conc⟩ [] ++ ee.sets.facts.getD ⟨conc⟩ [] ++
+            ee.strings.facts.getD ⟨conc⟩ []).map (conc, ·)
+        let ordered := derivs.filter (·.2.2 == edge.reason) ++ derivs.filter (·.2.2 != edge.reason)
+        if let some (conc, id, exp) := ordered.head? then
+          let p ← proveFact C conc id exp
+          let (x, y) := EqProof.assumptionEq conc
+          if x == a && y == b then return p
+          if x == b && y == a then return .symm p
         throw s!"a reason is not an assumption: {edge.reason.toSmtLib}"
     | .congruence =>
       -- a concatenation, whose prefix (a partial application, which the engine

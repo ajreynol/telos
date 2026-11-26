@@ -1,3 +1,4 @@
+import Std.Data.HashMap
 import Telos.Core.Node.Node
 
 /-!
@@ -26,5 +27,14 @@ instance : LawfulBEq Key where
 
 instance : LawfulHashable Key where
   hash_eq {a b} h := by rw [eq_of_beq h]
+
+/-- A theory's internal fact `conc`, from the inference `id` with the premises
+`exp`, added to its derivations (newest first): a fact may be derived again,
+after a backtrack, from other premises, and the proof builder takes the
+derivation whose premises are the reason of the edge it proves. -/
+def addFact (m : Std.HashMap Key (List (String × Node))) (conc : Node) (id : String) (exp : Node) :
+    Std.HashMap Key (List (String × Node)) :=
+  let l := m.getD ⟨conc⟩ []
+  if l.any (·.2 == exp) then m else m.insert ⟨conc⟩ ((id, exp) :: l)
 
 end Telos

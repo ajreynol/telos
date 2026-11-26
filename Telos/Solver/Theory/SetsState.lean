@@ -106,7 +106,7 @@ structure State where
   lemmaCache : Std.HashSet Key := {}
   /-- The internal facts asserted, with their inference and explanation, for the
   certificates. -/
-  facts : Std.HashMap Key (String × Node) := {}
+  facts : Std.HashMap Key (List (String × Node)) := {}
   /-- The last conflict of the theory: its inference, the conflict as sent, and
   its explanation (`TheoryEngine::getExplanation`). -/
   conflict : Option (String × Node × Array Node) := none

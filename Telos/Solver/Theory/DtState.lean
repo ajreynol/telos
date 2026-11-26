@@ -99,7 +99,7 @@ structure State where
   lemmaCache : Std.HashSet Key := {}
   /-- The internal facts asserted, with their inference and explanation, for the
   certificates (`EE.proveFact`). -/
-  facts : Std.HashMap Key (String × Node) := {}
+  facts : Std.HashMap Key (List (String × Node)) := {}
   /-- The last conflict of the theory. -/
   conflict : Option Conflict := none
   trail : Array Undo := #[]
