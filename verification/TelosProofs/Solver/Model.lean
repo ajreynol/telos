@@ -1217,6 +1217,28 @@ theorem negV_sound {a r : MVal} (h : Model.negV a = some r) :
     simp [toVal, __smtx_model_eval_uneg, native_zneg, native_rneg]
 
 omit [LogosFacts] in
+/-- Mathlib's floor of a rational is `Rat.floor`. -/
+theorem floor_eq_rat_floor (q : ℚ) : ⌊q⌋ = q.floor := by
+  rw [Rat.floor_def']; exact (Rat.floor_def q).symm
+
+/-- The floor of a rational is it, as a real, exactly when it is an integer. -/
+theorem floor_cast_eq_iff (q : ℚ) : (((⌊q⌋ : ℤ) : ℝ) = (q : ℝ)) ↔ q.den = 1 := by
+  rw [show (((⌊q⌋ : ℤ) : ℝ)) = (((⌊q⌋ : ℤ) : ℚ) : ℝ) by push_cast; rfl, Rat.cast_inj]
+  constructor
+  · intro h; rw [← h]; exact Rat.den_intCast _
+  · intro h
+    have : (q.num : ℚ) = q := (Rat.den_eq_one_iff q).1 h
+    rw [← this, Int.floor_intCast]
+
+/-- Logos's `is_int` of a rational: whether it is an integer. -/
+theorem isInt_eval (q : Rat) :
+    __smtx_model_eval_is_int (toVal (.rat q)) = toVal (.bool (q.den == 1)) := by
+  simp only [toVal, __smtx_model_eval_is_int, __smtx_model_eval_to_int, __smtx_model_eval_to_real,
+    native_real_to_int, native_int_to_real, Rat.floor_cast, __smtx_model_eval_eq, native_veq]
+  congr 1
+  rw [show ((q.den == 1) = decide (q.den = 1)) from rfl]
+  exact decide_eq_decide.2 (by rw [SmtValue.Real.injEq]; exact floor_cast_eq_iff q)
+
 theorem absV_sound {a r : MVal} (h : Model.absV a = some r) :
     __smtx_model_eval_abs (toVal a) = toVal r := by
   cases a <;> simp only [Model.absV, reduceCtorEq, Option.some.injEq] at h <;> subst h
@@ -2043,6 +2065,16 @@ theorem combine_sound_in (N : SmtModel) {k : Kind} {cs : Array Node} {vs : List 
           simp only; rw [← Node.toSmt, h0]
           try (obtain rfl := Option.some.inj h)
           simp [toVal, __smtx_model_eval_to_real, native_int_to_real, Rat.cast_intCast])
+       | (rw [toSmt_un (op := UserOp.to_int) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.to_int) x)
+            = SmtTerm.to_int (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, h0]
+          obtain rfl := Option.some.inj h
+          simp [toVal, __smtx_model_eval_to_int, native_real_to_int, Rat.floor_cast, floor_eq_rat_floor])
+       | (rw [toSmt_un (op := UserOp.is_int) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.is_int) x)
+            = SmtTerm.is_int (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
+          simp only; rw [← Node.toSmt, h0]
+          obtain rfl := Option.some.inj h
+          exact isInt_eval _)
        | (rw [toSmt_un (op := UserOp.set_singleton) rfl hs, show ∀ x, __eo_to_smt (Term.Apply (Term.UOp UserOp.set_singleton) x)
             = SmtTerm.set_singleton (__eo_to_smt x) from fun _ => rfl, __smtx_model_eval.eq_def]
           simp only; rw [← Node.toSmt, h0]; exact singleton_sound h)

@@ -645,6 +645,8 @@ def combine (k : Kind) (cs : Array Node) (vs : List MVal) : Option MVal :=
   | .GT, [a, b] => ltV b a
   | .GEQ, [a, b] => leqV b a
   | .TO_REAL, [.int i] => some (.rat i)
+  | .TO_INTEGER, [.rat q] => some (.int q.floor)
+  | .IS_INTEGER, [.rat q] => some (.bool (q.den == 1))
   | .STRING_LENGTH, [.str w] => some (.int w.length)
   | .STRING_TO_CODE, [.str w] => some (.int (strCode w))
   | .STRING_IS_DIGIT, [.str w] => some (.bool (decide (48 ≤ strCode w) && decide (strCode w ≤ 57)))

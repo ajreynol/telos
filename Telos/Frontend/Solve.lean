@@ -189,7 +189,20 @@ def modelRejection (N : DtNames) (M : Solver.Model) (as : List Node) : Solver.Un
       let vars := (a.vars.take 12).filterMap fun (x : Node) => match x with
         | .var name T => (M.const name T).map fun v => s!"{name}={showV v}"
         | _ => none
-      (isFalse, s!": {(a.toSmtLibLet N).take 300} is {v} (with {", ".intercalate vars})")
+      -- (if not evaluated: its innermost subterm not evaluated, below no binder)
+      let rec inner (fuel : Nat) (t : Node) : Node :=
+        match fuel, t with
+        | fuel + 1, .app op cs =>
+          if op.getKind.isQuantifier then t else
+          match cs.find? fun c => M.eval c == none with
+          | some c => inner fuel c
+          | none => t
+        | _, _ => t
+      let sub := if M.eval a == none then
+          let t := inner 1000 a
+          if t == a then "" else s!" [at {(t.toSmtLibLet N).take 160}]"
+        else ""
+      (isFalse, s!": {(a.toSmtLibLet N).take 300} is {v}{sub} (with {", ".intercalate vars})")
     | none => if M.tablesOk && M.constsOk then (true, "")
       else (false, ": its tables or constants are ill-typed")
   let d := s!"the model does not satisfy the input{why.2}"
