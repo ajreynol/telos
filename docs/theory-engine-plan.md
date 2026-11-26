@@ -1686,7 +1686,17 @@ Certificates (an `unsat` that needs an uncertified step is `unknown`):
   conclusion is related to the solver's (purification skolems of terms with
   the same rewrite are equal). The other inferences (the base solver's, the
   prefix conflicts) by substitution and rewriting alone. Each conclusion is
-  read back from Logos, and the proof is checked when it is made;
+  read back from Logos, and the proof is checked when it is made. When the
+  heads after `concat_eq` differ, they are unified (`concat_unify`) if one is a
+  constant or a unit, or a premise equates their lengths; the main equality is
+  also tried without the substitution of premises that define a variable, which
+  rewrite it inside the terms of skolems; and the conclusion is bridged by the
+  substitution of all the premises or of one. The conflicts of constants that
+  do not fit (`STRINGS_F_NCTN`, `STRINGS_N_NCTN`) are proven as cvc5's, by
+  regular expressions (`proveNctn`), and those of intersections end with the
+  rewrite of the intersection to `re.none` (`proveReInter`);
+- in the proof builder, an internal fact that is also an assumption is that
+  assumption (`proveEdge`);
 - in the proof builder, the merges of applications of constant arguments with
   their values (eager evaluation), and of distinct values (the rewriter).
 

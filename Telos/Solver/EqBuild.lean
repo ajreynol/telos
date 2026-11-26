@@ -193,6 +193,13 @@ mutual
         -- an internal fact of a theory (whose explanation may be an assumption)
         let cands := [Node.eqNode a b, Node.eqNode b a] ++
           (if b == Node.mkTrue then [a] else []) ++ (if a == Node.mkTrue then [b] else [])
+        -- (the conclusion as an assumption: a fact that is also a literal)
+        for conc in cands do
+          if let some i := C.index.get? ⟨conc⟩ then
+            let p : EqProof := .assume i
+            let (x, y) := EqProof.assumptionEq conc
+            if x == a && y == b then return p
+            if x == b && y == a then return .symm p
         for conc in cands do
           if let some (id, exp) := ee.dt.facts.get? ⟨conc⟩ <|> ee.sets.facts.get? ⟨conc⟩ <|>
               ee.strings.facts.get? ⟨conc⟩ then

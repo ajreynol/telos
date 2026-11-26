@@ -51,6 +51,9 @@ structure Known where
   /-- Substitutions replace the larger terms first (a premise about a term that
   another premise rewrites inside). -/
   largest : Bool := false
+  /-- The main equality of an inference is not substituted by premises that
+  define a variable, which also rewrite it inside the terms of skolems. -/
+  keepVars : Bool := false
   deriving Inhabited
 
 abbrev M := StateT Known EmitM
@@ -471,9 +474,11 @@ def conclude (C : Node) (j : Nat) (conc : Node) (R : Array Nat := #[]) : M Nat :
   let some q := bridge C conc | do
     -- by the substitution of the premises `R` in both, then rewriting (cvc5's
     -- `applyPredTransform`): `(conc, D)` and `(C, D)`
-    if !R.isEmpty then
-      let (dc, qc) ← substRw R conc
-      let (dC, qC) ← substRw R C
+    -- (or of one of them: the others may change the terms of the skolems)
+    for R' in (if R.size > 1 then #[R] ++ R.map (#[·]) else #[R]) do
+      if R'.isEmpty then continue
+      let (dc, qc) ← substRw R' conc
+      let (dC, qC) ← substRw R' C
       if dc == dC then
         let q : Option EqProof := compose qc (qC.map .symm)
         let (F, i) ← litFact (match q with | some q => .trans q pc | none => pc)
@@ -779,8 +784,9 @@ def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M
     if F != conc then throw "a conclusion of another form"
     return i
   let some (.app (.kind .EQUAL) #[a, b]) := A[m]? | throw "a main equality that is not one"
+  let keepVars := (← get).keepVars
   let R := ((List.range n).filter fun i => i != m && match A[i]! with
-    | .app (.kind .EQUAL) #[x, _] => Strings.isStringLike x
+    | .app (.kind .EQUAL) #[x, _] => Strings.isStringLike x && !(keepVars && x.getKind == .VARIABLE)
     | _ => false).toArray
   nonEmptyLengths
   -- the main equality, with the substitution and rewritten
@@ -804,8 +810,11 @@ def coreSteps (k : Kind) (n : Nat) (m : Nat) (flip rev : Bool) (conc : Node) : M
         let some ht := head? t₁ rev | throw err
         let some hs := head? s₁ rev | throw err
         if ht == hs then throw err
-        -- (a constant against a term, whose length the premises fix)
-        if (word? ht).isNone && (word? hs).isNone then throw err
+        -- (a constant or a unit against a term, whose length the premises fix,
+        -- or two terms whose lengths a premise equates)
+        let lenEq := (← get).A.any fun l => l == Node.eqNode (len ht) (len hs) || l == Node.eqNode (len hs) (len ht)
+        if (word? ht).isNone && (word? hs).isNone && ht.getKind != .SEQ_UNIT && hs.getKind != .SEQ_UNIT && !lenEq then
+          throw err
         let li ← lengthFact R (Node.eqNode (len ht) (len hs))
         let (_, u) ← rule .concat_unify [.node (Node.mkBool rev)] [cur.2, li]
         let some qt := substOne ht hs (.assume u) t₁ | throw err
@@ -931,6 +940,43 @@ def proveReInter (P : Array Node) : Option (Node × Node × List CCmd) := do
     if (EqProof.check #[] (.valid F cs)).isSome then some (C, F, cs) else none
   | .error _ => none
 
+/-- A conflict of an equality `(= t c)` between a concatenation `t` and a
+constant `c` that `t`'s constant components do not fit in, in order
+(`STRINGS_F_NCTN`, `STRINGS_N_NCTN`), as cvc5's proof: each component in its
+own constant's regular expression (`str-in-re-eval`) or in `(re.* re.allchar)`
+(`re-in-sigma-star`), so `t` in their concatenation (`re_concat`), so `c` (by
+the equality), which evaluates to `false`. -/
+def proveNctn (P : Array Node) : Option (Node × List CCmd) := do
+  let #[h] := P | none
+  let .app (.kind .EQUAL) #[a, b] := h | none
+  let (t, c, flip) := if a.isConst then (b, a, true) else (a, b, false)
+  if !c.isConst || t.getKind != .STRING_CONCAT then none
+  let act : M Unit := do
+    let p ← push ⟨.refl, [.node h], [], .assume⟩
+    let e ← known h p
+    let mut mems : List Nat := []
+    for x in t.getChildren do
+      let (_, i) ← if x.isConst then
+          rule .str_in_re_eval [.node (Node.eqNode (Node.mkNode .STRING_IN_REGEXP
+            #[x, Node.mkNode .STRING_TO_REGEXP #[x]]) Node.mkTrue)] []
+        else rule .re_in_sigma_star [.node x] []
+      let (_, j) ← rule .true_elim [] [i]
+      mems := mems ++ [j]
+    let (Mt, m) ← rule .re_concat [] mems
+    let .app (.kind .STRING_IN_REGEXP) #[_, R] := Mt | throw "a concatenation of another form"
+    let Mc := Node.mkNode .STRING_IN_REGEXP #[c, R]
+    -- `(c, t)`, then the membership of `t`
+    let ct : EqProof := if flip then .assume e else .symm (.assume e)
+    let (_, j) ← litFact (.trans (.congAt Mc #[some ct, none]) (atomProof Mt m))
+    let f ← conclude Mc j Node.mkFalse
+    let _ ← push ⟨.scope, [], [← posOf f], .pop⟩
+  match (act.run {}).run {} with
+  | .ok (((), _), st) =>
+    let cs := toCmds st.steps
+    let F := Node.mkNode .IMPLIES #[h, Node.mkFalse]
+    if (EqProof.check #[] (.valid F cs)).isSome then some (F, cs) else none
+  | .error _ => none
+
 /-- The inference is one of intersections (`proveReInter`). -/
 def isReInter (id : String) : Bool :=
   id == "STRINGS_RE_INTER_INCLUDE" || id == "STRINGS_RE_INTER_CONF" || id == "STRINGS_RE_INTER_INFER"
@@ -955,6 +1001,8 @@ def prove (id : String) (P : Array Node) (conc : Node) : Option (Node × List CC
       let cs := toCmds st.steps
       return ← if (EqProof.check #[] (.valid F cs)).isSome then some (F, cs) else none
     | .error _ => none
+  if (id == "STRINGS_F_NCTN" || id == "STRINGS_N_NCTN") && conc == Node.mkFalse then
+    if let some r := proveNctn P then return r
   let k ← kindOf id
   if P.isEmpty then none
   let h := premiseFormula P
@@ -993,8 +1041,9 @@ def prove (id : String) (P : Array Node) (conc : Node) : Option (Node × List CC
     else if k == .bound then (k, 0, false, false) :: srTries
     else if k == .ctn || k == .decompose || k == .eqRew then [(k, 0, false, false)] else tries ++ srTries
   -- (the second order only for small inferences: an attempt can be costly)
-  let orders := if P.size ≤ 8 then [false, true] else [false]
-  orders.findSome? fun largest => tries.findSome? fun (k, m, rev, flip) =>
+  let orders := if P.size ≤ 8 then [(false, false), (true, false)] else [(false, false)]
+  let orders := if k == .eq then orders ++ [(false, true)] else orders
+  orders.findSome? fun (largest, keepVars) => tries.findSome? fun (k, m, rev, flip) =>
     let act : M Unit := do
       let p ← push ⟨.refl, [.node h], [], .assume⟩
       if P.size == 1 then let _ ← known h p
@@ -1007,7 +1056,7 @@ def prove (id : String) (P : Array Node) (conc : Node) : Option (Node × List CC
         if isAnd then let _ ← rule .and_elim [.term (Term.Numeral 0)] [j]
       let c ← coreSteps k total m flip rev conc
       let _ ← push ⟨.scope, [], [← posOf c], .pop⟩
-    match (act.run { largest }).run {} with
+    match (act.run { largest, keepVars }).run {} with
     | .ok (((), _), st) =>
       let cs := toCmds st.steps
       if (EqProof.check #[] (.valid F cs)).isSome then some (F, cs) else none
