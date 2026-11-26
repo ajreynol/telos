@@ -331,9 +331,25 @@ mutual
 
   /-- A proof of `(t₁, t₂)` for terms of the engine. -/
   partial def proveT (C : BuildCtx) (t₁ t₂ : Node) : BuildM (Option EqProof) := do
-    let some i₁ := C.ee.nodeIds.get? ⟨t₁⟩ | throw "a term is not in the engine"
-    let some i₂ := C.ee.nodeIds.get? ⟨t₂⟩ | throw "a term is not in the engine"
-    proveIds C i₁ i₂
+    if t₁ == t₂ then return none
+    let ids := (C.ee.nodeIds.get? ⟨t₁⟩).bind fun i₁ => (C.ee.nodeIds.get? ⟨t₂⟩).map (i₁, ·)
+    match ids with
+    | some (i₁, i₂) =>
+      if EE.find C.ee i₁ == EE.find C.ee i₂ then return ← proveIds C i₁ i₂
+      byComponents C t₁ t₂
+    | none => byComponents C t₁ t₂
+
+  /-- Two concatenations of the same length whose components are equal in
+  turn, by congruence (as cvc5 explains the equality of two normal forms). -/
+  partial def byComponents (C : BuildCtx) (t₁ t₂ : Node) : BuildM (Option EqProof) := do
+    let .app (.kind .STRING_CONCAT) cs := t₁ | throw "no path in the equality graph"
+    let .app (.kind .STRING_CONCAT) ds := t₂ | throw "no path in the equality graph"
+    if cs.size != ds.size then throw "no path in the equality graph"
+    let mut args : Array (Option EqProof) := #[]
+    for i in [0:cs.size] do
+      args := args.push (← proveT C cs[i]! ds[i]!)
+    if args.all Option.isNone then return none
+    return some (.congAt t₁ args)
 
   /-- A proof of what the internal fact `conc` gives as an assumption, from its
   inference `id` and explanation `exp` (the datatypes theory's). -/

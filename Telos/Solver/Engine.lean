@@ -1836,8 +1836,9 @@ partial def satLemma (lem : Node) (isConflict : Bool) (kind : Option Pending) (p
           newSatSource (.derived (#[main] ++ (rel.filterMap id).map fun (d, j) => (d, some j)))
       | _ =>
         -- through the preprocessing, if any: `(= lem lemF)` by its CPC proof
+        -- (a proof is checked when it is made, but for a quantifier lemma's)
         newSatSource (.lemma (Thunk.mk fun _ =>
-          proof.get.bind (DtLemma.forFormula lem₀ lem) |>.bind fun q =>
+          proof.get.bind (DtLemma.forFormula lem₀ lem (checked := !isQuant)) |>.bind fun q =>
             if lemF == lem then some (lem, q)
             else tppCmds.map fun cs => (lemF, .trans (.symm (.valid (Node.eqNode lem lemF) cs)) q)))
     let lbl := ((← get).lemmaIds.get? ⟨lem₀⟩).getD "a theory lemma"

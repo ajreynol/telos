@@ -184,7 +184,9 @@ def prove (id : String) (lem : Node) : Option EqProof := do
 /-- A proof of `(F, true)` for the formula `F` given to the SAT solver for the
 lemma `lem`, from `p : (lem, true)`: `F` is `lem` rewritten (and oriented), so
 the two have the same rewrite. -/
-def forFormula (lem F : Node) (p : EqProof) : Option EqProof :=
+def forFormula (lem F : Node) (p : EqProof) (checked : Bool := false) : Option EqProof :=
+  -- (`p`, when its producer has checked it; the certificate is checked again)
+  if checked && F == lem then some p else
   let q := if F == lem then p else .trans (.rw F) (.trans (.symm (.rw lem)) p)
   if EqProof.check #[] q == some (F, Node.mkTrue) then some q else none
 

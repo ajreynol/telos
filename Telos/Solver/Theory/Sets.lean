@@ -191,8 +191,10 @@ mutual
   partial def assertSetsFact (atom : Node) (pol : Bool) (id : String) (exp : Node) : EEM Unit := do
     let conc := if pol then atom else Node.notNode atom
     note (.fact setsTheory id conc exp)
-    modifySets fun s => { s with sentFacts := s.sentFacts + 1, facts := s.facts.insert ⟨conc⟩ (id, exp) }
+    modifySets fun s => { s with sentFacts := s.sentFacts + 1 }
     if !(← holds atom pol) then
+      -- (with the premises of the edge it makes)
+      modifySets fun s => { s with facts := s.facts.insert ⟨conc⟩ (id, exp) }
       match atom with
       | .app (.kind .EQUAL) _ => let _ ← assertEquality atom pol exp
       | _ => let _ ← assertPredicate atom pol exp

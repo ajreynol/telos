@@ -54,6 +54,9 @@ structure Known where
   /-- The main equality of an inference is not substituted by premises that
   define a variable, which also rewrite it inside the terms of skolems. -/
   keepVars : Bool := false
+  /-- With `largest`, the size of an equality is that of the side it replaces
+  (rather than of its larger side). -/
+  byReplaced : Bool := false
   deriving Inhabited
 
 abbrev M := StateT Known EmitM
@@ -287,7 +290,7 @@ def substOrder (R : Array Nat) : M (Array Nat) := do
   if !k.largest then return R
   let size (i : Nat) : Nat := match k.A[i]? with
     | some (.app (.kind .EQUAL) #[x, y]) =>
-      if x.isConst then sizeUpTo 100 y else if y.isConst then sizeUpTo 100 x else
+      if x.isConst then sizeUpTo 100 y else if y.isConst || k.byReplaced then sizeUpTo 100 x else
         max (sizeUpTo 100 x) (sizeUpTo 100 y)
     | _ => 0
   return R.qsort fun i j => size i > size j || (size i == size j && i < j)
@@ -1041,9 +1044,10 @@ def prove (id : String) (P : Array Node) (conc : Node) : Option (Node × List CC
     else if k == .bound then (k, 0, false, false) :: srTries
     else if k == .ctn || k == .decompose || k == .eqRew then [(k, 0, false, false)] else tries ++ srTries
   -- (the second order only for small inferences: an attempt can be costly)
-  let orders := if P.size ≤ 8 then [(false, false), (true, false)] else [(false, false)]
-  let orders := if k == .eq then orders ++ [(false, true)] else orders
-  orders.findSome? fun (largest, keepVars) => tries.findSome? fun (k, m, rev, flip) =>
+  let orders : List Known := if P.size ≤ 8 then [{}, { largest := true }, { largest := true, byReplaced := true }]
+    else [{}]
+  let orders := if k == .eq then orders ++ [{ keepVars := true }] else orders
+  orders.findSome? fun cfg => tries.findSome? fun (k, m, rev, flip) =>
     let act : M Unit := do
       let p ← push ⟨.refl, [.node h], [], .assume⟩
       if P.size == 1 then let _ ← known h p
@@ -1056,7 +1060,7 @@ def prove (id : String) (P : Array Node) (conc : Node) : Option (Node × List CC
         if isAnd then let _ ← rule .and_elim [.term (Term.Numeral 0)] [j]
       let c ← coreSteps k total m flip rev conc
       let _ ← push ⟨.scope, [], [← posOf c], .pop⟩
-    match (act.run { largest, keepVars }).run {} with
+    match (act.run cfg).run {} with
     | .ok (((), _), st) =>
       let cs := toCmds st.steps
       if (EqProof.check #[] (.valid F cs)).isSome then some (F, cs) else none

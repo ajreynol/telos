@@ -2033,7 +2033,7 @@ def assertInternalFact (ii : Inference) : m Unit := do
     if let .app (.kind .EQUAL) #[a, b] := atom then
       if !pol && isStringLike a then
         modifyStrings fun s => { s with disequalities := s.disequalities.push (Node.eqNode a b) }
-    modifyStrings fun s => { s with sentFacts := s.sentFacts + 1, facts := s.facts.insert ⟨lit⟩ (ii.id, expn) }
+    modifyStrings fun s => { s with sentFacts := s.sentFacts + 1 }
     let id := ii.id
     let P := (match expn with
       | .app (.kind .AND) ps => ps
@@ -2052,6 +2052,9 @@ def assertInternalFact (ii : Inference) : m Unit := do
         if !(← hasTerm atom) then pure false
         else areEqual atom (Node.mkBool pol)
     if !holds then
+      -- (the fact with the premises of the edge it makes: one derived again
+      -- later, with other premises, adds no edge)
+      modifyStrings fun s => { s with facts := s.facts.insert ⟨lit⟩ (ii.id, expn) }
       match atom with
       | .app (.kind .EQUAL) _ => let _ ← assertEquality atom pol expn
       | _ => let _ ← assertPredicate atom pol expn

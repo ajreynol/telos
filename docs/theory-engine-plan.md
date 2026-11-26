@@ -1696,7 +1696,13 @@ Certificates (an `unsat` that needs an uncertified step is `unknown`):
   regular expressions (`proveNctn`), and those of intersections end with the
   rewrite of the intersection to `re.none` (`proveReInter`);
 - in the proof builder, an internal fact that is also an assumption is that
-  assumption (`proveEdge`);
+  assumption (`proveEdge`). An internal fact (of strings, sets or datatypes) is
+  recorded with the premises of the edge it makes, when it is asserted: one
+  derived again with other premises adds no edge, and the explanation went
+  through the first. Two concatenations that are not in one class are equal by
+  congruence when their components are, in turn (`byComponents`);
+- the EXTF inferences also try the substitution of the premises in the order
+  of the size of the term each replaces (`Known.byReplaced`);
 - in the proof builder, the merges of applications of constant arguments with
   their values (eager evaluation), and of distinct values (the rewriter).
 

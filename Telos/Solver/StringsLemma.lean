@@ -183,6 +183,7 @@ where
       | l => #[l]
     let (F, cs) ← StringsCore.prove id P conc
     if F != lem then none
-    checked lem (.valid lem cs)
+    -- (`prove` has checked the proof, and the certificate is checked again)
+    some (.valid lem cs)
 
 end Telos.Solver.StringsLemma
