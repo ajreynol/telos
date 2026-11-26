@@ -264,6 +264,7 @@ def solveScript (sc : Script) (u : Preprocess.UserOptions := {}) (eeEvents : Boo
   let named (n : Node) : String :=
     (substSkolems ((namedSkolems sc.dtNames out).map fun (k, v, _) => (k, v)) n).toSmtLibLet sc.dtNames
   let cfg : Solver.Config := { theories, inert := Solver.inertTheories theories (out ++ as), termBased := opts.termBased, eeEvents, triggerEvents, events, wantProof, cvc5Order,
+                                traceEvents := u.traceEvents,
                                 arith := { Solver.arithOptionsOf (sc.logic.getD "ALL") with order := engOrder },
                                 order := engOrder,
                                 pureArith := Solver.pureArithOf (sc.logic.getD "ALL"),

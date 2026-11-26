@@ -138,6 +138,8 @@ structure Config where
   triggerEvents : Bool := false
   /-- Record the events (off when only the answer is wanted: `telos --solve`). -/
   events : Bool := true
+  /-- Print each event to standard error as it happens (`--trace-events`). -/
+  traceEvents : Bool := false
   /-- Leave the explanation of a conflict to `run`, which certifies it
   (`certifyV`), rather than explaining it when it happens. -/
   defer : Bool := false
@@ -538,6 +540,7 @@ def emit (e : Event) : EngineM Unit := do
   | .modelUnsound _ T id => modify fun s => { s with modelUnsoundWhy := some (T.name, id) }
   | _ => pure ()
   if (← read).events then modify fun s => { s with events := s.events.push e }
+  if (← read).traceEvents then dbgTrace (e.print {}) fun _ => pure ()
 
 def level : EngineM Nat := do return (← get).level
 

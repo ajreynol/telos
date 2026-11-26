@@ -30,7 +30,8 @@ instead. A proof is a refutation of `(not (= t result))`, in parentheses as
 cvc5's `get-proof` prints it; without the outer parentheses it is a Eunoia
 file, which Ethos and the `logos` executable check. telos prints only proofs that Logos's checker accepts.
 With `--profile`, a table of where the time went is printed to standard error
-(`Telos/Core/Profile.lean`).
+(`Telos/Core/Profile.lean`); with `--profile-after SECS` also, that table so far
+after `SECS` seconds, for a run that does not end.
 
 Every result is equivalent to its input (`Telos.rewrite_correct`), with or
 without proofs.
@@ -61,7 +62,9 @@ the events at the interface of the theory solvers, as cvc5 prints them with
 cvc5's `-o theory-events-ee`. With `--trigger`, also the triggers E-matching
 makes, as cvc5's `-o trigger`. With `--no-preprocess`, the assertions are given
 to the engine as they are (for testing it on cvc5's own preprocessed
-assertions). With `--no-cvc5-order`, the engine does not imitate cvc5's order of
+assertions). With `--trace-events` (with `--solve` too), each event is also printed to
+standard error as it happens, for a run that does not end. With
+`--no-cvc5-order`, the engine does not imitate cvc5's order of
 nodes, which only decides the form of what it produces (the orientation of
 equalities), so its events may differ from cvc5's. An `unsat` answer is certified: the input assertions are
 unsatisfiable (`Telos.solve_unsat_correct`); with `--proof` (or `--proof-dir
@@ -82,6 +85,7 @@ structure Options where
   checkProof : Bool := false
   file : Option String := none
   profile : Bool := false
+  profileAfter : Option Nat := none
   postAsserts : Bool := false
   theoryEvents : Bool := false
   theoryEventsEE : Bool := false
@@ -115,6 +119,9 @@ def parseArgs : List String → Options → Except String Options
   | "-o" :: "theory-events-ee" :: rest, o => parseArgs rest { o with theoryEventsEE := true }
   | "-o" :: "trigger" :: rest, o => parseArgs rest { o with triggers := true }
   | "--profile" :: rest, o => parseArgs rest { o with profile := true }
+  | "--profile-after" :: n :: rest, o => match n.toNat? with
+    | some k => parseArgs rest { o with profile := true, profileAfter := some k }
+    | none => .error s!"--profile-after: not a number of seconds: {n}"
   | "--check-proof" :: rest, o => parseArgs rest { o with checkProof := true }
   | "--post-asserts" :: rest, o => parseArgs rest { o with postAsserts := true }
   | "--theory-events" :: rest, o => parseArgs rest { o with theoryEvents := true }
@@ -145,6 +152,10 @@ def main (args : List String) : IO UInt32 := do
   let some file := opts.file | IO.eprintln usage; return 2
   let input ← if file == "-" then (← IO.getStdin).readToEnd else IO.FS.readFile file
   if opts.profile then Profile.enable
+  if let some k := opts.profileAfter then
+    let _ ← IO.asTask (prio := .dedicated) do
+      IO.sleep (k * 1000).toUInt32
+      Profile.report
   if opts.dimacs then
     match Sat.solveDimacs input with
     | .ok out => IO.println out; return 0

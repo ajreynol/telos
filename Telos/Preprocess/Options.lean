@@ -138,6 +138,9 @@ structure UserOptions where
   /-- `--decision=MODE` (`internal`, `justification` or `stoponly`): the SAT
   solver's decision mode, which the logic decides otherwise. -/
   decision : Option String := none
+  /-- `--trace-events`: each theory-engine event printed to standard error as
+  it happens (for debugging a run that does not end). -/
+  traceEvents : Bool := false
   deriving Repr
 
 /-- The options the preprocessor runs with. -/
@@ -219,6 +222,7 @@ def UserOptions.parseArg (u : UserOptions) (arg : String) : Option UserOptions :
     some { u with arithStaticLearning := some b }
   else if let some b := boolOption? "repeat-simp" arg then
     some { u with repeatSimp := some b }
+  else if arg == "--trace-events" then some { u with traceEvents := true }
   else if arg.startsWith "--decision=" then
     let m := (arg.drop "--decision=".length).toString
     if ["internal", "justification", "stoponly"].contains m then some { u with decision := some m } else none
