@@ -2,6 +2,7 @@ import TelosProofs.Core.ArithNorm
 import TelosProofs.Core.Template
 import TelosProofs.Core.AciConcat
 import TelosProofs.Core.LenConcat
+import TelosProofs.Core.ReIncl
 
 /-!
 # Statically justified steps are CPC steps
@@ -22,5 +23,6 @@ theorem StaticProc.provesEq : ∀ (p : StaticProc) (n m : Node), p.Ok n m → Pr
   | .aci, _, _, h => aci_provesEq h
   | .aciConcat, _, _, h => aciConcat_provesEq h
   | .lenConcat _ _ _, _, _, h => lenConcat_provesEq h
+  | .reIncl _ _ _, _, _, h => reIncl_provesEq h
 
 end Telos

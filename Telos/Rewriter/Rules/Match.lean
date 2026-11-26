@@ -88,6 +88,7 @@ partial def matchPat (σ : Subst) : Pat → Node → List Subst
   | .bvLit vp wp, .const (.bitVector w v) =>
     (matchPat σ wp (.const (.integer w))).flatMap fun σ' => matchPat σ' vp (.const (.integer v))
   | .bvLit .., _ => []
+  | .elim .., _ => []
 
 /-- All extensions of `σ` under which the patterns `ps` match the children `cs`
 of an application of kind `k`. A list variable takes any run of children. -/
@@ -142,6 +143,11 @@ partial def Pat.instantiate (σ : Subst) (p : Pat) (sym : Bool := false) : Optio
     -- `((_ int_to_bv w) e)`, which `evaluate` reduces.
     | e, .const (.integer w) => some (.app (.indexed .INT_TO_BITVECTOR #[w]) #[e])
     | _, _ => none
+  | .elim k ps => do
+    match ← Pat.instantiateList σ ps sym with
+    | [] => none
+    | [c] => some c
+    | cs => some (.app (.kind k) cs.toArray)
 
 /-- The children a list of patterns stands for; list variables are spliced in. -/
 partial def Pat.instantiateList (σ : Subst) (ps : List Pat) (sym : Bool := false) :
@@ -290,6 +296,18 @@ partial def foldIntToBv (n : Node) : Rw n :=
           if rc.1 == c then none else some rc
         else none
 
+/-- Whether every application of an n-ary kind in a pattern's instance has two or
+more children, and so is a node telos builds. -/
+partial def Pat.fullApps (σ : Subst) : Pat → Bool
+  | .app k ps => ps.all (Pat.fullApps σ) &&
+    (match k.eoShape with
+      | .rightAssocNil .. => 2 ≤ ((Pat.instantiateList σ ps true).getD []).length
+      | _ => true)
+  | .indexed _ is ps => is.all (Pat.fullApps σ) && ps.all (Pat.fullApps σ)
+  | .elim _ ps => ps.all (Pat.fullApps σ)
+  | .bvLit v w => Pat.fullApps σ v && Pat.fullApps σ w
+  | .var _ | .listVar _ | .const _ => true
+
 namespace RuleSpec
 
 /-- Every match of the rule's left-hand side against `n`, with its premises. -/
@@ -349,6 +367,12 @@ def staticStep (r : RuleSpec) (n : Node) (σ : Subst) : Option (Rw n) := do
     some ⟨m, .static (.template tr args false) (show tr.Ok args n m from of_decide_eq_true h) (.refl m)⟩
   else none
 
+/-- The rule's right-hand side under the assignment `σ`, as Logos's program writes
+it (`(@bv v w)` as `((_ int_to_bv w) v)`). -/
+def rhsNode (r : RuleSpec) (σ : Subst) : Option Node := do
+  let p ← r.rhs
+  if p.fullApps σ then p.instantiate σ (sym := true) else none
+
 /-- `apply`, before folding `int_to_bv` applications. -/
 def applyRaw (r : RuleSpec) (n : Node) (prove : Option PremiseProver := none) : Option (Rw n) :=
   Profile.time "strategy: RARE matching" (fun _ => r.name) (fun _ => r.allMatches n prove) |>.findSome? fun σ =>
@@ -357,8 +381,8 @@ def applyRaw (r : RuleSpec) (n : Node) (prove : Option PremiseProver := none) : 
         -- The rule's left-hand side has `(@bv v w)`, which is `((_ int_to_bv w) v)`:
         -- write the matched literals that way first.
         r.lhs.instantiate σ (sym := true) >>= fun n' =>
-          toSymbolic n n' >>= fun rw => rw.next? (applyCmds cs)
-      else applyCmds cs n
+          toSymbolic n n' >>= fun rw => rw.next? (applyCmds cs · (r.rhsNode σ))
+      else applyCmds cs n (r.rhsNode σ)
 
 /-- Apply the rule to `n`: the first match whose command list Logos's checker
 accepts. -/

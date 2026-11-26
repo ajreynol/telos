@@ -884,8 +884,8 @@ The uses at run time now, to replace:
      its non-empty version with an `ArithEntail` premise, `re_concat`),
      `re_inter`, `re-inter-inclusion`, `re-in-empty`, and the scope closed
      (`scope`, `process_scope`, `bool-double-not-elim`). Not for memberships with
-     bound variables, which make the assumption open. Inclusion is decided by
-     the rule step itself, whose side condition is CPC's `$str_re_includes`.
+     bound variables, which make the assumption open. Inclusion is CPC's
+     `$str_re_includes`, with a cache (`Telos/Core/ReIncl.lean`).
      That test is weaker than cvc5's `regExpIncludes` for ranges: cvc5 rewrites
      `(re.union (re.++ (re.range "a" "c") (re.* re.allchar)) (re.comp (re.range "a" "c")))`
      to `(re.* re.allchar)`; its `re-union-inclusion` step failed Ethos until
@@ -990,6 +990,20 @@ The uses at run time now, to replace:
      over the 69 slow regressions: `aci_norm` 66s to none (`javafe…682` 14.5s to
      about 1s). `checkBy` knows its result, so it no longer reads it back, which also
      keeps annotations (`:qid`) that the read-back dropped.
+   - The result of a RARE step is not read back from Logos: `gen-rules.py` writes
+     each rule's right-hand side (440 of 454 rules; the others have typed empty
+     values or computed terms), and `applyCmds` compares its instance with the
+     fact Logos proves, which costs no proof; another term is read back as
+     before. Over the slow regressions, checker time 21.2s to 11.3s (read back
+     10.6s to 0.6s). As above, annotations are kept (`:pattern`), as in cvc5.
+   - The inclusion of regular expressions (`re-inter-inclusion`,
+     `re-union-inclusion`): `StaticProc.reIncl` (`Telos/Core/ReIncl.lean`) is
+     `$str_re_includes` with a cache of the pairs decided; Logos's search is
+     exponential. Only the flattening and the leaves run Logos's programs. The
+     intersection conflicts of strings end with this rewrite, which their CPC
+     proof leaves to the rewriter (`StringsCore.proveFrom`), so it is not run by
+     Logos (`regexp_inclusion`, whose proof Logos does not check in 600s, 0.0s;
+     `re-inter-stack-ovf` 1.0s, `bug615` 8s).
    - Template rules: a RARE rule whose program builds `(= lhs rhs)` from its
      arguments with no condition is taken statically (`StaticProc.template`,
      `Telos/Core/Template.lean`): telos builds both sides, the side condition

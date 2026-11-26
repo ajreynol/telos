@@ -2,6 +2,7 @@ import Telos.Core.PolyNorm
 import Telos.Core.Template
 import Telos.Core.AciNorm
 import Telos.Core.LenConcat
+import Telos.Core.ReIncl
 
 /-!
 # Statically justified steps
@@ -47,6 +48,10 @@ inductive StaticProc where
   /-- The length of `(str.++ a b cs…)`, by `str_len_concat_rec`
   (`Telos/Core/LenConcat.lean`). -/
   | lenConcat (a b : Node) (cs : List Node)
+  /-- `(re.inter r (re.comp s))` to `re.none` by `re_inter_inclusion`, or
+  `(re.union r (re.comp s))` to `(re.* re.allchar)` by `re_union_inclusion`
+  (`Telos/Core/ReIncl.lean`). -/
+  | reIncl (inter : Bool) (r s : Node)
 
 /-- `[arith_poly_norm (= n (arithNorm n o))]`. -/
 def StaticProc.arithNormCmds (n : Node) (o : NodeOrder := {}) : CCmdList :=
@@ -69,6 +74,7 @@ def StaticProc.Ok : StaticProc → Node → Node → Prop
   | .aci, n, m => Aci.Ok n m
   | .aciConcat, n, m => AciConcat.Ok n m
   | .lenConcat a b cs, n, m => LenConcat.Ok a b cs n m
+  | .reIncl inter r s, n, m => ReIncl.Ok inter r s n m
 
 /-- The CPC commands a step from `n` to `m` stands for. -/
 def StaticProc.cmds : StaticProc → Node → Node → CCmdList
@@ -78,5 +84,6 @@ def StaticProc.cmds : StaticProc → Node → Node → CCmdList
   | .aci, n, m => StaticProc.aciCmds n m
   | .aciConcat, n, m => StaticProc.aciCmds n m
   | .lenConcat a b cs, _, _ => LenConcat.cmds a b cs
+  | .reIncl inter _ _, n, m => .cons (.step (ReIncl.rule inter) (.cons (eqFormula n m) .nil) .nil) .nil
 
 end Telos

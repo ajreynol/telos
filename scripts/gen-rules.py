@@ -282,7 +282,13 @@ def spec_of_rule(form, crules):
         is_list[vname] = ":list" in attrs_p
         var_types.append(VAR_TYPES.get(p[1]) if isinstance(p[1], str) else None)
 
-    def pat(t, parent_kind=None):
+    def pat(t, parent_kind=None, rhs=False):
+        if rhs and isinstance(t, list) and t and t[0] == "eo::list_singleton_elim":
+            e = t[2]
+            kind = KINDS.get(SEQ_ALIASES.get(e[0], e[0])) if isinstance(e, list) else None
+            if len(t) != 3 or kind not in NARY:
+                raise Skip("singleton elimination")
+            return f".elim .{kind} [{', '.join(pat(a, kind, True) for a in e[1:])}]"
         if isinstance(t, str):
             if t in variables:
                 if is_list[t]:
@@ -307,23 +313,27 @@ def spec_of_rule(form, crules):
         head = t[0] if t and isinstance(t[0], str) else None
         head = SEQ_ALIASES.get(head, head)
         if head == "@bv" and len(t) == 3:
-            return f".bvLit ({pat(t[1])}) ({pat(t[2])})"
+            return f".bvLit ({pat(t[1], None, rhs)}) ({pat(t[2], None, rhs)})"
         if head in INDEXED:
             kind, k = INDEXED[head]
             if len(t) != k + 2:
                 raise Skip(f"arity of {head}")
-            idx = [pat(a) for a in t[1:1 + k]]
-            args = [pat(a, kind) for a in t[1 + k:]]
+            idx = [pat(a, None, rhs) for a in t[1:1 + k]]
+            args = [pat(a, kind, rhs) for a in t[1 + k:]]
             return f".indexed .{kind} [{', '.join(idx)}] [{', '.join(args)}]"
         kind = KINDS.get(head) or KINDS_BY_ARITY.get((head, len(t) - 1))
         if kind is None:
             raise Skip(f"operator {show(t[0]) if t else '()'}")
-        args = [pat(a, kind) for a in t[1:]]
+        args = [pat(a, kind, rhs) for a in t[1:]]
         return f".app .{kind} [{', '.join(args)}]"
 
     if not isinstance(concl[1], list) and concl[1] not in NULLARY:
         raise Skip("left-hand side is not an application")
     lhs = pat(concl[1])
+    try:
+        rhs = pat(concl[2], None, True)
+    except Skip:
+        rhs = None  # read back from Logos's program
     args_form = attrs.get(":args", [])
     if not isinstance(args_form, list):
         raise Skip("arguments are not plain variables")
@@ -367,7 +377,8 @@ def spec_of_rule(form, crules):
         f"    args := [{args_str}],\n"
         + (f"    typeArgs := [{', '.join(f'({p}, {i})' for p, i in type_args)}],\n" if type_args else "")
         + f"    lhs := {lhs},\n"
-        f"    premises := [{', '.join(premises)}],\n"
+        + (f"    rhs := some ({rhs}),\n" if rhs else "")
+        + f"    premises := [{', '.join(premises)}],\n"
         f"    varTypes := [{', '.join('some .' + t if t else 'none' for t in var_types)}] }}"
     )
 

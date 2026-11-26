@@ -1254,15 +1254,13 @@ intersection with members `R₂` and `(re.comp R₁)`, where `R₁` includes `R�
 (`ensureProofForReInterUnionInclusion`): the two members grouped first
 (`aci_norm`), then `re-inter-inclusion` (resp. `re-union-inclusion`) on the
 group; the other members are kept, and the result is rewritten again.
-Inclusion is decided by that step, whose side condition is CPC's
-`$str_re_includes` (cvc5's `RegExpEntail::regExpIncludes`). -/
+Inclusion (cvc5's `RegExpEntail::regExpIncludes`) is CPC's `$str_re_includes`,
+with a cache (`Telos/Core/ReIncl.lean`). -/
 def reInterUnionInclusion (n : Node) : Option (Rw n) := do
   let nk := n.getKind
   if nk != .REGEXP_INTER && nk != .REGEXP_UNION then none
   let isInter := nk == .REGEXP_INTER
-  let rule : Eo.CRule := if isInter then .re_inter_inclusion else .re_union_inclusion
-  let result := if isInter then reNone else reAllStar
-  let incl := fun (d : Node) => checkBy rule d result
+  let incl := fun (d : Node) => byReIncl isInter d
   let cs := n.getChildren.toList
   let negs := cs.filter (·.getKind == .REGEXP_COMPLEMENT)
   let poss := cs.filter (·.getKind != .REGEXP_COMPLEMENT)
@@ -1377,6 +1375,7 @@ def inReInclusion (n : Node) : Option (Rw n) := do
     | [(_, g, _)] => g
     | _ => mkNode .REGEXP_CONCAT (gen.map (·.2.1)).toArray
   let inter := mkNode .REGEXP_INTER #[g, mkNode .REGEXP_COMPLEMENT #[r]]
+  if !ReIncl.includes r.toEo g.toEo then none
   let st := fun (rl : Eo.CRule) (args : List Node) (prems : List Nat) =>
     Proof.push ⟨rl, args.map .node, prems, .step⟩
   let run : Proof.EmitM Nat := do

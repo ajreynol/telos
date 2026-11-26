@@ -71,6 +71,8 @@ def expectedToFail : List String :=
    -- arrays, with indices and elements of other types (tested below)
    "array-read-over-write", "array-read-over-write2", "array-store-overwrite",
    "array-store-self", "array-read-over-write-split", "array-store-swap",
+   -- an element and sequences of it
+   "seq-nth-concat-unit",
    -- an element and sets of it (`test/rewriter/sets.smt2`)
    "sets-insert-elim", "sets-inter-member", "sets-minus-member", "sets-union-member"]
 

@@ -1,0 +1,6 @@
+;; post-asserts start
+(set-logic UFNIA)
+(assert (not (forall ((k Int)) (not (forall ((a Int) (b Int)) (! (= k (ite (= (mod_total a 2) 0) 1 0)) :pattern (b)))))))
+(assert true)
+(check-sat)
+;; post-asserts end

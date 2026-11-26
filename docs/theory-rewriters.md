@@ -85,6 +85,9 @@ rejects it:
 - `checkBy r n m`: telos computes `m`, and a rule taking `(= n m)` as its argument
   (`aci_norm`, `arith_poly_norm`, …) validates it. This is how results of
   unverified algorithms are certified.
+- The result of a RARE step is the rule's right-hand side in the generated table
+  (`RuleSpec.rhs`), which is compared with the fact Logos proves; a rule without
+  one is read back.
 - `Rw.next`, `Rw.next?`, `Rw.congrArg`, `firstOf`: chain steps, rewrite below
   the top, try alternatives.
 - For a rule whose `:requires` computes the right-hand side with a Logos

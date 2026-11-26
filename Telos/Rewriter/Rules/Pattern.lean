@@ -8,9 +8,10 @@ pattern of its left-hand side, which pattern variables are the rule's `:args`,
 and the terms its premises evaluate. The table of all of them is generated from
 the Eunoia signature (`Telos/Rewriter/Rules/Generated.lean`, by `scripts/gen-rules.py`).
 
-A spec does not describe the right-hand side. Logos's program for the rule
-computes it, and Logos's checker validates the step (`Telos/Core/Certified.lean`).
-So the specs, the generator and the matcher (`Telos/Rewriter/Rules/Match.lean`) are
+Logos's checker validates each step (`Telos/Core/Certified.lean`). A spec may
+also describe the right-hand side, so that the result need not be read back from
+the term Logos's program computes; where it does not, or where that is another
+term, the result is read back. So the specs, the generator and the matcher (`Telos/Rewriter/Rules/Match.lean`) are
 untrusted: a wrong spec only means that a rewrite is missed.
 -/
 
@@ -34,6 +35,9 @@ inductive Pat where
   /-- A bit-vector literal `(@bv value width)`: the patterns match the value and
   the width as integer constants. -/
   | bvLit (value width : Pat)
+  /-- In a right-hand side, `(eo::list_singleton_elim f (f …))`: the application of
+  the n-ary kind `k`, or its only element. -/
+  | elim (k : Kind) (args : List Pat)
   deriving Repr, Inhabited
 
 /-- A premise of a rule, discharged by evaluation: `(= value expr)` when `symm`,
@@ -69,6 +73,8 @@ structure RuleSpec where
   typeArgs : List (Nat × Nat) := []
   /-- The rule's left-hand side. -/
   lhs : Pat
+  /-- The rule's right-hand side, where telos can write it. -/
+  rhs : Option Pat := none
   /-- The premises, in order. Each is discharged by an `evaluate` step (and a
   `symm` step), and the rule applies when the values match. -/
   premises : List Premise

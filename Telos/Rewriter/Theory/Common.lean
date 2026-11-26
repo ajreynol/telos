@@ -53,6 +53,18 @@ def byLenConcat (n : Node) : Option (Rw n) :=
     else byRule "str-len-concat-rec" _
   | n => byRule "str-len-concat-rec" n
 
+/-- The inclusion of two regular expressions, by `re-inter-inclusion` (with
+`inter`, from `(re.inter r (re.comp s))`) or `re-union-inclusion`, statically. -/
+def byReIncl (inter : Bool) (n : Node) : Option (Rw n) :=
+  match n.getChildren[0]?, (n.getChildren[1]?).bind (·.getChildren[0]?) with
+  | some r, some s =>
+    let m := ReIncl.result inter
+    if h : Profile.time "static: side conditions" (fun _ => if inter then "re-inter-inclusion" else "re-union-inclusion")
+        (fun _ => decide (ReIncl.Ok inter r s n m)) = true then
+      some ⟨m, .static (.reIncl inter r s) (show ReIncl.Ok inter r s n m from of_decide_eq_true h) (.refl m)⟩
+    else none
+  | _, _ => none
+
 /-- Rewrite `n` to its value, by the `evaluate` rule. -/
 def byEvaluate (n : Node) : Option (Rw n) :=
   applyCmds (.cons (.step .evaluate (.cons n.toEo .nil) .nil) .nil) n

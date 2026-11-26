@@ -869,19 +869,13 @@ def premiseFormula (P : Array Node) : Node :=
 as cvc5's `InferProofCons`: each membership of the premises as a positive one
 (a negative one is a membership in the complement, by their rewrites), over
 the first one's string (by the premises' equalities), their intersection by
-`re_inter`, and its rewrite to the conclusion (`false`). -/
-partial def hasReInter (n : Node) : Bool :=
-  n.getKind == .REGEXP_INTER || n.getChildren.any hasReInter
-
-def proveReInter (P : Array Node) (conc : Node) : Option (Node × List CCmd) := do
-  if P.isEmpty || conc != Node.mkFalse then none
-  -- (a guard: the inclusion is decided by CPC's `$str_re_includes`, run by
-  -- Logos, whose search over intersections nested in concatenations is
-  -- exponential without cvc5's cache; such a conflict stays uncertified)
-  if P.any hasReInter then none
+`re_inter`: the CPC proof of `(=> (premiseFormula P) C)` for `C` the membership
+in the intersection, with `C`. Its rewrite to the conclusion (`false`) is left to
+the rewriter (`proveFrom`), whose steps Logos does not run. -/
+def proveReInter (P : Array Node) : Option (Node × Node × List CCmd) := do
+  if P.isEmpty then none
   let h := premiseFormula P
-  let F := Node.mkNode .IMPLIES #[h, conc]
-  let act : M Unit := do
+  let act : M Node := do
     let p ← push ⟨.refl, [.node h], [], .assume⟩
     let mut facts : Array Nat := #[]
     if P.size == 1 then facts := #[← known h p]
@@ -927,18 +921,23 @@ def proveReInter (P : Array Node) (conc : Node) : Option (Node × List CCmd) := 
       let (_, jk) := mems[k]!
       let (C, c) ← rule .re_inter [] [cur.2, jk]
       cur := (C, c)
-    let c ← conclude cur.1 cur.2 conc
-    let _ ← push ⟨.scope, [], [← posOf c], .pop⟩
+    if Telos.rewrite cur.1 != Node.mkFalse then throw "an intersection that is not empty"
+    let _ ← push ⟨.scope, [], [← posOf cur.2], .pop⟩
+    return cur.1
   match (act.run {}).run {} with
-  | .ok (((), _), st) =>
+  | .ok ((C, _), st) =>
     let cs := toCmds st.steps
-    if (EqProof.check #[] (.valid F cs)).isSome then some (F, cs) else none
+    let F := Node.mkNode .IMPLIES #[h, C]
+    if (EqProof.check #[] (.valid F cs)).isSome then some (C, F, cs) else none
   | .error _ => none
+
+/-- The inference is one of intersections (`proveReInter`). -/
+def isReInter (id : String) : Bool :=
+  id == "STRINGS_RE_INTER_INCLUDE" || id == "STRINGS_RE_INTER_CONF" || id == "STRINGS_RE_INTER_INFER"
 
 /-- The inference may have a proof (`prove`). -/
 def provable (id : String) (P : Array Node) : Bool :=
-  !P.isEmpty && (id == "STRINGS_UNIT_INJ" || id == "STRINGS_RE_INTER_INCLUDE" || id == "STRINGS_RE_INTER_CONF" ||
-    id == "STRINGS_RE_INTER_INFER" || (kindOf id).isSome)
+  !P.isEmpty && (id == "STRINGS_UNIT_INJ" || (kindOf id).isSome)
 
 /-- **A CPC proof of `(=> (premiseFormula P) conc)`** for the core inference
 `id`, which Logos checks. -/
@@ -956,8 +955,6 @@ def prove (id : String) (P : Array Node) (conc : Node) : Option (Node × List CC
       let cs := toCmds st.steps
       return ← if (EqProof.check #[] (.valid F cs)).isSome then some (F, cs) else none
     | .error _ => none
-  if id == "STRINGS_RE_INTER_INCLUDE" || id == "STRINGS_RE_INTER_CONF" || id == "STRINGS_RE_INTER_INFER" then
-    return ← proveReInter P conc
   let k ← kindOf id
   if P.isEmpty then none
   let h := premiseFormula P
@@ -1046,7 +1043,13 @@ def proveFromProof (proof : Option (Node × List CCmd)) (P : Array Node) (ps : A
 
 /-- A proof of `(conc, true)` from proofs of `(pᵢ, true)` for the premises `P`
 of the core inference `id`. -/
-def proveFrom (id : String) (P : Array Node) (ps : Array EqProof) (conc : Node) : Option EqProof :=
+def proveFrom (id : String) (P : Array Node) (ps : Array EqProof) (conc : Node) : Option EqProof := do
+  if isReInter id then
+    if conc != Node.mkFalse then none
+    let (C, F, cs) ← proveReInter P
+    let q ← proveFromProof (some (F, cs)) P ps
+    -- `(false, C)`, then `(C, true)`
+    return .trans (.symm (.rw C)) q
   proveFromProof (prove id P conc) P ps
 
 /-- The CPC proof of `(=> h conc)`, for `h` the conjunction of `E`, from a proof

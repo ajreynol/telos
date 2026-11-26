@@ -168,8 +168,9 @@ def lastRuleName : CCmdList → String
   | .cons _ cs => lastRuleName cs
 
 /-- Run `cs`. If it proves `(= n r)` and `r` reads back as a node `m`, return `m`,
-certified. Each phase is a profiling probe, keyed by the rule of the last step. -/
-def applyCmds (cs : CCmdList) (n : Node) : Option (Rw n) :=
+certified. Each phase is a profiling probe, keyed by the rule of the last step.
+`r` is read back only if it is not the translation of `guess?`. -/
+def applyCmds (cs : CCmdList) (n : Node) (guess? : Option Node := none) : Option (Rw n) :=
   let rule := fun (_ : Unit) => lastRuleName cs
   let rejected (_ : Unit) : Option (Rw n) := Profile.time "checker: rejected" rule fun _ => none
   if hT : Profile.time "checker: side conditions" rule
@@ -177,7 +178,12 @@ def applyCmds (cs : CCmdList) (n : Node) : Option (Rw n) :=
     let st := Profile.time "checker: run" rule fun _ => runFromEmpty cs
     if hC : __eo_state_is_closed st = true then
       let P := __eo_state_proven_nth st 0
-      match Profile.time "checker: read back" rule fun _ => eqRhs? P >>= Node.ofEo n.vars with
+      let g := guess?.getD n
+      if hG : Profile.time "checker: compare" rule
+          (fun _ => guess?.isSome && decide (P = eqFormula n g)) = true then
+        some ⟨g, .step cs ⟨of_decide_eq_true hT, hC, of_decide_eq_true (Bool.and_eq_true _ _ |>.mp hG).2⟩
+          (.refl g)⟩
+      else match Profile.time "checker: read back" rule fun _ => eqRhs? P >>= Node.ofEo n.vars with
       | some m =>
         if hE : Profile.time "checker: compare" rule (fun _ => decide (P = eqFormula n m)) = true then
           some ⟨m, .step cs ⟨of_decide_eq_true hT, hC, of_decide_eq_true hE⟩ (.refl m)⟩
