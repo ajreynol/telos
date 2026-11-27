@@ -1,5 +1,6 @@
 import TelosProofs.Core.Tri
 import Telos.Core.Learn
+import TelosProofs.Core.StrSplit
 
 /-!
 # Learned literals are implied
@@ -1038,5 +1039,6 @@ theorem SemProc.equiv : ∀ (p : SemProc) (n m : Node), p.Ok n m → n.WellTyped
     rcases hm with rfl | ⟨ds, rfl⟩
     · exact conflict_equiv L cs h' hn
     · exact learn_equiv L cs ds h' hn
+  | .strSplit i j, n, m, h, hn => StrSplitProof.strSplit_equiv i j n m h hn
 
 end Telos

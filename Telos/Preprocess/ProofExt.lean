@@ -1,5 +1,6 @@
 import Std.Data.HashMap
 import Telos.Preprocess.CircuitPropagator
+import Telos.Preprocess.Theory.StringsLenUnify
 
 /-!
 # CPC proofs of the preprocessor's semantic and substitution steps
@@ -19,6 +20,9 @@ proof follows the step exactly:
   fact from those of the items it depends on, with the clausal rules of the
   propagator's own proofs (`CircuitPropagator.lean`), then the conjunction with
   the learned literals; or, for a conflict, `false` (`learnE`);
+* `SemProc.strSplit` (a length-based split of a string equality): as cvc5
+  elaborates `MACRO_STR_EQ_LEN_UNIFY`, by `concat_unify` and `concat_eq`
+  (`strSplitE`, `Telos/Preprocess/Theory/StringsLenUnify.lean`);
 * `Certified.tri` (substitutions): under the assumption of the result, each
   justification is a fact (`refl`, `trans` with an entry, `cong`), each chain
   relates a conjunct to its result, and the input follows; under the
@@ -348,6 +352,7 @@ def preprocessExt : Ext where
   semantic p n k := match p with
     | .reorg => reorgE n k
     | .learn L => learnE L n k
+    | .strSplit i j => strSplitE i j n k
   tri P n k facts := triE P n k facts
 
 end Telos.Preprocess

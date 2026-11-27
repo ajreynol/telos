@@ -183,7 +183,7 @@ partial def emitChainWith (X : Ext) : {n m : Node} → Certified n m → EmitM (
     let p ← emitCmds (proc.cmds n k)
     return #[p] ++ (← emitChainWith X rest)
   | n, _, @Certified.semantic _ k _ p _ rest => do
-    let f ← timedE (match p with | .reorg => "reorg" | .learn _ => "learn") (X.semantic p n k)
+    let f ← timedE (match p with | .reorg => "reorg" | .learn _ => "learn" | .strSplit .. => "strSplit") (X.semantic p n k)
     return #[f] ++ (← emitChainWith X rest)
   | n, _, @Certified.tri _ k _ P _ rws rest => do
     let mut facts := #[]

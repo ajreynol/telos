@@ -26,8 +26,8 @@ telos certifies each case by CPC rules:
   `str-substr-z-eq-empty-leq`).
 
 The length-based unification `rewriteViaStrEqLenUnifyPrefix`
-(`Telos/Preprocess/Theory/StringsLenUnify.lean`). Not ported:
-`rewriteViaStrEqLenUnify`. Regular expression equalities (`RE_EQ_ELIM`) are
+and its split `rewriteViaStrEqLenUnify` (`SPLIT_EQ`; not its stripping cases)
+(`Telos/Preprocess/Theory/StringsLenUnify.lean`). Regular expression equalities (`RE_EQ_ELIM`) are
 not ported either.
 -/
 
@@ -226,6 +226,6 @@ def strEqualityExt (n : Node) : Option (Rw n) := do
   let isStrTerm (t : Node) : Bool := !t.isConst && t.getKind.theoryId == .THEORY_STRINGS
   if !(isStrTerm a || isStrTerm b) then none
   firstOf [fun _ => eqNctn n, fun _ => eqNfix n, fun _ => strEqUnify n, fun _ => strEqReplace n,
-    fun _ => strEmpSubstr n, fun _ => strEqLenUnifyPrefix n]
+    fun _ => strEmpSubstr n, fun _ => strEqLenUnifyPrefix n, fun _ => strEqLenUnify n]
 
 end Telos.Preprocess

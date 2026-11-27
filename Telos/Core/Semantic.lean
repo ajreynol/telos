@@ -1,6 +1,7 @@
 import Std.Data.HashSet
 import Telos.Core.Node.Key
 import Telos.Core.Learn
+import Telos.Core.StrSplit
 
 /-!
 # Semantically justified steps
@@ -23,7 +24,9 @@ Procedures:
 * `reorg`: two conjunctions with the same conjuncts, up to nesting, `true` and
   repetition (splitting the pipeline's conjuncts, adding `true` for lemmas);
 * `learn`: a conjunction with literals added, learned by Boolean propagation
-  (`Telos/Core/Learn.lean`), or `false` if propagation finds a conflict.
+  (`Telos/Core/Learn.lean`), or `false` if propagation finds a conflict;
+* `strSplit`: an equality of concatenations of strings split into those of
+  prefixes of equal lengths and of the suffixes (`Telos/Core/StrSplit.lean`).
 -/
 
 namespace Telos
@@ -60,6 +63,9 @@ inductive SemProc where
   | reorg
   /-- Literals learned by Boolean propagation, added (`Telos/Core/Learn.lean`). -/
   | learn (L : LearnPlan)
+  /-- An equality of concatenations split after `i` and `j` components
+  (`Telos/Core/StrSplit.lean`). -/
+  | strSplit (i j : Nat)
 
 /-- The side condition of a step from `n` to `m`. -/
 def SemProc.Ok : SemProc → Node → Node → Prop
@@ -67,6 +73,7 @@ def SemProc.Ok : SemProc → Node → Node → Prop
     n.isAndApp = true ∧ m.isAndApp = true ∧ n.andShapeOk = true ∧ m.andShapeOk = true ∧
       (∀ c ∈ m.conjuncts, c ∈ n.conjuncts) ∧ (∀ c ∈ n.conjuncts, c ∈ m.conjuncts)
   | .learn L, n, m => L.Ok n m = true
+  | .strSplit i j, n, m => StrSplit.ok i j n m = true
 
 instance (p : SemProc) (n m : Node) : Decidable (p.Ok n m) := by
   cases p <;> unfold SemProc.Ok <;> infer_instance
@@ -91,10 +98,12 @@ def SemProc.check : SemProc → Node → Node → Bool
     n.isAndApp && m.isAndApp && n.andShapeOk && m.andShapeOk &&
       (let cn := n.conjuncts; let cm := m.conjuncts; subsetBy cm cn && subsetBy cn cm)
   | .learn L, n, m => L.Ok n m
+  | .strSplit i j, n, m => StrSplit.ok i j n m
 
 theorem SemProc.check_ok {p : SemProc} {n m : Node} (h : p.check n m = true) : p.Ok n m := by
   cases p
   case learn L => exact h
+  case strSplit i j => exact h
   simp only [SemProc.check, Bool.and_eq_true] at h
   obtain ⟨⟨⟨⟨h₁, h₂⟩, h₃⟩, h₄⟩, h₅, h₆⟩ := h
   exact ⟨h₁, h₂, h₃, h₄, subsetBy_mem h₅, subsetBy_mem h₆⟩
