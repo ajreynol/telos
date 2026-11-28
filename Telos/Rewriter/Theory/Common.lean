@@ -65,9 +65,21 @@ def byReIncl (inter : Bool) (n : Node) : Option (Rw n) :=
     else none
   | _, _ => none
 
-/-- Rewrite `n` to its value, by the `evaluate` rule. -/
-def byEvaluate (n : Node) : Option (Rw n) :=
+/-- Rewrite `n` to its value, by running the `evaluate` rule in Logos's checker. -/
+def byEvaluateChecked (n : Node) : Option (Rw n) :=
   applyCmds (.cons (.step .evaluate (.cons n.toEo .nil) .nil) .nil) n
+
+/-- Rewrite `n` to its value, by the `evaluate` rule: statically for an
+operator over constants (`StaticProc.evalConst`), otherwise by running Logos's
+checker. -/
+def byEvaluate (n : Node) : Option (Rw n) :=
+  match EvalConst.value n with
+  | some m =>
+    if h : Profile.time "static: side conditions" (fun _ => "evaluate")
+        (fun _ => decide (EvalConst.Ok n m)) = true then
+      some ⟨m, .static .evalConst (show EvalConst.Ok n m from of_decide_eq_true h) (.refl m)⟩
+    else byEvaluateChecked n
+  | none => byEvaluateChecked n
 
 /-- Rewrite `n` by the rule `r` with the given arguments, whose premises are
 proven by `premiseSteps`, in order (one step per premise). For premises that

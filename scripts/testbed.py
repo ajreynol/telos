@@ -17,7 +17,9 @@ DIR is cvc5's `test/regress/cli` (default: the one recorded in the list).
   `get-interpolant`, `get-qe`, SyGuS, …);
 - use no bit-vectors or arrays (by the symbols of the input, not by its logic:
   an input in `AUFLIA` that has no arrays is kept);
-- run in cvc5's safe mode: `cvc5 --safe-mode=safe FILE` gives an answer
+- run in cvc5's safe mode: are not left out of a safe build by cvc5's
+  regression runner (`; REQUIRES: unrestricted-mode`, `no-safe-mode` or
+  `stable-mode`), and `cvc5 --safe-mode=safe FILE` gives an answer
   (`sat`, `unsat`, `unknown`) or reaches the timeout, and no error.
 
 The options of the regression (`COMMAND-LINE`) are not used: cvc5 and telos
@@ -46,6 +48,10 @@ ROOT = Path(__file__).resolve().parent.parent
 TELOS = ROOT / ".lake/build/bin/telos"
 BED = ROOT / "test/testbed"
 LIST = BED / "list.tsv"
+# The features of a `; REQUIRES:` line by which cvc5's regression runner leaves
+# a benchmark out of a safe build (`run_regression.py`: safe and stable builds
+# are the restricted ones).
+NOT_SAFE = {"unrestricted-mode", "no-safe-mode", "stable-mode"}
 RECORD = BED / "results.tsv"
 MEMORY = 8 << 30
 
@@ -132,6 +138,8 @@ def candidates(base):
                 why["not a single query"] += 1
             elif bv_or_array(toks):
                 why["bit-vectors or arrays"] += 1
+            elif set(re.findall(r"^; REQUIRES:\s*(\S+)", text, re.M)) & NOT_SAFE:
+                why["not in a safe build (REQUIRES)"] += 1
             else:
                 out.append((f, expected(text)))
     return out, why
